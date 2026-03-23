@@ -89,7 +89,7 @@ function parseWorkerResult(msg: WorkerMessage): ModuleInfo {
 
 async function getWorkerFile(): Promise<URL> {
   if (!import.meta.url.endsWith('.ts')) {
-    return new URL('./indexingWorker.js', import.meta.url);
+    return new URL('./indexingWorker.mjs', import.meta.url);
   }
   // In development (tsx mode), compile the worker to plain JS using esbuild.
   // Write adjacent to node_modules so external packages resolve correctly.

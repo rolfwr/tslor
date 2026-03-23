@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node'",
+    "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node' && esbuild src/indexingWorker.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/indexingWorker.mjs",
     "check": "tsc -b && vitest run",
     "test": "vitest run",
     "outline": "tsx src/outline.ts",
