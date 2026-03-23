@@ -1,0 +1,33 @@
+{
+  "name": "tslor",
+  "version": "0.1.0",
+  "description": "TypeScript large-scale organized refactoring tool",
+  "type": "module",
+  "bin": {
+    "tslor": "dist/tslor.mjs"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node'",
+    "prepare": "npm run bundle",
+    "check": "tsc -b && vitest run",
+    "test": "vitest run",
+    "outline": "tsx src/outline.ts",
+    "outline:silent": "tsx src/outline.ts"
+  },
+  "packageManager": "pnpm@9.10.0+sha512.73a29afa36a0d092ece5271de5177ecbf8318d454ecd701343131b8ebc0c1a91c487da46ab77c8e596d6acf1461e3594ced4becedf8921b074fbd8653ed7051c",
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "diff": "^8.0.2",
+    "ts-morph": "^25.0.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/node": "^22.10.5",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.4"
+  }
+}
