@@ -1,5 +1,5 @@
 import { test, assert } from 'vitest';
-import { replaceTypeInFile } from './runReplaceTypeUse';
+import { replaceTypeInFile } from './runReplaceTypeUse.js';
 
 function replace(body: string): string | null {
   const content = `import type { Item } from './source';\n${body}`;

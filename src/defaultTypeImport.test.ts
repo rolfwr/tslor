@@ -12,8 +12,8 @@
 
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
-import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing';
+import { parseIsolatedSourceCode } from './parseIsolatedSourceCode.js';
+import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing.js';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -24,7 +24,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols
-} from './splitModule';
+} from './splitModule.js';
 
 /**
  * Create a source file from source code for testing

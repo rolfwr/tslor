@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { dirname } from "path";
-import { FileSystem, RealFileSystem } from "./filesystem";
+import { FileSystem, RealFileSystem } from "./filesystem.js";
 
 
 export function findGitRepoRoot(oldPath: string) {

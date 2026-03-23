@@ -1,5 +1,5 @@
-import { ObjStore } from './objstore';
-import { Storage } from './storage';
+import { ObjStore } from './objstore.js';
+import { Storage } from './storage.js';
 import { assert, test, describe, beforeEach, vi, afterEach } from 'vitest';
 
 // Mock console.log and console.error to capture output

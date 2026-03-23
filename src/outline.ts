@@ -10,7 +10,7 @@
  */
 
 import { Project, SourceFile, SyntaxKind } from 'ts-morph';
-import { TransformingFileSystem } from './transformingFileSystem';
+import { TransformingFileSystem } from './transformingFileSystem.js';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 

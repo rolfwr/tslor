@@ -1,9 +1,9 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot } from "./project";
-import { openStorage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizePath } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { updateStorage } from "./indexing.js";
+import { findGitRepoRoot } from "./project.js";
+import { openStorage } from "./storage.js";
+import { DebugOptions } from "./objstore.js";
+import { normalizePath } from "./pathUtils.js";
+import { FileSystem } from "./filesystem.js";
 
 export interface GrepOptions {
   uses?: boolean;

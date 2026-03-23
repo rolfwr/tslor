@@ -5,16 +5,16 @@
  * This is the cleanup phase after propose-import-directly has moved imports.
  */
 
-import { openStorage, Storage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
+import { openStorage, Storage } from "./storage.js";
+import { DebugOptions } from "./objstore.js";
+import { normalizeAndValidatePath } from "./pathUtils.js";
+import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan.js";
 import { promises as fsp } from "fs";
 import { SourceFile, ExportDeclaration } from "ts-morph";
-import { loadSourceFile } from "./indexing";
-import { reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem";
+import { loadSourceFile } from "./indexing.js";
+import { reinsertScript } from "./transformingFileSystem.js";
+import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider.js";
+import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem.js";
 
 /**
  * Propose removing unused re-exports from the codebase.
@@ -33,7 +33,7 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
-  const { indexImportFromFiles } = await import('./indexing');
+  const { indexImportFromFiles } = await import('./indexing.js');
   await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
   db.save();
 

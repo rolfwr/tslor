@@ -1,11 +1,11 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot, getTypeScriptFilePaths } from "./project";
-import { openStorage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizePath, denormalizePath } from "./pathUtils";
+import { updateStorage } from "./indexing.js";
+import { findGitRepoRoot, getTypeScriptFilePaths } from "./project.js";
+import { openStorage } from "./storage.js";
+import { DebugOptions } from "./objstore.js";
+import { normalizePath, denormalizePath } from "./pathUtils.js";
 import { dirname } from "path";
 import chalk from "chalk";
-import { FileSystem } from "./filesystem";
+import { FileSystem } from "./filesystem.js";
 
 export interface CyclesOptions {
   directories?: boolean;

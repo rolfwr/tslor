@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj } from './objstore';
+import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj } from './objstore.js';
 
 /**
  * Reference to a module that exports something.

@@ -1,8 +1,8 @@
 
 
 import { assert, test } from 'vitest'
-import { modulePathToImportSpecAlias } from './importSpec';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
+import { modulePathToImportSpecAlias } from './importSpec.js';
+import { parseIsolatedSourceCode } from './parseIsolatedSourceCode.js';
 
 test('importSpec', () => {
   const testCase = {

@@ -1,7 +1,7 @@
 import { assert, test } from 'vitest';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
-import { invariant, assertDefined } from './invariant';
+import { parseIsolatedSourceCode } from './parseIsolatedSourceCode.js';
+import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing.js';
+import { invariant, assertDefined } from './invariant.js';
 import { 
   Project, 
   SourceFile, 
@@ -22,7 +22,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols
-} from './splitModule';
+} from './splitModule.js';
 
 /**
  * Create a source file from source code for testing

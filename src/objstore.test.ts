@@ -1,7 +1,7 @@
 
 
 import { assert, test } from 'vitest'
-import { ObjStore } from './objstore';
+import { ObjStore } from './objstore.js';
 
 
 test('objstore', () => {

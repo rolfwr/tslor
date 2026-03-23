@@ -1,6 +1,6 @@
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
-import { applyReexportRemovalsToFile } from './runProposePurgeReexport';
+import { applyReexportRemovalsToFile } from './runProposePurgeReexport.js';
 
 /**
  * Create a source file from source code for testing

@@ -1,9 +1,9 @@
-import { findGitRepoRoot } from "./project";
-import { openStorage, type Storage } from "./storage";
-import { updateStorage } from "./indexing";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { findGitRepoRoot } from "./project.js";
+import { openStorage, type Storage } from "./storage.js";
+import { updateStorage } from "./indexing.js";
+import { DebugOptions } from "./objstore.js";
+import { normalizeAndValidatePath } from "./pathUtils.js";
+import { FileSystem } from "./filesystem.js";
 
 
 

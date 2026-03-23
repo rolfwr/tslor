@@ -5,12 +5,12 @@
  * Creates a plan file that can be reviewed and applied later.
  */
 
-import { normalizeAndValidatePath, normalizePath, denormalizePath } from "./pathUtils";
+import { normalizeAndValidatePath, normalizePath, denormalizePath } from "./pathUtils.js";
 import { existsSync } from "fs";
 import { promises as fsp } from "fs";
-import { loadSourceFile, parseModule, analyzeImportUsageFromStaticInfo } from "./indexing";
-import { FileSystem } from "./filesystem";
-import { DebugOptions } from "./objstore";
+import { loadSourceFile, parseModule, analyzeImportUsageFromStaticInfo } from "./indexing.js";
+import { FileSystem } from "./filesystem.js";
+import { DebugOptions } from "./objstore.js";
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -23,7 +23,7 @@ import {
   addImportForMovedSymbols,
   IntraModuleDependencies,
   SplitAnalysis
-} from "./splitModule";
+} from "./splitModule.js";
 import {
   TslorPlan,
   PLAN_VERSION,
@@ -34,7 +34,7 @@ import {
   displayPlan,
   CreateFileChange,
   ModifyFileChange
-} from "./plan";
+} from "./plan.js";
 import { Project } from "ts-morph";
 
 /**

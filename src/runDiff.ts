@@ -4,12 +4,12 @@
  * Shows unified diff of proposed changes in a plan file.
  */
 
-import { DebugOptions } from "./objstore";
+import { DebugOptions } from "./objstore.js";
 import {
   PLAN_FILE_NAME,
   readPlan,
   displayPlanDiff
-} from "./plan";
+} from "./plan.js";
 
 export interface DiffOptions {
   stats?: boolean;      // Show statistics instead of full diff

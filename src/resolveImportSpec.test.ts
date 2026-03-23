@@ -1,6 +1,6 @@
 import { assert, test, describe } from 'vitest';
-import { resolveImportSpec } from './indexing';
-import { InMemoryFileSystem } from './filesystem';
+import { resolveImportSpec } from './indexing.js';
+import { InMemoryFileSystem } from './filesystem.js';
 
 describe('resolveImportSpec', () => {
   test('resolves relative imports correctly', async () => {

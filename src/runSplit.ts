@@ -1,10 +1,10 @@
-import { DebugOptions } from "./objstore";
-import { runProposeSplit } from "./runProposeSplit";
-import { runApply } from "./runApply";
-import { PLAN_FILE_NAME } from "./plan";
+import { DebugOptions } from "./objstore.js";
+import { runProposeSplit } from "./runProposeSplit.js";
+import { runApply } from "./runApply.js";
+import { PLAN_FILE_NAME } from "./plan.js";
 import { existsSync } from "fs";
 import { promises as fsp } from "fs";
-import { FileSystem } from "./filesystem";
+import { FileSystem } from "./filesystem.js";
 
 interface SplitOptions {
   dryRun?: boolean;
