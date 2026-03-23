@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { Project, SyntaxKind } from 'ts-morph';
-import { parseModule } from './indexing.js';
+import { parseModule } from './indexing';
 
 describe('Bug #4: Interface method type references', () => {
   it('should detect type references in interface method signatures', () => {

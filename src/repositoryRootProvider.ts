@@ -27,7 +27,7 @@ export class GitRepositoryRootProvider implements RepositoryRootProvider {
   }
 
   async getTypeScriptFilePaths(repoRoot: string, verbose: boolean): Promise<string[]> {
-    const { getTypeScriptFilePaths } = await import('./project.js');
+    const { getTypeScriptFilePaths } = await import('./project');
     return getTypeScriptFilePaths(repoRoot, verbose);
   }
 }

@@ -1,10 +1,10 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
-import { runProposeImportDirectly } from './runProposeImportDirectly.js';
-import { DebugOptions } from './objstore.js';
-import { ModifyFileChange } from './plan.js';
-import { InMemoryRepositoryRootProvider } from './repositoryRootProvider.js';
-import { InMemoryFileSystem } from './filesystem.js';
+import { runProposeImportDirectly } from './runProposeImportDirectly';
+import { DebugOptions } from './objstore';
+import { ModifyFileChange } from './plan';
+import { InMemoryRepositoryRootProvider } from './repositoryRootProvider';
+import { InMemoryFileSystem } from './filesystem';
 
 /**
  * Test that runProposeImportDirectly generates proper undo information

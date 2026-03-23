@@ -1,6 +1,6 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
-import { parseModule } from './indexing.js';
+import { parseModule } from './indexing';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -12,7 +12,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols
-} from './splitModule.js';
+} from './splitModule';
 
 /**
  * Bug reproduction tests for issues found in real-world cycle resolution

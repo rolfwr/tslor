@@ -1,9 +1,9 @@
-import { updateStorage } from "./indexing.js";
-import { findGitRepoRoot } from "./project.js";
-import { openStorage, Storage } from "./storage.js";
-import { DebugOptions } from "./objstore.js";
-import { normalizeAndValidatePath } from "./pathUtils.js";
-import { FileSystem } from "./filesystem.js";
+import { updateStorage } from "./indexing";
+import { findGitRepoRoot } from "./project";
+import { openStorage, Storage } from "./storage";
+import { DebugOptions } from "./objstore";
+import { normalizeAndValidatePath } from "./pathUtils";
+import { FileSystem } from "./filesystem";
 
 export interface TypeLeafUsageOptions {
   all?: boolean;

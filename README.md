@@ -6,18 +6,29 @@ Fast, safe refactoring tools for large TypeScript monorepos with transparent Vue
 
 ## Installation
 
-Requires Node.js 18+ and Git.
+Requires Node.js 18+, pnpm, and Git.
 
 ```bash
-npm install -g git+https://github.com/rolfwr/tslor.git
+git clone https://github.com/rolfwr/tslor.git
+cd tslor
+pnpm install
+pnpm run bundle
+npm link
 ```
 
-This builds the CLI from source during install and makes the `tslor` command available globally. To update, run the same command again.
+This builds the CLI from source and makes the `tslor` command available globally. To update, pull and rebuild:
+
+```bash
+cd tslor
+git pull
+pnpm install
+pnpm run bundle
+```
 
 To uninstall:
 
 ```bash
-npm uninstall -g tslor
+npm unlink -g tslor
 ```
 
 ## What TSLOR Does

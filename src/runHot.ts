@@ -1,10 +1,10 @@
 import { resolve } from 'path';
-import { findGitRepoRoot, getTypeScriptFilePaths } from './project.js';
-import { Storage, openStorage } from './storage.js';
-import { updateStorage } from './indexing.js';
-import { DebugOptions } from './objstore.js';
-import { normalizePath, denormalizePath } from './pathUtils.js';
-import { FileSystem } from './filesystem.js';
+import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
+import { Storage, openStorage } from './storage';
+import { updateStorage } from './indexing';
+import { DebugOptions } from './objstore';
+import { normalizePath, denormalizePath } from './pathUtils';
+import { FileSystem } from './filesystem';
 
 interface HotModuleInfo {
   path: string;

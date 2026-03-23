@@ -1,6 +1,6 @@
 import { test, assert } from 'vitest';
 import { Project } from 'ts-morph';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing.js';
+import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -11,7 +11,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols,
-} from './splitModule.js';
+} from './splitModule';
 import { relative, dirname } from 'path';
 
 /**

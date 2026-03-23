@@ -5,8 +5,8 @@
  * by extracting symbols and their dependencies into new modules.
  */
 
-import { StaticModuleInfo } from './indexing.js';
-import { invariant, assertDefined } from './invariant.js';
+import { StaticModuleInfo } from './indexing';
+import { invariant, assertDefined } from './invariant';
 import { 
   Project, 
   SourceFile, 

@@ -5,13 +5,13 @@
  * Does not verify compilation — a separate tool can handle that concern.
  */
 
-import { openStorage } from "./storage.js";
-import { DebugOptions } from "./objstore.js";
-import { normalizeAndValidatePath } from "./pathUtils.js";
+import { openStorage } from "./storage";
+import { DebugOptions } from "./objstore";
+import { normalizeAndValidatePath } from "./pathUtils";
 import { promises as fsp } from "fs";
-import { extractScript, reinsertScript } from "./transformingFileSystem.js";
-import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider.js";
-import { FileSystem } from "./filesystem.js";
+import { extractScript, reinsertScript } from "./transformingFileSystem";
+import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
+import { FileSystem } from "./filesystem";
 import { Project, SyntaxKind } from "ts-morph";
 
 export interface ReplaceTypeUseOptions {
@@ -38,7 +38,7 @@ export async function runReplaceTypeUse(
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
-  const { indexImportFromFiles } = await import('./indexing.js');
+  const { indexImportFromFiles } = await import('./indexing');
   await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
   db.save();
 

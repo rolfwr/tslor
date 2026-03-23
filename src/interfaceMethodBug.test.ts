@@ -6,7 +6,7 @@ import {
   analyzeImportUsageBySymbol,
   findImportsOnlyUsedBySymbols,
   computeRequiredImports
-} from './splitModule.js';
+} from './splitModule';
 
 test('Bug: Interface with method signatures should be fully extracted', () => {
   const sourceCode = `

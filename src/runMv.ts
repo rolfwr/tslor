@@ -1,14 +1,14 @@
 import { basename, resolve } from "path";
-import { normalizeAndValidatePath, normalizePath } from "./pathUtils.js";
-import { findGitRepoRoot, getTsconfigPathForFile, getTypeScriptFilePaths } from "./project.js";
+import { normalizeAndValidatePath, normalizePath } from "./pathUtils";
+import { findGitRepoRoot, getTsconfigPathForFile, getTypeScriptFilePaths } from "./project";
 import { existsSync, promises as fsp } from "fs";
 import { spawn } from "child_process";
-import { openStorage } from "./storage.js";
-import { Storage } from "./storage.js";
-import { indexImportFromFiles, loadSourceFile, NamedExport, resolveImportSpec, resolveImportSpecAlias } from "./indexing.js";
+import { openStorage } from "./storage";
+import { Storage } from "./storage";
+import { indexImportFromFiles, loadSourceFile, NamedExport, resolveImportSpec, resolveImportSpecAlias } from "./indexing";
 import { Node, ImportDeclaration, SyntaxKind } from "ts-morph";
-import { DebugOptions } from "./objstore.js";
-import { FileSystem, RealFileSystem } from "./filesystem.js";
+import { DebugOptions } from "./objstore";
+import { FileSystem, RealFileSystem } from "./filesystem";
 
 interface FileMove {
   oldPath: string;

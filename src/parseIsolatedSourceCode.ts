@@ -1,5 +1,5 @@
 import { FileSystemHost, Project } from "ts-morph";
-import { defaultProjectOptions, parseModule } from "./indexing.js";
+import { defaultProjectOptions, parseModule } from "./indexing";
 
 
 export function parseIsolatedSourceCode(sourceCode: string) {

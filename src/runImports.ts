@@ -1,9 +1,9 @@
-import { findGitRepoRoot } from "./project.js";
-import { openStorage } from "./storage.js";
-import { updateStorage } from "./indexing.js";
-import { DebugOptions } from "./objstore.js";
-import { normalizeAndValidatePath } from "./pathUtils.js";
-import { FileSystem } from "./filesystem.js";
+import { findGitRepoRoot } from "./project";
+import { openStorage } from "./storage";
+import { updateStorage } from "./indexing";
+import { DebugOptions } from "./objstore";
+import { normalizeAndValidatePath } from "./pathUtils";
+import { FileSystem } from "./filesystem";
 
 export async function runImports(exportPathArg: string, debugOptions: DebugOptions, fileSystem: FileSystem) {
   const exportPath = normalizeAndValidatePath(exportPathArg, "Export path", false);

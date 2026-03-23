@@ -12,7 +12,7 @@
 
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing.js';
+import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -24,8 +24,8 @@ import {
   removeUnusedImports,
   addImportForMovedSymbols,
   analyzeImportUsageBySymbol
-} from './splitModule.js';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode.js';
+} from './splitModule';
+import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 
 /**
  * Create a source file from source code for testing

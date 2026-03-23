@@ -1,9 +1,9 @@
-import { updateStorage } from "./indexing.js";
-import { findGitRepoRoot, getTsconfigPathForFile } from "./project.js";
-import { openStorage, Storage } from "./storage.js";
-import { DebugOptions } from "./objstore.js";
-import { normalizePaths } from "./pathUtils.js";
-import { FileSystem } from "./filesystem.js";
+import { updateStorage } from "./indexing";
+import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
+import { openStorage, Storage } from "./storage";
+import { DebugOptions } from "./objstore";
+import { normalizePaths } from "./pathUtils";
+import { FileSystem } from "./filesystem";
 
 export async function runDependencies(modulePaths: string[], commandOptions: { projectScope: boolean }, debugOptions: DebugOptions, fileSystem: FileSystem) {
   // Resolve all paths to absolute paths early

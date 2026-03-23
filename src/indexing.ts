@@ -11,12 +11,12 @@
  */
 
 import { Project, ProjectOptions, QuoteKind, SourceFile, SyntaxKind, ts, Node, ExportSpecifier } from "ts-morph";
-import { getTsconfigPathForFile, getTypeScriptFilePaths } from "./project.js";
+import { getTsconfigPathForFile, getTypeScriptFilePaths } from "./project";
 import { dirname, relative, resolve } from "path";
-import { CompilerOptions, modulePathSpec, modulePathToImportSpecAlias } from "./importSpec.js";
-import { Storage } from "./storage.js";
-import { TransformingFileSystem } from "./transformingFileSystem.js";
-import { FileSystem, InMemoryFileSystem } from "./filesystem.js";
+import { CompilerOptions, modulePathSpec, modulePathToImportSpecAlias } from "./importSpec";
+import { Storage } from "./storage";
+import { TransformingFileSystem } from "./transformingFileSystem";
+import { FileSystem, InMemoryFileSystem } from "./filesystem";
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';

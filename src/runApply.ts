@@ -5,7 +5,7 @@
  * This is the "apply" half of the propose/apply pattern.
  */
 
-import { DebugOptions } from "./objstore.js";
+import { DebugOptions } from "./objstore";
 import {
   PLAN_FILE_NAME,
   readPlan,
@@ -14,7 +14,7 @@ import {
   executeUndo,
   archivePlan,
   TslorPlan
-} from "./plan.js";
+} from "./plan";
 import { spawn } from 'child_process';
 
 export interface ApplyOptions {

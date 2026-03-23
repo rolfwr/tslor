@@ -5,16 +5,16 @@
  * changing them to point directly to the original export location.
  */
 
-import { openStorage, Storage } from "./storage.js";
-import { DebugOptions, Obj } from "./objstore.js";
-import { normalizeAndValidatePath } from "./pathUtils.js";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan.js";
+import { openStorage, Storage } from "./storage";
+import { DebugOptions, Obj } from "./objstore";
+import { normalizeAndValidatePath } from "./pathUtils";
+import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
 import { promises as fsp } from "fs";
 import { Project, SourceFile, ImportDeclaration } from "ts-morph";
-import { defaultProjectOptions, loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing.js";
-import { extractScript, reinsertScript } from "./transformingFileSystem.js";
-import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider.js";
-import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem.js";
+import { defaultProjectOptions, loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing";
+import { extractScript, reinsertScript } from "./transformingFileSystem";
+import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
+import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem";
 
 /**
  * Propose changing imports of re-exported symbols to point directly to original exports.
@@ -33,7 +33,7 @@ export async function runProposeImportDirectly(directoryArg: string, debugOption
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
-  const { indexImportFromFiles } = await import('./indexing.js');
+  const { indexImportFromFiles } = await import('./indexing');
   await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
   db.save();
 
