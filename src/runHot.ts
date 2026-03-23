@@ -160,11 +160,16 @@ function lerpColor(a: Color, b: Color, t: number): Color {
 }
 
 function hotnessColor(hotness: number, leastHot: number, medianHot: number, mostHot: number): Color {
+  if (medianHot === leastHot && mostHot === medianHot) {
+    return coolColor;
+  }
   if (hotness < medianHot) {
-    return lerpColor(coolColor, warmColor, (hotness - leastHot) / (medianHot - leastHot));
+    const range = medianHot - leastHot;
+    return range === 0 ? coolColor : lerpColor(coolColor, warmColor, (hotness - leastHot) / range);
   }
 
-  return lerpColor(warmColor, hotColor, (hotness - medianHot) / (mostHot - medianHot));
+  const range = mostHot - medianHot;
+  return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
 function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, HotModuleInfo> {
@@ -230,7 +235,7 @@ export async function runHot(directory: string, options: Options, debugOptions: 
 
   // Load or build the index
   const db = openStorage(debugOptions, false);
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, absoluteDir);
 
   // Get all TypeScript files in the target directory (follows cycles command pattern)
   const filePaths = await getTypeScriptFilePaths(absoluteDir, false);

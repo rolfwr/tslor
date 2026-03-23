@@ -76,6 +76,11 @@ program
     const absolutePath = resolve(path);
     const repoRoot = findGitRepoRoot(dirname(absolutePath));
     const moduleInfo = await inspectModule(repoRoot, absolutePath, fileSystem);
+    if (!moduleInfo) {
+      console.error('No tsconfig found for ' + absolutePath);
+      process.exitCode = 1;
+      return;
+    }
     console.log(JSON.stringify(moduleInfo, null, 2));
   });
 

@@ -20,7 +20,11 @@ parentPort.on('message', (msg: { type: string; path: string; repoRoot: string })
   const { path, repoRoot } = msg;
   inspectModule(repoRoot, path, fileSystem)
     .then((moduleInfo) => {
-      parentPort!.postMessage({ type: 'result', moduleInfo: JSON.stringify(moduleInfo) });
+      if (!moduleInfo) {
+        parentPort!.postMessage({ type: 'skip', path, reason: 'no tsconfig' });
+      } else {
+        parentPort!.postMessage({ type: 'result', moduleInfo: JSON.stringify(moduleInfo) });
+      }
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);

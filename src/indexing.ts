@@ -27,8 +27,8 @@ import { invariant } from './invariant.js';
  * 
  * This is the main entry point for building a complete index.
  */
-export async function updateStorage(repoRoot: string, db: Storage, verbose: boolean, fileSystem: FileSystem) {
-  const paths: string[] = await getTypeScriptFilePaths(repoRoot, verbose);
+export async function updateStorage(repoRoot: string, db: Storage, verbose: boolean, fileSystem: FileSystem, scopeDir?: string) {
+  const paths: string[] = await getTypeScriptFilePaths(scopeDir ?? repoRoot, verbose);
   await indexImportFromFiles(paths, db, repoRoot, verbose, fileSystem);
 }
 
@@ -76,11 +76,15 @@ interface WorkerWrapper {
 
 type WorkerMessage =
   | { type: 'result'; moduleInfo: string }
+  | { type: 'skip'; path: string; reason: string }
   | { type: 'error'; error: string };
 
-function parseWorkerResult(msg: WorkerMessage): ModuleInfo {
+function parseWorkerResult(msg: WorkerMessage): ModuleInfo | null {
   if (msg.type === 'error') {
     throw new Error(msg.error);
+  }
+  if (msg.type === 'skip') {
+    return null;
   }
   const parsed: unknown = JSON.parse(msg.moduleInfo);
   invariant(typeof parsed === 'object' && parsed !== null && 'path' in parsed, 'Worker returned invalid ModuleInfo');
@@ -231,7 +235,7 @@ async function indexImportFromFilesParallel(
       const nextItem = await reader.take();
       if (nextItem) wrapper.send(nextItem.path, repoRoot); // keep worker busy
 
-      let moduleInfo: ModuleInfo;
+      let moduleInfo: ModuleInfo | null;
       try {
         moduleInfo = parseWorkerResult(msg as WorkerMessage);
       } catch (error) {
@@ -239,11 +243,13 @@ async function indexImportFromFilesParallel(
         throw new Error(`Failed to process file ${currentItem.path}: ${errorMessage}`);
       }
 
-      try {
-        await storeImportsFromFile(moduleInfo, db, currentItem.mtimeMs, fileSystem);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to process file ${currentItem.path}: ${errorMessage}`);
+      if (moduleInfo) {
+        try {
+          await storeImportsFromFile(moduleInfo, db, currentItem.mtimeMs, fileSystem);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(`Failed to process file ${currentItem.path}: ${errorMessage}`);
+        }
       }
 
       processedCount++;
@@ -310,6 +316,7 @@ async function refreshImportsFromFile(db: Storage, somePath: string, repoRoot: s
     }
 
     const moduleInfo = await inspectModule(repoRoot, somePath, fileSystem);
+    if (!moduleInfo) return; // no tsconfig — skip
     await storeImportsFromFile(moduleInfo, db, mtimeMs, fileSystem);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -343,11 +350,11 @@ export interface ImportUsage {
 
 }
 
-export async function inspectModule(repoRoot: string, tsFilePath: string, fileSystem: FileSystem): Promise<ModuleInfo> {
+export async function inspectModule(repoRoot: string, tsFilePath: string, fileSystem: FileSystem): Promise<ModuleInfo | null> {
   try {
     const importerTsConfig = await getTsconfigPathForFile(repoRoot, tsFilePath, fileSystem);
     if (!importerTsConfig) {
-      throw new Error('No tsconfig found');
+      return null;
     }
     const sourceFile = await loadSourceFile(tsFilePath, fileSystem);
 
@@ -1730,7 +1737,17 @@ async function resolveSourceFile(spec: string, baseDir: string, fileSystem: File
     }
   }
 
-  return isDir ? absSpec + '/index.ts' : absSpec + '.ts';
+  if (isDir) {
+    return absSpec + '/index.ts';
+  }
+  // Handle .js/.mjs → .ts/.mts extension mapping (standard in TypeScript ESM projects)
+  if (absSpec.endsWith('.js')) {
+    return absSpec.slice(0, -3) + '.ts';
+  }
+  if (absSpec.endsWith('.mjs')) {
+    return absSpec.slice(0, -4) + '.mts';
+  }
+  return absSpec + '.ts';
 }
 
 async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsconfigDir: string, importSpec: string, fileSystem: FileSystem) {
