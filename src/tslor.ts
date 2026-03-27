@@ -21,6 +21,7 @@ import { runTscat } from './runTscat';
 import { runProposeImportDirectly } from './runProposeImportDirectly';
 import { runProposePurgeReexport } from './runProposePurgeReexport';
 import { runReplaceTypeUse } from './runReplaceTypeUse';
+import { runNormalizeImports } from './runNormalizeImports';
 import { runTypeLeafUsage } from './runTypeLeafUsage';
 import { GitRepositoryRootProvider } from './repositoryRootProvider';
 import { RealFileSystem } from './filesystem';
@@ -214,6 +215,16 @@ program
     const repoProvider = new GitRepositoryRootProvider();
     const fileSystem = new RealFileSystem();
     await runReplaceTypeUse(directory, opts, debugOptions, repoProvider, fileSystem);
+  });
+
+program
+  .command('normalize-imports <directory>')
+  .description('Merge duplicate import declarations from the same module (creates .tslor-plan.json)')
+  .action(async (directory: string, cmd) => {
+    const debugOptions = getDebugOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runNormalizeImports(directory, debugOptions, repoProvider, fileSystem);
   });
 
 program

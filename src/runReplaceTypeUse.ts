@@ -13,6 +13,7 @@ import { extractScript, reinsertScript } from "./transformingFileSystem";
 import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
 import { FileSystem } from "./filesystem";
 import { Project, SyntaxKind } from "ts-morph";
+import { dirname, resolve } from "path";
 
 export interface ReplaceTypeUseOptions {
   sourceType: string;
@@ -52,7 +53,7 @@ export async function runReplaceTypeUse(
   console.log(`Found ${importingFiles.size} files importing ${options.sourceType}`);
 
   let modifiedCount = 0;
-  for (const filePath of importingFiles) {
+  for (const [filePath, exporterPath] of importingFiles) {
     let originalContent: string;
     try {
       originalContent = await fsp.readFile(filePath, 'utf-8');
@@ -63,7 +64,8 @@ export async function runReplaceTypeUse(
     const modified = replaceTypeInFile(
       filePath, originalContent,
       options.sourceType, options.targetType,
-      options.sourceModule, options.targetModule
+      options.sourceModule, options.targetModule,
+      exporterPath
     );
     if (modified !== null && modified !== originalContent) {
       await fsp.writeFile(filePath, modified, 'utf-8');
@@ -75,9 +77,9 @@ export async function runReplaceTypeUse(
   console.log(`\nDone. Modified ${modifiedCount} files.`);
 }
 
-function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: string, sourceModule: string, directory: string): Set<string> {
+function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: string, sourceModule: string, directory: string): Map<string, string> {
   const symbolImports = db.getSymbolImports(sourceType);
-  const files = new Set<string>();
+  const files = new Map<string, string>();
   const directoryPrefix = directory.endsWith('/') ? directory : directory + '/';
 
   for (const obj of symbolImports) {
@@ -90,7 +92,7 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
 
     const exporter = obj.exporter as { path?: string; spec?: string } | undefined;
     if (exporter && 'path' in exporter && typeof exporter.path === 'string') {
-      files.add(importerPath);
+      files.set(importerPath, exporter.path);
     }
   }
 
@@ -103,7 +105,8 @@ export function replaceTypeInFile(
   sourceType: string,
   targetType: string,
   sourceModule: string,
-  targetModule: string
+  targetModule: string,
+  resolvedExporterPath?: string
 ): string | null {
   const isVue = filePath.endsWith('.vue');
   let scriptContent: string;
@@ -114,7 +117,7 @@ export function replaceTypeInFile(
     scriptContent = originalContent;
   }
 
-  const importInfo = analyzeImports(scriptContent, sourceType, sourceModule);
+  const importInfo = analyzeImports(scriptContent, sourceType, sourceModule, filePath, resolvedExporterPath);
   if (!importInfo.hasImport) return null;
 
   const lines = scriptContent.split('\n');
@@ -188,7 +191,7 @@ interface ImportAnalysis {
   actualModuleSpec: string;
 }
 
-function analyzeImports(script: string, sourceType: string, sourceModule: string): ImportAnalysis {
+function analyzeImports(script: string, sourceType: string, sourceModule: string, importerPath?: string, resolvedExporterPath?: string): ImportAnalysis {
   const lines = script.split('\n');
   const result: ImportAnalysis = {
     hasImport: false,
@@ -210,11 +213,17 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     const importMatch = line.match(/^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/);
     if (!importMatch) continue;
 
-    const isTypeOnly = !!importMatch[1];
+    const isTypeOnly = Boolean(importMatch[1]);
     const namesStr = importMatch[2];
     const moduleSpec = importMatch[3];
 
-    if (!moduleSpecMatches(moduleSpec, sourceModule)) continue;
+    if (!moduleSpecMatches(moduleSpec, sourceModule)) {
+      // Text match failed — try resolving relative imports against the known exporter path
+      if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) continue;
+      const resolved = resolve(dirname(importerPath), moduleSpec);
+      const exporterBase = resolvedExporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
+      if (resolved !== exporterBase && resolved !== resolvedExporterPath) continue;
+    }
 
     const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
     const hasSourceType = names.some(n => {
@@ -246,8 +255,8 @@ function moduleSpecMatches(actual: string, expected: string): boolean {
 }
 
 function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targetModule: string): string {
-  if (!targetModule.startsWith('.')) return targetModule;
   if (sourceModule === targetModule) return actualSpec;
+  if (!targetModule.startsWith('.')) return targetModule;
   const sourceBare = sourceModule.replace(/^\.\//, '');
   const targetBare = targetModule.replace(/^\.\//, '');
   if (actualSpec.endsWith(sourceBare)) {

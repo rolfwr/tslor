@@ -62,6 +62,38 @@ test('different target module computes correct relative path', () => {
   assert.include(result!, "from '../entity/newItem'");
 });
 
+test('relative import matches when source-module is a package specifier (same target module)', () => {
+  // Bug: files using relative imports are found by the index but skipped by analyzeImports
+  // because moduleSpecMatches cannot bridge './item' vs '@pkg/entity/item'.
+  // The resolvedExporterPath lets analyzeImports resolve the relative import and match.
+  const content = `import type { Item } from './item';\nconst x: Item = {};`;
+  const result = replaceTypeInFile(
+    '/repo/packages/server-common/src/entity/itemCharacteristics.ts', content,
+    'Item', 'ItemEntity',
+    '@pkg/entity/item', '@pkg/entity/item',
+    '/repo/packages/server-common/src/entity/item.ts'
+  );
+  assert.isNotNull(result);
+  assert.include(result!, 'ItemEntity');
+  // Relative path must be preserved, not replaced with the package specifier
+  assert.include(result!, "from './item'");
+  assert.notInclude(result!, '@pkg');
+});
+
+test('relative import matches when source and target are different package modules', () => {
+  const content = `import type { Item } from './item';\nconst x: Item = {};`;
+  const result = replaceTypeInFile(
+    '/repo/packages/server-common/src/entity/itemCharacteristics.ts', content,
+    'Item', 'NewItem',
+    '@pkg/entity/item', '@pkg/entity/newItem',
+    '/repo/packages/server-common/src/entity/item.ts'
+  );
+  assert.isNotNull(result);
+  assert.include(result!, 'NewItem');
+  // When target is a different package module, use the package specifier
+  assert.include(result!, "from '@pkg/entity/newItem'");
+});
+
 test('package specifier is preserved as-is', () => {
   const content = `import type { Item } from '@pkg/entity/item';\nconst x: Item = {};`;
   const result = replaceTypeInFile(
