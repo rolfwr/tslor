@@ -122,21 +122,23 @@ export function replaceTypeInFile(
 
   // Replace the import line
   if (importInfo.lineIndex >= 0) {
+    const actualSpec = importInfo.actualModuleSpec;
+    const targetSpec = computeTargetModuleSpec(actualSpec, sourceModule, targetModule);
     if (importInfo.hasReExport) {
       // Re-export present — keep original import, add new import line after it
-      const newImportLine = `import type { ${targetType} } from '${targetModule}';`;
+      const newImportLine = `import type { ${targetType} } from '${targetSpec}';`;
       lines.splice(importInfo.lineIndex + 1, 0, newImportLine);
       changed = true;
     } else if (importInfo.otherNames.length > 0) {
       // Shared import — remove source type, add new import
       const typePrefix = importInfo.isTypeOnly ? 'type ' : '';
-      lines[importInfo.lineIndex] = `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${sourceModule}';`;
-      const newImportLine = `import type { ${targetType} } from '${targetModule}';`;
+      lines[importInfo.lineIndex] = `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${actualSpec}';`;
+      const newImportLine = `import type { ${targetType} } from '${targetSpec}';`;
       lines.splice(importInfo.lineIndex + 1, 0, newImportLine);
       changed = true;
     } else {
       // Sole import — replace entirely
-      lines[importInfo.lineIndex] = `import type { ${targetType} } from '${targetModule}';`;
+      lines[importInfo.lineIndex] = `import type { ${targetType} } from '${targetSpec}';`;
       changed = true;
     }
   }
@@ -183,6 +185,7 @@ interface ImportAnalysis {
   importLine: string;
   lineIndex: number;
   hasReExport: boolean;
+  actualModuleSpec: string;
 }
 
 function analyzeImports(script: string, sourceType: string, sourceModule: string): ImportAnalysis {
@@ -194,6 +197,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     importLine: '',
     lineIndex: -1,
     hasReExport: false,
+    actualModuleSpec: '',
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -223,6 +227,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
       result.isTypeOnly = isTypeOnly;
       result.importLine = line;
       result.lineIndex = i;
+      result.actualModuleSpec = moduleSpec;
       result.otherNames = names.filter(n => {
         const baseName = n.split(/\s+as\s+/)[0].trim();
         return baseName !== sourceType;
@@ -238,6 +243,18 @@ function moduleSpecMatches(actual: string, expected: string): boolean {
   if (actual === expected) return true;
   if (actual.endsWith('/' + expected) || actual.endsWith(expected)) return true;
   return false;
+}
+
+function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targetModule: string): string {
+  if (!targetModule.startsWith('.')) return targetModule;
+  if (sourceModule === targetModule) return actualSpec;
+  const sourceBare = sourceModule.replace(/^\.\//, '');
+  const targetBare = targetModule.replace(/^\.\//, '');
+  if (actualSpec.endsWith(sourceBare)) {
+    const prefix = actualSpec.slice(0, -sourceBare.length);
+    return prefix + targetBare;
+  }
+  return targetModule;
 }
 
 function escapeRegex(str: string): string {
