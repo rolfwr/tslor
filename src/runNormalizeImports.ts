@@ -132,8 +132,14 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
     const winner = group[0];
     const winnerDefaultName = winner.getDefaultImport()?.getText();
 
+    const winnerComments = leadingCommentTexts(winner);
+
     for (let i = 1; i < group.length; i++) {
       const donor = group[i];
+
+      // Don't merge imports with different leading comments — they may be
+      // build directives (e.g., /*VUE2*/) that control conditional compilation.
+      if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) continue;
 
       // Handle default import
       const donorDefault = donor.getDefaultImport();
@@ -188,6 +194,15 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
 
 function isSideEffectImport(importDecl: ImportDeclaration): boolean {
   return !importDecl.getImportClause();
+}
+
+function leadingCommentTexts(node: ImportDeclaration): string[] {
+  return node.getLeadingCommentRanges().map(r => r.getText());
+}
+
+function leadingCommentsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((text, i) => text === b[i]);
 }
 
 function namedImportKey(namedImport: { getName(): string; getAliasNode(): any }): string {

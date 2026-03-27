@@ -214,3 +214,33 @@ import { useEffect } from 'react';
   assert.include(result, 'useState');
   assert.include(result, 'useEffect');
 });
+
+test('Do not merge imports with different leading comments', () => {
+  const { changed, result } = normalize(`
+import { VBtn, VCol, VRow } from 'vuetify/lib';
+/*VUE2*/ import { VTabItem as VWindowItem, VTabsItems as VWindow } from 'vuetify/lib';
+`);
+  assert.isFalse(changed);
+  assert.equal(result.match(/from 'vuetify\/lib'/g)?.length, 2);
+  assert.include(result, '/*VUE2*/');
+});
+
+test('Do not merge when one import has a leading comment and the other does not', () => {
+  const { changed, result } = normalize(`
+import { A } from './mod';
+// important note
+import { B } from './mod';
+`);
+  assert.isFalse(changed);
+  assert.equal(result.match(/from '\.\/mod'/g)?.length, 2);
+});
+
+test('Merge imports that both have no leading comments', () => {
+  // Baseline: imports without comments still merge normally
+  const { changed, result } = normalize(`
+import { A } from './mod';
+import { B } from './mod';
+`);
+  assert.isTrue(changed);
+  assert.equal(result.match(/from '\.\/mod'/g)?.length, 1);
+});
