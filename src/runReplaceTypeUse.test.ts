@@ -94,6 +94,19 @@ test('relative import matches when source and target are different package modul
   assert.include(result!, "from '@pkg/entity/newItem'");
 });
 
+test('does not match same-named symbol from a different module', () => {
+  // File imports Item from searchResultHit, NOT from entity/item.
+  // The exporter path is from the wrong module — should be rejected.
+  const content = `import type { Item } from '../dto/searchResultHit';\nconst x: Item = {};`;
+  const result = replaceTypeInFile(
+    '/repo/common/src/item/media.ts', content,
+    'Item', 'ItemEntity',
+    '@mimir/server-common/entity/item', '@mimir/server-common/entity/item',
+    '/repo/common/src/dto/searchResultHit.ts'
+  );
+  assert.isNull(result);
+});
+
 test('package specifier is preserved as-is', () => {
   const content = `import type { Item } from '@pkg/entity/item';\nconst x: Item = {};`;
   const result = replaceTypeInFile(

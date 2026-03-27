@@ -92,6 +92,7 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
 
     const exporter = obj.exporter as { path?: string; spec?: string } | undefined;
     if (exporter && 'path' in exporter && typeof exporter.path === 'string') {
+      if (!exporterMatchesSourceModule(exporter.path, sourceModule)) continue;
       files.set(importerPath, exporter.path);
     }
   }
@@ -220,6 +221,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     if (!moduleSpecMatches(moduleSpec, sourceModule)) {
       // Text match failed — try resolving relative imports against the known exporter path
       if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) continue;
+      if (!exporterMatchesSourceModule(resolvedExporterPath, sourceModule)) continue;
       const resolved = resolve(dirname(importerPath), moduleSpec);
       const exporterBase = resolvedExporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
       if (resolved !== exporterBase && resolved !== resolvedExporterPath) continue;
@@ -264,6 +266,15 @@ function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targe
     return prefix + targetBare;
   }
   return targetModule;
+}
+
+function exporterMatchesSourceModule(exporterPath: string, sourceModule: string): boolean {
+  if (sourceModule.startsWith('.')) return true;
+  const parts = sourceModule.split('/');
+  const pathPortion = parts[0].startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
+  if (!pathPortion) return true;
+  const exporterBase = exporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
+  return exporterBase.endsWith('/' + pathPortion);
 }
 
 function escapeRegex(str: string): string {
