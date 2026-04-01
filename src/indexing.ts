@@ -910,7 +910,7 @@ export function analyzeImportUsageFromStaticInfo(moduleInfo: StaticModuleInfo): 
  * Node.js-specific global identifiers that indicate the module requires Node.js runtime.
  * Excludes identifiers that are also available in modern browsers (e.g., console, setTimeout).
  */
-const NODEJS_GLOBALS = new Set([
+export const NODEJS_GLOBALS = new Set([
   'Buffer',
   'process',
   '__dirname',
@@ -1264,10 +1264,17 @@ function parseImportDeclaration(
       staticModuleInfo.unresolvedExportsByImportNames.set(importName, { name: exportName, moduleSpec });
     });
   } else {
-    const defaultBinding = importClause.getFirstChildByKind(SyntaxKind.Identifier);
-    if (defaultBinding) {
-      names.push('default');
-      staticModuleInfo.unresolvedExportsByImportNames.set(defaultBinding.getText(), { name: 'default', moduleSpec });
+    const namespaceImport = importClause.getFirstChildByKind(SyntaxKind.NamespaceImport);
+    if (namespaceImport) {
+      const nsName = namespaceImport.getName();
+      names.push('*');
+      staticModuleInfo.unresolvedExportsByImportNames.set(nsName, { name: '*', moduleSpec });
+    } else {
+      const defaultBinding = importClause.getFirstChildByKind(SyntaxKind.Identifier);
+      if (defaultBinding) {
+        names.push('default');
+        staticModuleInfo.unresolvedExportsByImportNames.set(defaultBinding.getText(), { name: 'default', moduleSpec });
+      }
     }
   }
 

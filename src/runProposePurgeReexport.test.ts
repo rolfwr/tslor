@@ -1,6 +1,7 @@
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
 import { applyReexportRemovalsToFile, computeIndexingPaths, hasPublicTag } from './runProposePurgeReexport';
+import { parseModule } from './indexing';
 
 /**
  * Create a source file from source code for testing
@@ -172,6 +173,30 @@ export { handler } from './handler';
   const exportDecls = sourceFile.getExportDeclarations();
 
   assert.isTrue(hasPublicTag(exportDecls[0]));
+});
+
+test('parseModule tracks namespace imports (import * as X) in unresolvedExportsByImportNames', () => {
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile('consumer.ts', `
+import * as initialValues from './initialValues';
+
+export function init() {
+  return initialValues.supportedOps;
+}
+`);
+
+  const moduleInfo = parseModule(sourceFile);
+
+  // The namespace import should be tracked with a '*' sentinel name
+  const nsEntry = moduleInfo.unresolvedExportsByImportNames.get('initialValues');
+  assert.isDefined(nsEntry, 'Namespace import "initialValues" should be in unresolvedExportsByImportNames');
+  assert.equal(nsEntry!.name, '*', 'Namespace import should use "*" as the export name');
+  assert.equal(nsEntry!.moduleSpec, './initialValues', 'Should record the correct module specifier');
+
+  // The imports array should also contain an entry
+  const nsImport = moduleInfo.imports.find(imp => imp.moduleSpec === './initialValues');
+  assert.isDefined(nsImport, 'Should have an import entry for the namespace import');
+  assert.include(nsImport!.names, '*', 'Import names should include "*"');
 });
 
 test('computeIndexingPaths must include files outside the scanned directory', () => {

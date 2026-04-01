@@ -201,15 +201,34 @@ async function findUnusedReExports(
   allReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>
 ): Promise<Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>> {
   const unusedReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> = [];
+  let skippedNamespaceCount = 0;
+
+  // Cache namespace importer lookups per re-exporter path
+  const namespaceImporterCache = new Map<string, boolean>();
 
   for (const reExport of allReExports) {
     // Check if anyone imports this symbol from the re-exporter
     const importers = db.getImportersOfExport(reExport.reExporterPath, reExport.symbolName);
 
     if (importers.length === 0) {
-      // No external imports found - this re-export is unused
-      unusedReExports.push(reExport);
+      // Check for namespace importers (import * as X from this file)
+      let hasNamespaceImporters = namespaceImporterCache.get(reExport.reExporterPath);
+      if (hasNamespaceImporters === undefined) {
+        hasNamespaceImporters = db.getImportersOfExport(reExport.reExporterPath, '*').length > 0;
+        namespaceImporterCache.set(reExport.reExporterPath, hasNamespaceImporters);
+      }
+
+      if (hasNamespaceImporters) {
+        skippedNamespaceCount++;
+      } else {
+        unusedReExports.push(reExport);
+      }
     }
+  }
+
+  if (skippedNamespaceCount > 0) {
+    console.log(`Skipped ${skippedNamespaceCount} re-export(s) from files with namespace importers (import * as X).`);
+    console.log(`Run \`tslor normalize-namespace-imports <directory>\` to convert these to named imports first.`);
   }
 
   return unusedReExports;
