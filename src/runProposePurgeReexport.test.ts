@@ -1,6 +1,6 @@
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
-import { applyReexportRemovalsToFile, computeIndexingPaths } from './runProposePurgeReexport';
+import { applyReexportRemovalsToFile, computeIndexingPaths, hasPublicTag } from './runProposePurgeReexport';
 
 /**
  * Create a source file from source code for testing
@@ -123,6 +123,55 @@ export { anotherUsed } from './other';
 
   console.log('Source after removing entire export declaration:');
   console.log(result);
+});
+
+test('hasPublicTag detects /** @public */ on export declaration', () => {
+  const source = `
+/** @public */
+export { delegateAuthorize } from './auth';
+export { unusedHelper } from './helpers';
+`;
+  const sourceFile = createTestSourceFile(source);
+  const exportDecls = sourceFile.getExportDeclarations();
+
+  assert.isTrue(hasPublicTag(exportDecls[0]), 'First export should be detected as @public');
+  assert.isFalse(hasPublicTag(exportDecls[1]), 'Second export should not be detected as @public');
+});
+
+test('hasPublicTag returns false when no JSDoc is present', () => {
+  const source = `
+export { foo } from './foo';
+export { bar } from './bar';
+`;
+  const sourceFile = createTestSourceFile(source);
+  const exportDecls = sourceFile.getExportDeclarations();
+
+  assert.isFalse(hasPublicTag(exportDecls[0]));
+  assert.isFalse(hasPublicTag(exportDecls[1]));
+});
+
+test('hasPublicTag detects @public among other tags', () => {
+  const source = `
+/**
+ * @public @deprecated Use newAuth instead
+ */
+export { oldAuth } from './auth';
+`;
+  const sourceFile = createTestSourceFile(source);
+  const exportDecls = sourceFile.getExportDeclarations();
+
+  assert.isTrue(hasPublicTag(exportDecls[0]));
+});
+
+test('hasPublicTag detects @public in single-line comment', () => {
+  const source = `
+// @public
+export { handler } from './handler';
+`;
+  const sourceFile = createTestSourceFile(source);
+  const exportDecls = sourceFile.getExportDeclarations();
+
+  assert.isTrue(hasPublicTag(exportDecls[0]));
 });
 
 test('computeIndexingPaths must include files outside the scanned directory', () => {

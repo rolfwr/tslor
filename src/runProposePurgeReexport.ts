@@ -67,8 +67,11 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
 
   console.log(`Found ${allReExports.length} re-exported symbols`);
 
+  // Filter out re-exports marked with @public
+  const filteredReExports = await filterPublicExports(allReExports, fileSystem);
+
   // Find unused re-exports (those with no external importers)
-  const unusedReExports = await findUnusedReExports(db, allReExports);
+  const unusedReExports = await findUnusedReExports(db, filteredReExports);
 
   if (unusedReExports.length === 0) {
     console.log('No unused re-exports found.');
@@ -110,6 +113,84 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
   }
 
   return reExports;
+}
+
+/**
+ * Check if an export declaration has a @public JSDoc tag in its leading comments.
+ * This follows the TSDoc convention also used by Knip to mark exports as
+ * intentionally public even when no TypeScript importer references them
+ * (e.g., Lambda handler entry points referenced by deployment config).
+ */
+export function hasPublicTag(exportDecl: ExportDeclaration): boolean {
+  const leadingComments = exportDecl.getLeadingCommentRanges();
+  for (const comment of leadingComments) {
+    const text = comment.getText();
+    if (text.includes('@public')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Filter out re-exports whose export declarations are tagged with @public.
+ */
+async function filterPublicExports(
+  allReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
+  fileSystem: FileSystem
+): Promise<Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>> {
+  // Group by file to load each source file only once
+  const byFile = new Map<string, typeof allReExports>();
+  for (const reExport of allReExports) {
+    if (!byFile.has(reExport.reExporterPath)) {
+      byFile.set(reExport.reExporterPath, []);
+    }
+    byFile.get(reExport.reExporterPath)!.push(reExport);
+  }
+
+  const kept: typeof allReExports = [];
+  let skippedCount = 0;
+
+  for (const [filePath, fileReExports] of byFile) {
+    const sourceFile = await loadSourceFile(filePath, fileSystem);
+    const exportDecls = sourceFile.getExportDeclarations();
+
+    // Build a set of symbol names protected by @public on their declaration
+    const publicSymbols = new Set<string>();
+    for (const exportDecl of exportDecls) {
+      if (hasPublicTag(exportDecl)) {
+        for (const namedExport of exportDecl.getNamedExports()) {
+          publicSymbols.add(namedExport.getName());
+        }
+        // Also handle namespace re-exports (export * from '...')
+        if (exportDecl.getNamedExports().length === 0) {
+          // All symbols from this declaration are public
+          const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
+          if (moduleSpec) {
+            for (const reExport of fileReExports) {
+              if (reExport.originalModuleSpec === moduleSpec) {
+                publicSymbols.add(reExport.symbolName);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const reExport of fileReExports) {
+      if (publicSymbols.has(reExport.symbolName)) {
+        skippedCount++;
+      } else {
+        kept.push(reExport);
+      }
+    }
+  }
+
+  if (skippedCount > 0) {
+    console.log(`Skipped ${skippedCount} re-exports marked @public`);
+  }
+
+  return kept;
 }
 
 /**
