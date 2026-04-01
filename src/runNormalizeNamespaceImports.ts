@@ -8,6 +8,7 @@ import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeSt
 import { loadSourceFile, NODEJS_GLOBALS } from './indexing';
 import { openStorage } from './storage';
 import { reinsertScript } from './transformingFileSystem';
+import { isGeneratedFile } from './generatedFileDetection';
 
 export interface NamespaceNormalizationChange {
   moduleSpec: string;
@@ -124,8 +125,16 @@ export async function runNormalizeNamespaceImports(
   let totalNormalized = 0;
   let totalSkipped = 0;
 
+  let skippedGenerated = 0;
   for (const filePath of filesWithNamespaceImports) {
     const originalContent = await fsp.readFile(filePath, 'utf-8');
+
+    // Skip files marked as @generated
+    if (isGeneratedFile(originalContent)) {
+      skippedGenerated++;
+      continue;
+    }
+
     const sourceFile = await loadSourceFile(filePath, fileSystem);
 
     const fileChanges = normalizeNamespaceImportsInFile(sourceFile);
@@ -177,6 +186,9 @@ export async function runNormalizeNamespaceImports(
   console.log(`Normalized ${totalNormalized} namespace import(s) across ${sourceFiles.length} file(s)`);
   if (totalSkipped > 0) {
     console.log(`Skipped ${totalSkipped} namespace import(s) that could not be safely normalized.`);
+  }
+  if (skippedGenerated > 0) {
+    console.log(`Skipped ${skippedGenerated} @generated file(s)`);
   }
 
   const plan: TslorPlan = {

@@ -15,6 +15,7 @@ import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
 import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
 import { FileSystem } from "./filesystem";
+import { isGeneratedFile } from "./generatedFileDetection";
 
 /**
  * Compute which file paths need indexing and which directory to scan for re-exports.
@@ -256,11 +257,18 @@ async function createPurgeReexportPlan(
   }
 
   // Process each file
+  let skippedGenerated = 0;
   for (const [filePath, fileReExports] of changesByFile) {
-    const fileChecksum = await computeFileChecksum(filePath);
-
     // Read the original file content for Vue file reconstruction and undo
     const originalContent = await fsp.readFile(filePath, 'utf-8');
+
+    // Skip files marked as @generated
+    if (isGeneratedFile(originalContent)) {
+      skippedGenerated++;
+      continue;
+    }
+
+    const fileChecksum = await computeFileChecksum(filePath);
 
     // Load the file through TransformingFileSystem for proper AST analysis
     const sourceFile = await loadSourceFile(filePath, fileSystem);
@@ -299,6 +307,10 @@ async function createPurgeReexportPlan(
       sourceFiles.add(filePath);
       checksums[filePath] = fileChecksum;
     }
+  }
+
+  if (skippedGenerated > 0) {
+    console.log(`Skipped ${skippedGenerated} @generated file(s)`);
   }
 
   return {

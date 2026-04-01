@@ -12,6 +12,7 @@ import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePl
 import { SourceFile, ImportDeclaration } from "ts-morph";
 import { loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
+import { isGeneratedFile } from "./generatedFileDetection";
 import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
 import { FileSystem } from "./filesystem";
 
@@ -241,8 +242,16 @@ async function createImportDirectlyPlan(
   }
 
   // Process each file
+  let skippedGenerated = 0;
   for (const [filePath, fileChanges] of changesByFile) {
     const originalContent = await fileSystem.readFile(filePath);
+
+    // Skip files marked as @generated
+    if (isGeneratedFile(originalContent)) {
+      skippedGenerated++;
+      continue;
+    }
+
     const fileChecksum = computeStringChecksum(originalContent);
 
     // Load the file through TransformingFileSystem for proper AST analysis
@@ -284,6 +293,10 @@ async function createImportDirectlyPlan(
       sourceFiles.add(filePath);
       checksums[filePath] = fileChecksum;
     }
+  }
+
+  if (skippedGenerated > 0) {
+    console.log(`Skipped ${skippedGenerated} @generated file(s)`);
   }
 
   return {
