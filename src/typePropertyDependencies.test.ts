@@ -12,7 +12,6 @@
 
 import { assert, test } from 'vitest';
 import { Project, SourceFile } from 'ts-morph';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -69,39 +68,6 @@ export interface PendingTransferRequest {
 export interface OtherType {
   value: string;
 }
-`;
-
-  // Expected itemType.ts content from test-expected/
-  const expectedTargetSource = `export interface DerivedClip {
-  type: "derived";
-}
-
-export interface VirtualClip extends DerivedClip {
-  masterClipId: string;
-  inPoint: number;
-  outPoint: number;
-}
-
-export interface Item {
-  id: string;
-  virtualClipInfo?: VirtualClip;
-}
-
-export interface PendingArchiveRequest {
-  itemId: string;
-}
-
-export interface PendingTransferRequest {
-  itemId: string;
-}
-`;
-
-  // Expected item.ts content after split
-  const expectedSourceSource = `export interface OtherType {
-  value: string;
-}
-
-export { Item, PendingArchiveRequest, PendingTransferRequest, VirtualClip, DerivedClip } from "./itemType";
 `;
 
   // Parse the source
@@ -260,7 +226,7 @@ export function createItem(): Item {
   // Create project with both files
   const project = new Project({ useInMemoryFileSystem: true });
   const itemFile = project.createSourceFile('item.ts', itemSource);
-  const consumerFile = project.createSourceFile('consumer.ts', consumerSource);
+  project.createSourceFile('consumer.ts', consumerSource);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
@@ -404,28 +370,10 @@ export default interface ExternalType {
 }
 `;
 
-  // Expected source after split
-  const expectedSource = `// Source file with type-only default imports that will be moved
-import { MyInterface } from './target';
-
-export const helperFunc = () => 'helper';
-
-export { MyInterface } from "./target";
-`;
-
-  // Expected target after split
-  const expectedTarget = `// Target file with correct default import syntax
-import type ExternalType from './external';
-
-export interface MyInterface {
-    field: ExternalType;
-}
-`;
-
   // Create project with both files
   const project = new Project({ useInMemoryFileSystem: true });
   const sourceFile = project.createSourceFile('source.ts', sourceInput);
-  const externalFile = project.createSourceFile('external.ts', externalInput);
+  project.createSourceFile('external.ts', externalInput);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();

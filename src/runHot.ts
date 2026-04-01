@@ -1,4 +1,3 @@
-import { resolve } from 'path';
 import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
 import { Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
@@ -201,30 +200,6 @@ function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, H
   }
 
   return hotMods;
-}
-
-function parseOptions(args: string[]): Options {
-  const opts: Options = {
-    select: null,
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    switch (arg) {
-      case '--select':
-        if (i + 1 >= args.length) {
-          throw new Error('--select requires a path argument');
-        }
-        opts.select = resolve(args[i + 1]);
-        i++;
-        break;
-      default:
-        // Ignore unknown options for now
-        break;
-    }
-  }
-
-  return opts;
 }
 
 export async function runHot(directory: string, options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {

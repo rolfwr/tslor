@@ -7,22 +7,18 @@
 
 import path from 'node:path';
 import { StaticModuleInfo } from './indexing';
-import { invariant, assertDefined } from './invariant';
-import { 
-  Project, 
-  SourceFile, 
-  SyntaxKind, 
+import { assertDefined } from './invariant';
+import {
+  Project,
+  SourceFile,
+  SyntaxKind,
   FunctionDeclaration,
   VariableStatement,
-  VariableDeclaration,
   TypeAliasDeclaration,
   InterfaceDeclaration,
   ClassDeclaration,
   JSDoc,
-  ParameterDeclaration,
-  PropertySignature,
   Node,
-  Identifier
 } from 'ts-morph';
 
 /**

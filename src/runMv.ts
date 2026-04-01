@@ -8,7 +8,7 @@ import { Storage } from "./storage";
 import { indexImportFromFiles, loadSourceFile, NamedExport, resolveImportSpec, resolveImportSpecAlias } from "./indexing";
 import { Node, ImportDeclaration, SyntaxKind } from "ts-morph";
 import { DebugOptions } from "./objstore";
-import { FileSystem, RealFileSystem } from "./filesystem";
+import { FileSystem } from "./filesystem";
 
 interface FileMove {
   oldPath: string;

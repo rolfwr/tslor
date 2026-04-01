@@ -1,5 +1,5 @@
 import { test, assert } from 'vitest';
-import { Project, SourceFile } from 'ts-morph';
+import { Project } from 'ts-morph';
 import { normalizeImportsInFile } from './runNormalizeImports';
 
 function normalize(source: string): { changed: boolean; result: string } {
@@ -121,7 +121,7 @@ import { B } from './mod2';
 });
 
 test('No-op when nothing to merge', () => {
-  const { changed, result } = normalize(`
+  const { changed } = normalize(`
 import { A } from './mod1';
 import type { B } from './mod2';
 import * as path from 'path';

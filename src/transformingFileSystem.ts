@@ -7,10 +7,10 @@ export class TransformingFileSystem implements FileSystemHost {
   isCaseSensitive(): boolean {
     return true;
   }
-  delete(path: string): Promise<void> {
+  delete(_path: string): Promise<void> {
     throw new Error("delete not implemented.");
   }
-  deleteSync(path: string): void {
+  deleteSync(_path: string): void {
     throw new Error("deleteSync not implemented.");
   }
   readDirSync(dirPath: string): RuntimeDirEntry[] {
@@ -81,16 +81,16 @@ export class TransformingFileSystem implements FileSystemHost {
   mkdirSync(dirPath: string): void {
     mkdirSync(dirPath, { recursive: true });
   }
-  move(srcPath: string, destPath: string): Promise<void> {
+  move(_srcPath: string, _destPath: string): Promise<void> {
     throw new Error("move not implemented.");
   }
-  moveSync(srcPath: string, destPath: string): void {
+  moveSync(_srcPath: string, _destPath: string): void {
     throw new Error("moveSync not implemented.");
   }
-  copy(srcPath: string, destPath: string): Promise<void> {
+  copy(_srcPath: string, _destPath: string): Promise<void> {
     throw new Error("copy not implemented.");
   }
-  copySync(srcPath: string, destPath: string): void {
+  copySync(_srcPath: string, _destPath: string): void {
     throw new Error("copySync not implemented.");
   }
   async fileExists(filePath: string): Promise<boolean> {
@@ -134,10 +134,10 @@ export class TransformingFileSystem implements FileSystemHost {
   getCurrentDirectory(): string {
     return process.cwd();
   }
-  glob(patterns: ReadonlyArray<string>): Promise<string[]> {
+  glob(_patterns: ReadonlyArray<string>): Promise<string[]> {
     throw new Error("glob not implemented.");
   }
-  globSync(patterns: ReadonlyArray<string>): string[] {
+  globSync(_patterns: ReadonlyArray<string>): string[] {
     throw new Error("globSync not implemented.");
   }
 }

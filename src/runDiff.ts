@@ -22,7 +22,7 @@ export interface DiffOptions {
 export async function runDiff(
   planFileArg: string | undefined,
   options: DiffOptions,
-  debugOptions: DebugOptions
+  _debugOptions: DebugOptions
 ): Promise<void> {
   const planFile = planFileArg || PLAN_FILE_NAME;
 

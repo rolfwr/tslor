@@ -78,7 +78,7 @@ export { MyInterface } from "./target";
   // Create project with both files
   const project = new Project({ useInMemoryFileSystem: true });
   const sourceFile = createTestSourceFile(project, 'source.ts', sourceInput);
-  const externalFile = createTestSourceFile(project, 'external.ts', externalInput);
+  createTestSourceFile(project, 'external.ts', externalInput);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
@@ -174,7 +174,7 @@ export { MyInterface } from "./target";
   assert.notInclude(actualSource, 'ExternalType', 'Source should not import ExternalType anymore');
 
   // Now verify the split code compiles without errors
-  const targetFile = project.createSourceFile('target.ts', actualTarget);
+  project.createSourceFile('target.ts', actualTarget);
   sourceFile.replaceWithText(actualSource);
 
   const finalDiagnostics = project.getPreEmitDiagnostics();
@@ -215,7 +215,7 @@ export default value;
 
   const project = new Project({ useInMemoryFileSystem: true });
   const sourceFile = createTestSourceFile(project, 'source.ts', sourceInput);
-  const externalFile = createTestSourceFile(project, 'external.ts', externalInput);
+  createTestSourceFile(project, 'external.ts', externalInput);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
@@ -257,7 +257,7 @@ export default value;
   actualSource = addImportForMovedSymbols(sourceFileAfterCleanup, actuallyMovedSymbols, './target', true);
 
   // Verify compilation
-  const targetFile = project.createSourceFile('target.ts', actualTarget);
+  project.createSourceFile('target.ts', actualTarget);
   sourceFile.replaceWithText(actualSource);
 
   const finalDiagnostics = project.getPreEmitDiagnostics();

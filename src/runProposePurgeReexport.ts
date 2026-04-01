@@ -13,8 +13,8 @@ import { promises as fsp } from "fs";
 import { SourceFile, ExportDeclaration } from "ts-morph";
 import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem";
+import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
+import { FileSystem } from "./filesystem";
 
 /**
  * Compute which file paths need indexing and which directory to scan for re-exports.

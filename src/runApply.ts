@@ -12,8 +12,7 @@ import {
   validateChecksums,
   executeChanges,
   executeUndo,
-  archivePlan,
-  TslorPlan
+  archivePlan
 } from "./plan";
 import { spawn } from 'child_process';
 
@@ -28,7 +27,7 @@ export interface ApplyOptions {
 export async function runApply(
   planFileArg: string | undefined,
   options: ApplyOptions,
-  debugOptions: DebugOptions
+  _debugOptions: DebugOptions
 ): Promise<void> {
   const planFile = planFileArg || PLAN_FILE_NAME;
   const force = options.force || false;

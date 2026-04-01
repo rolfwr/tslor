@@ -11,7 +11,6 @@
  * where possible, but we maintain our own interface for the operations we specifically need.
  */
 
-import type { FileSystemHost } from 'ts-morph';
 
 export interface FileSystem {
   /**
@@ -104,7 +103,7 @@ export class InMemoryFileSystem implements FileSystem {
     return Array.from(this.files.keys()).some(path => path.startsWith(dirPrefix));
   }
 
-  async readFile(filePath: string, encoding?: string): Promise<string> {
+  async readFile(filePath: string, _encoding?: string): Promise<string> {
     const file = this.files.get(filePath);
     if (!file) {
       throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);

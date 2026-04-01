@@ -44,7 +44,7 @@ export class InMemoryRepositoryRootProvider implements RepositoryRootProvider {
     this.tsFiles = tsFiles;
   }
 
-  findRepositoryRoot(path: string): string {
+  findRepositoryRoot(_path: string): string {
     // For in-memory testing, always return the configured repo root
     return this.repoRoot;
   }

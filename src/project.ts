@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { dirname } from "path";
-import { FileSystem, RealFileSystem } from "./filesystem";
+import { FileSystem } from "./filesystem";
 
 
 export function findGitRepoRoot(oldPath: string) {
@@ -62,7 +62,7 @@ export async function getTsconfigPathForFile(root: string, file: string, fileSys
       if (exists) {
         return tsconfigPath;
       }
-    } catch (err) {
+    } catch {
       // For in-memory filesystems, exists() might throw instead of returning false
       // In that case, continue searching
     }

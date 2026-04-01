@@ -112,7 +112,7 @@ function isWithinProject(filePath: string, projectPath: string): boolean {
     
     // Check if the file is within the project directory
     return absoluteFilePath.startsWith(absoluteProjectPath);
-  } catch (error) {
+  } catch {
     // If there's an error with path resolution, be conservative and exclude
     return false;
   }

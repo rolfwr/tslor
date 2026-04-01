@@ -51,7 +51,7 @@ export async function runSplit(
     if (existsSync(PLAN_FILE_NAME)) {
       await fsp.unlink(PLAN_FILE_NAME);
     }
-  } catch (error) {
+  } catch {
     // Ignore cleanup errors
   }
   

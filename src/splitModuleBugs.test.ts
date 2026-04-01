@@ -43,8 +43,8 @@ export function otherFunction(): string {
   
   // Extract functionToExtract (and its dependency helperFunction)
   const symbolsToMove = new Set(['functionToExtract', 'helperFunction']);
-  const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  
+  extractSymbolDefinitions(sourceFile, symbolsToMove);
+
   // Analyze import usage
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
   const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);

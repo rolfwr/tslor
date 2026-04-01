@@ -71,8 +71,7 @@ program
 program
   .command('inspect <path>')
   .description('Inspect a TypeScript file')
-  .action(async (path: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+  .action(async (path: string) => {
     const fileSystem = new RealFileSystem();
     const absolutePath = resolve(path);
     const repoRoot = findGitRepoRoot(dirname(absolutePath));
