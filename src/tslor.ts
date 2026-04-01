@@ -20,6 +20,7 @@ import { runImportChain } from './runImportChain';
 import { runTscat } from './runTscat';
 import { runProposeImportDirectly } from './runProposeImportDirectly';
 import { runProposePurgeReexport } from './runProposePurgeReexport';
+import { runNormalizeNamespaceImports } from './runNormalizeNamespaceImports';
 import { runReplaceTypeUse } from './runReplaceTypeUse';
 import { runNormalizeImports } from './runNormalizeImports';
 import { runTypeLeafUsage } from './runTypeLeafUsage';
@@ -200,6 +201,16 @@ program
     const repoProvider = new GitRepositoryRootProvider();
     const fileSystem = new RealFileSystem();
     await runProposePurgeReexport(directory, debugOptions, repoProvider, fileSystem);
+  });
+
+program
+  .command('normalize-namespace-imports <directory>')
+  .description('Convert namespace imports (import * as X) to explicit named imports (creates .tslor-plan.json)')
+  .action(async (directory: string, cmd) => {
+    const debugOptions = getDebugOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runNormalizeNamespaceImports(directory, debugOptions, repoProvider, fileSystem);
   });
 
 program
