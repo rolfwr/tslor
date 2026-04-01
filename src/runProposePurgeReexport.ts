@@ -17,6 +17,23 @@ import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRo
 import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem";
 
 /**
+ * Compute which file paths need indexing and which directory to scan for re-exports.
+ *
+ * The directory argument scopes *which re-exports to consider* but the full set
+ * of repository files must be indexed so that consumers outside the directory
+ * are visible to the unused-import check.
+ */
+export function computeIndexingPaths(
+  allPaths: string[],
+  directory: string
+): { pathsToIndex: string[]; reExportDirectory: string } {
+  return {
+    pathsToIndex: allPaths,
+    reExportDirectory: directory,
+  };
+}
+
+/**
  * Propose removing unused re-exports from the codebase.
  */
 export async function runProposePurgeReexport(directoryArg: string, debugOptions: DebugOptions, repoProvider: RepositoryRootProvider, fileSystem: FileSystem): Promise<TslorPlan> {
@@ -28,13 +45,16 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
   // Find repository root
   const repoRoot = repoProvider.findRepositoryRoot(directory);
 
-  // Build/update the index for files in the specified directory only
+  /*
+    Build/update the index — index ALL repo files so that consumers outside the
+    scanned directory are visible to the unused-import check.
+  */
   const db = openStorage(debugOptions, true);
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
-  const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
+  const { pathsToIndex } = computeIndexingPaths(allPaths, directory);
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(pathsToIndex, db, repoRoot, true, fileSystem);
   db.save();
 
   // Find all re-exports in the codebase

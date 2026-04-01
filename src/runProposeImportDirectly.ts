@@ -8,13 +8,12 @@
 import { openStorage, Storage } from "./storage";
 import { DebugOptions, Obj } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { promises as fsp } from "fs";
-import { Project, SourceFile, ImportDeclaration } from "ts-morph";
-import { defaultProjectOptions, loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing";
-import { extractScript, reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, GitRepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem, RealFileSystem, InMemoryFileSystem } from "./filesystem";
+import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
+import { SourceFile, ImportDeclaration } from "ts-morph";
+import { loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing";
+import { reinsertScript } from "./transformingFileSystem";
+import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
+import { FileSystem } from "./filesystem";
 
 /**
  * Propose changing imports of re-exported symbols to point directly to original exports.
@@ -121,6 +120,29 @@ async function findImportChangesForReExports(
     }
   }
 
+  // Cache: importer path -> map of (resolved absolute exporter path -> literal module specifier)
+  const literalSpecCache = new Map<string, Map<string, string>>();
+
+  async function getLiteralModuleSpec(importerPath: string, exporterPath: string): Promise<string | undefined> {
+    if (!literalSpecCache.has(importerPath)) {
+      const specMap = new Map<string, string>();
+      try {
+        const sf = await loadSourceFile(importerPath, fileSystem);
+        for (const decl of sf.getImportDeclarations()) {
+          const literal = decl.getModuleSpecifierValue();
+          const resolved = await resolveImportSpecFromIndexing(repoRoot, importerPath, literal, fileSystem);
+          if (resolved) {
+            specMap.set(resolved, literal);
+          }
+        }
+      } catch {
+        // If we can't load the file, leave cache empty
+      }
+      literalSpecCache.set(importerPath, specMap);
+    }
+    return literalSpecCache.get(importerPath)!.get(exporterPath);
+  }
+
   for (const importObj of allImports) {
     const parts = importObj.id.split('|');
     const importerPath = parts[1];
@@ -140,40 +162,52 @@ async function findImportChangesForReExports(
     const reExportInfo = reExportMap.get(key);
 
     if (reExportInfo) {
-      // This import is using a re-exported symbol. We can potentially change it to point directly
-      // to the original module, but only if the symbol actually exists there.
-      const currentModuleSpec = await resolveImportSpecAlias(repoRoot, importerPath, exporterPath, fileSystem);
+      /*
+        Get the literal module specifier from the source file (not the alias-resolved form).
+        applyImportChangesToFile matches against the literal text in the import declaration,
+        so currentModuleSpec must match that exactly.
+      */
+      const currentModuleSpec = await getLiteralModuleSpec(importerPath, exporterPath);
+      if (!currentModuleSpec) {
+        continue;
+      }
 
       // Resolve the original module spec relative to the re-exporter to get the absolute path
       const originalModulePath = await resolveImportSpecFromIndexing(repoRoot, exporterPath, reExportInfo.originalModuleSpec, fileSystem);
       if (!originalModulePath) continue;
 
-      // Convert that absolute path to an import spec for the importer
-      const newModuleSpec = await resolveImportSpecAlias(repoRoot, importerPath, originalModulePath, fileSystem);
+      /*
+        Compute newModuleSpec in the same form as the source file uses.
+        If the current import is a relative path, produce a relative path.
+        If it's an alias, produce an alias.
+      */
+      let newModuleSpec: string | undefined;
+      if (currentModuleSpec.startsWith('.')) {
+        // Relative path: compute relative from importer to original module
+        const { relative, dirname } = await import('path');
+        const relPath = relative(dirname(importerPath), originalModulePath.replace(/\.ts$/, ''));
+        newModuleSpec = relPath.startsWith('.') ? relPath : './' + relPath;
+      } else {
+        // Alias or bare specifier: use resolveImportSpecAlias
+        newModuleSpec = await resolveImportSpecAlias(repoRoot, importerPath, originalModulePath, fileSystem) ?? undefined;
+      }
 
-      if (currentModuleSpec && newModuleSpec && currentModuleSpec !== newModuleSpec) {
+      if (newModuleSpec && currentModuleSpec !== newModuleSpec) {
         // CRITICAL SAFETY CHECK: Verify that the symbol actually exists in the original module.
-        // This prevents changing imports to point to modules where the symbol doesn't exist,
-        // which would break the code (e.g., Vue 2 compatibility functions that don't exist in Vue 3).
-        if (originalModulePath) {
-          try {
-            const originalSourceFile = await loadSourceFile(originalModulePath, fileSystem);
-            const originalModuleInfo = parseModule(originalSourceFile);
-            if (originalModuleInfo.exportedNames.has(symbolName)) {
-              // Symbol exists in the original module, safe to propose the change
-              changes.push({
-                importerPath,
-                symbolName,
-                currentModuleSpec,
-                newModuleSpec,
-                isTypeOnly: reExportInfo.isTypeOnly
-              });
-            }
-            // If symbol is not exported from the original module, skip the change to prevent breakage
-          } catch (error) {
-            // If we can't parse the original module, skip the change to be safe
-            console.warn(`Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}`);
+        try {
+          const originalSourceFile = await loadSourceFile(originalModulePath, fileSystem);
+          const originalModuleInfo = parseModule(originalSourceFile);
+          if (originalModuleInfo.exportedNames.has(symbolName)) {
+            changes.push({
+              importerPath,
+              symbolName,
+              currentModuleSpec,
+              newModuleSpec,
+              isTypeOnly: reExportInfo.isTypeOnly
+            });
           }
+        } catch {
+          console.warn(`Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}`);
         }
       }
     }
@@ -208,10 +242,8 @@ async function createImportDirectlyPlan(
 
   // Process each file
   for (const [filePath, fileChanges] of changesByFile) {
-    const fileChecksum = await computeFileChecksum(filePath);
-
-    // Read the original file content for Vue file reconstruction and undo
-    const originalContent = await fsp.readFile(filePath, 'utf-8');
+    const originalContent = await fileSystem.readFile(filePath);
+    const fileChecksum = computeStringChecksum(originalContent);
 
     // Load the file through TransformingFileSystem for proper AST analysis
     const sourceFile = await loadSourceFile(filePath, fileSystem);
@@ -269,7 +301,7 @@ async function createImportDirectlyPlan(
 /**
  * Apply import changes to a source file
  */
-function applyImportChangesToFile(
+export function applyImportChangesToFile(
   sourceFile: SourceFile,
   changes: Array<{ symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }>,
   filePath: string
@@ -310,8 +342,54 @@ function applyImportChangesToFile(
             // All symbols can be changed safely, update the module specifier
             const newSpec = specChanges[0].newModuleSpec; // All changes for this spec should have the same new spec
             importDecl.setModuleSpecifier(newSpec);
+          } else {
+            /*
+              Split the import: keep unchanged symbols in the original import,
+              add a new import for the redirected symbols.
+            */
+            const isDeclarationTypeOnly = importDecl.isTypeOnly();
+
+            /*
+              Build a per-symbol type-only lookup from the original import
+              BEFORE removing any nodes (removed nodes can't be queried).
+              Covers both declaration-level `import type { ... }` and
+              per-specifier `import { type Foo, Bar }`.
+            */
+            const perSymbolTypeOnly = new Map<string, boolean>();
+            for (const ni of namedImports) {
+              perSymbolTypeOnly.set(ni.getName(), isDeclarationTypeOnly || ni.isTypeOnly());
+            }
+
+            // Group changed symbols by their new module spec
+            const byNewSpec = new Map<string, typeof specChanges>();
+            for (const change of specChanges) {
+              if (!importedSymbolNames.has(change.symbolName)) {
+                continue;
+              }
+              if (!byNewSpec.has(change.newModuleSpec)) {
+                byNewSpec.set(change.newModuleSpec, []);
+              }
+              byNewSpec.get(change.newModuleSpec)!.push(change);
+            }
+
+            // Remove redirected symbols from the original import
+            for (const namedImport of namedImports) {
+              if (changedSymbols.has(namedImport.getName())) {
+                namedImport.remove();
+              }
+            }
+
+            // Add new import declarations for each target module
+            for (const [newSpec, newSpecChanges] of byNewSpec) {
+              const newNamedImports = newSpecChanges.map(c => c.symbolName);
+              const allTypeOnly = newNamedImports.every(n => perSymbolTypeOnly.get(n));
+              sourceFile.addImportDeclaration({
+                moduleSpecifier: newSpec,
+                namedImports: newNamedImports,
+                isTypeOnly: allTypeOnly,
+              });
+            }
           }
-          // If not all symbols can be changed, skip this import declaration entirely
         }
       } catch (importError) {
         const importText = importDecl.getText().trim();

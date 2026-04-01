@@ -5,6 +5,7 @@
  * by extracting symbols and their dependencies into new modules.
  */
 
+import path from 'node:path';
 import { StaticModuleInfo } from './indexing';
 import { invariant, assertDefined } from './invariant';
 import { 
@@ -405,6 +406,16 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
     // Find all identifiers in this symbol's node
     symbolNode.getDescendantsOfKind(SyntaxKind.Identifier).forEach(identifier => {
       const idName = identifier.getText();
+
+      // Skip property names in object literal assignments (non-shorthand)
+      const parent = identifier.getParent();
+      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
+        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+        if (propAssignment.getNameNode() === identifier) {
+          return;
+        }
+      }
+
       if (importMap.has(idName)) {
         const importInfo = importMap.get(idName);
         assertDefined(importInfo, `Import info should be defined for ${idName}`);
@@ -478,8 +489,6 @@ function adjustModuleSpecForNewLocation(
   if (!moduleSpec.startsWith('.')) {
     return moduleSpec;
   }
-  
-  const path = require('path');
   
   // Resolve the module spec from the source file's location to get the absolute path
   const sourceDir = path.dirname(sourceFilePath);
@@ -857,6 +866,15 @@ function findReferencedSymbols(
   
   sourceFile.forEachDescendant(node => {
     if (node.getKind() === SyntaxKind.Identifier) {
+      // Skip property names in object literal assignments (non-shorthand)
+      const parent = node.getParent();
+      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
+        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+        if (propAssignment.getNameNode() === node) {
+          return;
+        }
+      }
+
       const identifierText = node.getText();
       if (candidateSymbols.has(identifierText)) {
         referencedSymbols.add(identifierText);

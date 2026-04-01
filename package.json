@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc -b",
     "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node' && esbuild src/indexingWorker.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/indexingWorker.mjs",
-    "check": "tsc -b && vitest run",
+    "lint": "oxlint src/",
+    "check": "tsc -b && oxlint src/ && vitest run",
     "test": "vitest run",
     "outline": "tsx src/outline.ts",
     "outline:silent": "tsx src/outline.ts"
@@ -25,6 +26,7 @@
     "@types/diff": "^8.0.0",
     "@types/node": "^25.5.0",
     "esbuild": "^0.24.2",
+    "oxlint": "^1.58.0",
     "tsx": "^4.19.2",
     "typescript": "^6.0.2",
     "vitest": "^3.0.4"

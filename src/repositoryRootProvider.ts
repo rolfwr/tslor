@@ -5,6 +5,8 @@
  * operations and in-memory testing scenarios.
  */
 
+import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
+
 export interface RepositoryRootProvider {
   /**
    * Find the repository root for a given path
@@ -22,12 +24,10 @@ export interface RepositoryRootProvider {
  */
 export class GitRepositoryRootProvider implements RepositoryRootProvider {
   findRepositoryRoot(path: string): string {
-    const { findGitRepoRoot } = require('./project');
     return findGitRepoRoot(path);
   }
 
   async getTypeScriptFilePaths(repoRoot: string, verbose: boolean): Promise<string[]> {
-    const { getTypeScriptFilePaths } = await import('./project');
     return getTypeScriptFilePaths(repoRoot, verbose);
   }
 }

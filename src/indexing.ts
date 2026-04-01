@@ -1178,10 +1178,22 @@ function collectIdentifierReferences(node: any): string[] {
         continue;
       }
     }
-    
+
+    /*
+      Skip property names in object literal assignments (non-shorthand)
+      e.g., in `{ description: 'value' }`, skip `description`
+      Note: shorthand `{ myVar }` uses ShorthandPropertyAssignment, not PropertyAssignment
+    */
+    if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
+      const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+      if (propAssignment.getNameNode() === id) {
+        continue;
+      }
+    }
+
     references.push(usedName);
   }
-  
+
   return references;
 }
 
@@ -1374,6 +1386,17 @@ function parseFunctionDeclaration(
         const propertyAccess = parent.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
         // Skip if this identifier is the property name (right side of the dot)
         if (propertyAccess.getName() === usedName) {
+          continue;
+        }
+      }
+
+      /*
+        Skip property names in object literal assignments (non-shorthand)
+        e.g., in `{ description: 'value' }`, skip `description`
+      */
+      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
+        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+        if (propAssignment.getNameNode() === id) {
           continue;
         }
       }
@@ -1610,8 +1633,11 @@ export async function loadSourceFile(srcPath: string, fileSystem: FileSystem, fi
 
     project.addSourceFileAtPath(srcPath);
   } else {
-    // For in-memory, create the source file with content
-    const content = fileContents?.get(srcPath) || '';
+    /*
+      For in-memory, create the source file with content.
+      If fileContents was not provided, read from the InMemoryFileSystem.
+    */
+    const content = fileContents?.get(srcPath) ?? await fileSystem.readFile(srcPath);
     project.createSourceFile(srcPath, content);
   }
 
@@ -1646,7 +1672,6 @@ export function inMemoryProjectOptions(fileContents: Map<string, string> = new M
     manipulationSettings: {
       quoteKind: QuoteKind.Single
     },
-    useInMemoryFileSystem: true,
     fileSystem: {
       isCaseSensitive: () => true,
       delete: () => Promise.reject(new Error("delete not implemented")),

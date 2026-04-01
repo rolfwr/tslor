@@ -8,6 +8,7 @@
 import { normalizeAndValidatePath, normalizePath, denormalizePath } from "./pathUtils";
 import { existsSync } from "fs";
 import { promises as fsp } from "fs";
+import { relative, dirname } from "node:path";
 import { loadSourceFile, parseModule, analyzeImportUsageFromStaticInfo } from "./indexing";
 import { FileSystem } from "./filesystem";
 import { DebugOptions } from "./objstore";
@@ -328,7 +329,6 @@ function checkIfRemainingSymbolsNeedMoved(
  * Extracted from runSplit for reuse.
  */
 function getRelativeImportPath(sourceModule: string, targetModule: string): string {
-  const { relative, dirname } = require('path');
   const relativePath = relative(dirname(sourceModule), targetModule);
   
   // Convert to module path (remove extension, ensure starts with ./ or ../)

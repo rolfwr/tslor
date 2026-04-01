@@ -311,3 +311,81 @@ const stayingC = 3;
   assert.match(result, /stayingA\s*=\s*1;\n\n\/\*\*/,
     'There must be a blank line between stayingA and the JSDoc comment for stayingC');
 });
+
+test('Bug: object literal property names should not appear as phantom dependencies', () => {
+  /*
+    Reproduction from _bug_phantom_imports.md:
+    Property keys like `description` and `example` in `.meta({ description: '...', example: '...' })`
+    are incorrectly treated as symbol references, generating bogus imports.
+  */
+  const sourceCode = `
+import { z } from 'zod';
+
+export const mySchema = z.string().meta({
+  description: 'A string field',
+  example: 'hello'
+});
+
+export type MyType = z.infer<typeof mySchema>;
+
+export const otherSchema = z.number();
+`;
+
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile('source.ts', sourceCode);
+
+  // Parse and build dependency graph
+  const staticModuleInfo = parseModule(sourceFile);
+  const dependencies = buildIntraModuleDependencies(staticModuleInfo);
+
+  /*
+    `description` and `example` are property keys, NOT symbol references.
+    They must not appear in the dependency graph at all.
+  */
+  const mySchemaUses = staticModuleInfo.identifierUses.get('mySchema') ?? [];
+  assert.notInclude(mySchemaUses, 'description',
+    'description is a property key, not a symbol reference');
+  assert.notInclude(mySchemaUses, 'example',
+    'example is a property key, not a symbol reference');
+
+  // Verify `z` IS still tracked as a dependency (sanity check)
+  assert.include(mySchemaUses, 'z',
+    'z should still be tracked as a dependency of mySchema');
+
+  // Now do a full split and verify no phantom imports are generated
+  const analysis = analyzeSplit(dependencies, 'mySchema');
+  assert.isTrue(analysis.canSplit, 'mySchema should be splittable');
+
+  const symbolsToMove = new Set<string>(['mySchema', 'MyType']);
+  for (const dep of analysis.requiredDependencies) {
+    symbolsToMove.add(dep);
+  }
+
+  // `description` and `example` must NOT be in the symbols to move
+  assert.isFalse(symbolsToMove.has('description'),
+    'description must not be a transitive dependency');
+  assert.isFalse(symbolsToMove.has('example'),
+    'example must not be a transitive dependency');
+
+  // Generate the split and check imports added back to source
+  const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
+  const importUsages = analyzeImportUsageBySymbol(sourceFile);
+  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);
+  const updatedSource = removeSymbolsFromSource(sourceFile, symbolsToMove);
+  const sourceFileAfterRemoval = project.createSourceFile('updated-source.ts', updatedSource);
+  const cleanedSource = removeUnusedImports(sourceFileAfterRemoval, symbolsToMove, onlyUsedByTarget);
+  const sourceFileForImports = project.createSourceFile('source-for-imports.ts', cleanedSource);
+
+  const exportedMovedSymbols = new Set(
+    Array.from(symbolsToMove).filter(s => dependencies.exports.has(s))
+  );
+  const finalSource = addImportForMovedSymbols(
+    sourceFileForImports, exportedMovedSymbols, './target', true, symbolDefinitions
+  );
+
+  // The critical assertion: no phantom imports of property keys
+  assert.notMatch(finalSource, /import.*description/,
+    'description must not appear in any import statement');
+  assert.notMatch(finalSource, /import.*example/,
+    'example must not appear in any import statement');
+});

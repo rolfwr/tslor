@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from "fs";
-import { mkdir, writeFile, stat, readdir } from "fs/promises";
-import { resolve } from "path";
+import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync } from "node:fs";
+import { mkdir, writeFile, stat, readFile } from "node:fs/promises";
 import type { FileSystemHost, RuntimeDirEntry } from "ts-morph";
 
 export class TransformingFileSystem implements FileSystemHost {
@@ -16,7 +15,6 @@ export class TransformingFileSystem implements FileSystemHost {
   }
   readDirSync(dirPath: string): RuntimeDirEntry[] {
     try {
-      const { readdirSync } = require("fs");
       const entries = readdirSync(dirPath, { withFileTypes: true });
       return entries.map((entry: any) => ({
         name: entry.name,
@@ -33,7 +31,6 @@ export class TransformingFileSystem implements FileSystemHost {
       throw new Error("Encoding " + encoding + " not supported.");
     }
     
-    const { readFile } = require("fs/promises");
     let content = await readFile(filePath, "utf-8");
 
     if (filePath.endsWith(".vue")) {
@@ -132,7 +129,6 @@ export class TransformingFileSystem implements FileSystemHost {
     }
   }
   realpathSync(path: string): string {
-    const { realpathSync } = require("fs");
     return realpathSync(path);
   }
   getCurrentDirectory(): string {
