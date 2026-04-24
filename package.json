@@ -10,7 +10,7 @@
     "build": "tsc -b",
     "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node' && esbuild src/indexingWorker.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/indexingWorker.mjs",
     "lint": "oxlint src/",
-    "check": "tsc -b && oxlint src/ && vitest run",
+    "check": "tsc -b && biome lint src/ && oxlint src/ && ast-grep scan src/",
     "test": "vitest run",
     "outline": "tsx src/outline.ts",
     "outline:silent": "tsx src/outline.ts"
@@ -23,6 +23,8 @@
     "ts-morph": "^25.0.0"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.42.1",
+    "@biomejs/biome": "^2.4.13",
     "@types/diff": "^8.0.0",
     "@types/node": "^25.5.0",
     "esbuild": "^0.24.2",

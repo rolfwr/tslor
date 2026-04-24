@@ -82,7 +82,7 @@ The propose/apply pattern lets you review refactoring plans before execution. Ch
 
 ```bash
 pnpm install
-pnpm check              # build + run all tests
+pnpm check              # build + lint (biome, oxlint, ast-grep)
 tsx src/tslor.ts <cmd>   # run during development without building
 ```
 

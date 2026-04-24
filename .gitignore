@@ -6,3 +6,4 @@ dist
 _*
 .*
 !.gitignore
+!.oxlintrc.json
