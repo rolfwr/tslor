@@ -52,7 +52,7 @@ export async function indexImportFromFiles(paths: string[], db: Storage, repoRoo
 async function indexImportFromFilesSequential(paths: string[], db: Storage, repoRoot: string, verbose: boolean, fileSystem: FileSystem) {
   let lastProgressAt = 0;
   for (let i = 0; i < paths.length; ++i) {
-    const path = paths[i];
+    const path = paths[i]!;
     if (verbose) {
       const now = Date.now();
       if (now - lastProgressAt >= 100) {
@@ -1601,7 +1601,7 @@ async function storeImportsFromFile(moduleInfo: ModuleInfo, db: Storage, mtimeMs
 
   // Store re-exports
   for (let i = 0; i < moduleInfo.reExports.length; i++) {
-    const reExport = moduleInfo.reExports[i];
+    const reExport = moduleInfo.reExports[i]!;
     db.putReExport(moduleInfo.path, i, reExport.name, {
       moduleSpec: reExport.moduleSpec,
       isTypeOnly: reExport.isTypeOnly
@@ -1798,7 +1798,7 @@ async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsc
       throw new Error('Unsupported alias path count');
     }
 
-    const path = paths[0];
+    const path = paths[0]!;
     if (!path.endsWith('/*')) {
       throw new Error('Unsupported alias path');
     }

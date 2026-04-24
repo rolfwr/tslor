@@ -33,13 +33,13 @@ export async function runTsort(
   const moduleSet = new Set(absoluteModulePaths);
 
   // Find git repo root and open storage
-  const repoRoot = findGitRepoRoot(absoluteModulePaths[0]);
+  const repoRoot = findGitRepoRoot(absoluteModulePaths[0]!);
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
 
   // Get tsconfig path for project scope filtering if needed
   const tsconfigPath = options.projectScope
-    ? await getTsconfigPathForFile(repoRoot, absoluteModulePaths[0], fileSystem)
+    ? await getTsconfigPathForFile(repoRoot, absoluteModulePaths[0]!, fileSystem)
     : null;
 
   // Build the dependency graph considering only the input modules
@@ -193,7 +193,7 @@ function findCycleNodes(
           const cycleStart = path.indexOf(neighbor);
           if (cycleStart !== -1) {
             for (let i = cycleStart; i < path.length; i++) {
-              cycleNodes.add(path[i]);
+              cycleNodes.add(path[i]!);
             }
           }
           cycleNodes.add(node);
@@ -204,7 +204,7 @@ function findCycleNodes(
         const cycleStart = path.indexOf(neighbor);
         if (cycleStart !== -1) {
           for (let i = cycleStart; i < path.length; i++) {
-            cycleNodes.add(path[i]);
+            cycleNodes.add(path[i]!);
           }
         }
         cycleNodes.add(neighbor);

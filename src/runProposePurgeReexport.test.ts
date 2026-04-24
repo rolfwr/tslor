@@ -135,8 +135,8 @@ export { unusedHelper } from './helpers';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]), 'First export should be detected as @public');
-  assert.isFalse(hasPublicTag(exportDecls[1]), 'Second export should not be detected as @public');
+  assert.isTrue(hasPublicTag(exportDecls[0]!), 'First export should be detected as @public');
+  assert.isFalse(hasPublicTag(exportDecls[1]!), 'Second export should not be detected as @public');
 });
 
 test('hasPublicTag returns false when no JSDoc is present', () => {
@@ -147,8 +147,8 @@ export { bar } from './bar';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isFalse(hasPublicTag(exportDecls[0]));
-  assert.isFalse(hasPublicTag(exportDecls[1]));
+  assert.isFalse(hasPublicTag(exportDecls[0]!));
+  assert.isFalse(hasPublicTag(exportDecls[1]!));
 });
 
 test('hasPublicTag detects @public among other tags', () => {
@@ -161,7 +161,7 @@ export { oldAuth } from './auth';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]));
+  assert.isTrue(hasPublicTag(exportDecls[0]!));
 });
 
 test('hasPublicTag detects @public in single-line comment', () => {
@@ -172,7 +172,7 @@ export { handler } from './handler';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]));
+  assert.isTrue(hasPublicTag(exportDecls[0]!));
 });
 
 test('parseModule tracks namespace imports (import * as X) in unresolvedExportsByImportNames', () => {

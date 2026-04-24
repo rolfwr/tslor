@@ -310,8 +310,8 @@ function processData(data: unknown): unknown {
   const sortedNew = [...newImportUsages].sort((a, b) => a.symbol.localeCompare(b.symbol));
   
   for (let i = 0; i < sortedOld.length; i++) {
-    const oldUsage = sortedOld[i];
-    const newUsage = sortedNew[i];
+    const oldUsage = sortedOld[i]!;
+    const newUsage = sortedNew[i]!;
     
     assert.equal(oldUsage.symbol, newUsage.symbol, `Symbol names should match at index ${i}`);
     assert.equal(oldUsage.usesImports.length, newUsage.usesImports.length, 
@@ -322,9 +322,9 @@ function processData(data: unknown): unknown {
     const sortedNewImports = [...newUsage.usesImports].sort((a, b) => `${a.moduleSpec}:${a.importedName}`.localeCompare(`${b.moduleSpec}:${b.importedName}`));
     
     for (let j = 0; j < sortedOldImports.length; j++) {
-      assert.equal(sortedOldImports[j].moduleSpec, sortedNewImports[j].moduleSpec, 
+      assert.equal(sortedOldImports[j]!.moduleSpec, sortedNewImports[j]!.moduleSpec, 
         `Module spec should match for ${oldUsage.symbol} import ${j}`);
-      assert.equal(sortedOldImports[j].importedName, sortedNewImports[j].importedName, 
+      assert.equal(sortedOldImports[j]!.importedName, sortedNewImports[j]!.importedName, 
         `Import name should match for ${oldUsage.symbol} import ${j}`);
     }
   }
@@ -440,7 +440,7 @@ const CONSTANT_VALUE = 42;
   assert.isDefined(formatDate.jsDocs);
   assertDefined(formatDate.jsDocs, 'formatDate should have JSDoc');
   assert.isTrue(formatDate.jsDocs.length > 0);
-  assert.include(formatDate.jsDocs[0].getInnerText(), 'Formats a date to ISO string');
+  assert.include(formatDate.jsDocs[0]!.getInnerText(), 'Formats a date to ISO string');
   
   // Verify we have the actual AST node, not just text
   assert.isDefined(formatDate.node);
@@ -504,8 +504,8 @@ function processData(data: unknown): unknown {
   assert.isDefined(formatDateUsage);
   assertDefined(formatDateUsage, 'formatDate usage should be found');
   assert.equal(formatDateUsage.usesImports.length, 1);
-  assert.equal(formatDateUsage.usesImports[0].moduleSpec, 'date-fns');
-  assert.equal(formatDateUsage.usesImports[0].importedName, 'format');
+  assert.equal(formatDateUsage.usesImports[0]!.moduleSpec, 'date-fns');
+  assert.equal(formatDateUsage.usesImports[0]!.importedName, 'format');
   
   // validateEmail should use both 'validator' and 'helper' from './utils'
   const validateEmailUsage = importUsages.find(u => u.symbol === 'validateEmail');

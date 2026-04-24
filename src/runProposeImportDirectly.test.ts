@@ -92,8 +92,8 @@ export function useCustomIcons(): ItemCustomIconsDto {
 
   // Check that undo operations are the reverse of changes
   for (let i = 0; i < plan.changes.length; i++) {
-    const change = plan.changes[i];
-    const undo = plan.undo[i];
+    const change = plan.changes[i]!;
+    const undo = plan.undo[i]!;
 
     assert.equal(change.type, undo.type, `Change and undo types should match for index ${i}`);
 

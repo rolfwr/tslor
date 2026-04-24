@@ -79,9 +79,9 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
     // Extract symbol name from groups
     const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
     if (symbolNameGroup) {
-      const symbolName = symbolNameGroup.split('|')[1];
+      const symbolName = symbolNameGroup.split('|')[1]!;
       reExports.push({
-        reExporterPath: reExportObj.id.split('|')[1],
+        reExporterPath: reExportObj.id.split('|')[1]!,
         symbolName,
         originalModuleSpec: reExportObj.reExport.moduleSpec,
         isTypeOnly: reExportObj.reExport.isTypeOnly
@@ -146,7 +146,7 @@ async function findImportChangesForReExports(
 
   for (const importObj of allImports) {
     const parts = importObj.id.split('|');
-    const importerPath = parts[1];
+    const importerPath = parts[1]!;
 
     // Extract symbol name from the export group
     const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
@@ -155,8 +155,8 @@ async function findImportChangesForReExports(
     const exportParts = exportGroup.split('|');
     if (exportParts.length < 3) continue;
 
-    const exporterPath = exportParts[1];
-    const symbolName = exportParts[2];
+    const exporterPath = exportParts[1]!;
+    const symbolName = exportParts[2]!;
 
     // Check if this import is from a re-exporter
     const key = `${exporterPath}:${symbolName}`;
@@ -353,7 +353,7 @@ export function applyImportChangesToFile(
 
           if (allSymbolsCanBeChanged) {
             // All symbols can be changed safely, update the module specifier
-            const newSpec = specChanges[0].newModuleSpec; // All changes for this spec should have the same new spec
+            const newSpec = specChanges[0]!.newModuleSpec; // All changes for this spec should have the same new spec
             importDecl.setModuleSpecifier(newSpec);
           } else {
             /*

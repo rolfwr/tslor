@@ -139,7 +139,7 @@ function reportModuleCycles(cycles: string[][]) {
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     console.log(`Cycle ${i + 1}:`);
     for (const module of cycle) {
       console.log(`  ${denormalizePath(module, cwd)}`);
@@ -301,8 +301,8 @@ function renderCycleAsAscii(cycle: string[], graph: Map<string, Set<string>>, cw
   for (let i = 0; i < cycle.length; i++) {
     const col = i * 3;
     const row = i * 2;
-    grid[row][col] = 'o';
-    nodePositions.set(cycle[i], [row, col]);
+    grid[row]![col] = 'o';
+    nodePositions.set(cycle[i]!, [row, col]);
   }
   
   // Draw arrows based on actual dependencies in the graph
@@ -325,12 +325,12 @@ function renderCycleAsAscii(cycle: string[], graph: Map<string, Set<string>>, cw
   const terminalWidth = process.stdout.columns || Infinity;
   
   for (let row = 0; row < gridHeight; row++) {
-    let line = grid[row].join('');
+    let line = grid[row]!.join('');
     
     // Add path label for nodes
     const nodeIndex = Math.floor(row / 2);
     if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const path = denormalizePath(cycle[nodeIndex], cwd);
+      const path = denormalizePath(cycle[nodeIndex]!, cwd);
       const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
       const truncatedPath = truncatePathForTerminal(path, availableWidth);
       line += '  ' + truncatedPath;
@@ -366,8 +366,8 @@ function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cw
   for (let i = 0; i < cycle.length; i++) {
     const col = i * 3;
     const row = i * 2;
-    grid[row][col] = UNICODE_CHARS.node;
-    nodePositions.set(cycle[i], [row, col]);
+    grid[row]![col] = UNICODE_CHARS.node;
+    nodePositions.set(cycle[i]!, [row, col]);
   }
   
   // Draw arrows based on actual dependencies in the graph
@@ -390,12 +390,12 @@ function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cw
   const terminalWidth = process.stdout.columns || Infinity;
   
   for (let row = 0; row < gridHeight; row++) {
-    let line = grid[row].join('');
+    let line = grid[row]!.join('');
     
     // Add path label for nodes
     const nodeIndex = Math.floor(row / 2);
     if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const path = denormalizePath(cycle[nodeIndex], cwd);
+      const path = denormalizePath(cycle[nodeIndex]!, cwd);
       const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
       const truncatedPath = truncatePathForTerminal(path, availableWidth);
       const colorizedPath = colorizeFilePath(truncatedPath);
@@ -469,7 +469,7 @@ function drawFancyArrow(grid: string[][], sourcePos: [number, number], targetPos
  * Set a Unicode character on the grid, handling crossing rules.
  */
 function setFancyGridChar(grid: string[][], row: number, col: number, char: string) {
-  const current = grid[row][col];
+  const current = grid[row]![col];
   
   // Cannot overwrite these characters
   if (current === UNICODE_CHARS.node || current === UNICODE_CHARS.arrowLeft || 
@@ -482,9 +482,9 @@ function setFancyGridChar(grid: string[][], row: number, col: number, char: stri
   // Handle crossing rules
   if ((current === UNICODE_CHARS.vertical && char === UNICODE_CHARS.horizontal) || 
       (current === UNICODE_CHARS.horizontal && char === UNICODE_CHARS.vertical)) {
-    grid[row][col] = UNICODE_CHARS.cross;
+    grid[row]![col] = UNICODE_CHARS.cross;
   } else {
-    grid[row][col] = char;
+    grid[row]![col] = char;
   }
 }
 
@@ -609,7 +609,7 @@ function drawArrow(grid: string[][], sourcePos: [number, number], targetPos: [nu
  * Set a character on the grid, handling crossing rules.
  */
 function setGridChar(grid: string[][], row: number, col: number, char: string) {
-  const current = grid[row][col];
+  const current = grid[row]![col];
   
   // Cannot overwrite these characters
   if (current === 'o' || current === '<' || current === '>' || current === '`' || current === '.') {
@@ -618,9 +618,9 @@ function setGridChar(grid: string[][], row: number, col: number, char: string) {
   
   // Handle crossing rules
   if ((current === '|' && char === '-') || (current === '-' && char === '|')) {
-    grid[row][col] = '+';
+    grid[row]![col] = '+';
   } else {
-    grid[row][col] = char;
+    grid[row]![col] = char;
   }
 }
 
@@ -638,7 +638,7 @@ function reportModuleCyclesAscii(cycles: string[][], graph: Map<string, Set<stri
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
     
     for (const line of asciiLines) {
@@ -675,7 +675,7 @@ function reportModuleCyclesFancy(cycles: string[][], graph: Map<string, Set<stri
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
     
     for (const line of fancyLines) {
@@ -703,7 +703,7 @@ function reportDirectoryCyclesAscii(cycles: string[][], graph: Map<string, Set<s
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
     
     for (const line of asciiLines) {
@@ -740,7 +740,7 @@ function reportDirectoryCyclesFancy(cycles: string[][], graph: Map<string, Set<s
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
     
     for (const line of fancyLines) {
@@ -827,7 +827,7 @@ function reportDirectoryCycles(cycles: string[][]) {
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i];
+    const cycle = cycles[i]!;
     console.log(`Cycle ${i + 1}:`);
     for (const dir of cycle) {
       console.log(`  ${denormalizePath(dir, cwd)}`);

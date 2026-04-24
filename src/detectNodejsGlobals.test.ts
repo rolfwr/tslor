@@ -10,7 +10,7 @@ describe('Node.js global detection', () => {
     `);
     expect(result.usesNodejsGlobals).toBe(true);
     expect(result.nodejsGlobalUsages).toHaveLength(1);
-    expect(result.nodejsGlobalUsages?.[0].identifier).toBe('Buffer');
+    expect(result.nodejsGlobalUsages?.[0]?.identifier).toBe('Buffer');
   });
 
   test('ignores Buffer in type position', () => {
@@ -127,7 +127,7 @@ describe('Node.js global detection', () => {
       export const apiUrl = process.env.API_URL || 'http://localhost';
     `);
     expect(result.usesNodejsGlobals).toBe(true);
-    expect(result.nodejsGlobalUsages?.[0].identifier).toBe('process');
+    expect(result.nodejsGlobalUsages?.[0]?.identifier).toBe('process');
   });
 
   test('ignores __dirname in type annotation', () => {

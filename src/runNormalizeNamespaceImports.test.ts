@@ -19,7 +19,7 @@ export function doStuff() {
   const changes = normalizeNamespaceImportsInFile(sourceFile);
 
   assert.lengthOf(changes, 1, 'Should produce one change for one namespace import');
-  const change = changes[0];
+  const change = changes[0]!;
   assert.equal(change.moduleSpec, './utils');
   assert.sameMembers(change.accessedMembers, ['foo', 'bar']);
 

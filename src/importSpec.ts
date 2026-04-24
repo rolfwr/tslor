@@ -20,7 +20,7 @@ export function modulePathToImportSpecAlias(compilerOptions: CompilerOptions, ts
     if (paths.length !== 1) {
       throw new Error('Unsupported alias path count');
     }
-    const path = paths[0];
+    const path = paths[0]!;
     if (!path.endsWith('/*')) {
       throw new Error('Unsupported alias path');
     }

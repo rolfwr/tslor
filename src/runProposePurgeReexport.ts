@@ -103,9 +103,9 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
     // Extract symbol name from groups
     const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
     if (symbolNameGroup) {
-      const symbolName = symbolNameGroup.split('|')[1];
+      const symbolName = symbolNameGroup.split('|')[1]!;
       reExports.push({
-        reExporterPath: reExportObj.id.split('|')[1],
+        reExporterPath: reExportObj.id.split('|')[1]!,
         symbolName,
         originalModuleSpec: reExportObj.reExport.moduleSpec,
         isTypeOnly: reExportObj.reExport.isTypeOnly

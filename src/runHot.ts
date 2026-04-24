@@ -225,7 +225,7 @@ export async function runHot(directory: string, options: Options, debugOptions: 
 
   // Calculate scores for all modules
   for (const modulePath in hotMods) {
-    const hotModule = hotMods[modulePath];
+    const hotModule = hotMods[modulePath]!;
     calcUpwards(hotMods, hotModule, new Set());
     calcDownwards(hotMods, hotModule, new Set());
     hotModule.badness = (hotModule.upward!.weight - 1) * (hotModule.downward!.weight - 1);
@@ -238,12 +238,12 @@ export async function runHot(directory: string, options: Options, debugOptions: 
   // Select module to analyze
   let selected: HotModuleInfo | null = null;
   if (options.select) {
-    selected = hotMods[options.select];
+    selected = hotMods[options.select] ?? null;
     if (!selected) {
       throw new Error('Module not found in analyzed directory: ' + options.select);
     }
   } else {
-    selected = hotArray[0];
+    selected = hotArray[0] ?? null;
   }
 
   if (!selected) {
@@ -255,7 +255,7 @@ export async function runHot(directory: string, options: Options, debugOptions: 
   console.log();
   console.log('Top 10 hottest modules:');
   for (let i = 0; i < 10 && i < hotArray.length; i++) {
-    const hotModule = hotArray[i];
+    const hotModule = hotArray[i]!;
     console.log(String(Math.round(hotModule.badness!)).padStart(10), denormalizePath(hotModule.path, cwd));
   }
   console.log();
@@ -327,9 +327,9 @@ export async function runHot(directory: string, options: Options, debugOptions: 
 
   const badnessArr = hotChain.map((hotModule) => hotModule.badness!);
   badnessArr.sort((a, b) => a - b);
-  const leastHot = badnessArr[0];
-  const medianHot = badnessArr[Math.floor(badnessArr.length / 2)];
-  const mostHot = badnessArr[badnessArr.length - 1];
+  const leastHot = badnessArr[0]!;
+  const medianHot = badnessArr[Math.floor(badnessArr.length / 2)]!;
+  const mostHot = badnessArr[badnessArr.length - 1]!;
 
   console.log('Hot import chain:');
   for (const hotModule of hotChain) {

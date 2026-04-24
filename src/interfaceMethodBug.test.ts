@@ -40,8 +40,8 @@ export function useOperations(ops: MyOperations): void {
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
   
   assert.equal(symbolDefinitions.length, 1, 'Should extract one symbol');
-  assert.equal(symbolDefinitions[0].name, 'MyOperations');
-  assert.equal(symbolDefinitions[0].kind, 'interface');
+  assert.equal(symbolDefinitions[0]!.name, 'MyOperations');
+  assert.equal(symbolDefinitions[0]!.kind, 'interface');
   
   // Generate new module with the interface
   const importUsages = analyzeImportUsageBySymbol(sourceFile);

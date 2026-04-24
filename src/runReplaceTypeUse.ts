@@ -205,7 +205,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i]!
 
     if (line.match(new RegExp(`export\\s+.*\\b${escapeRegex(sourceType)}\\b.*from\\s`))) {
       result.hasReExport = true;
@@ -215,8 +215,8 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     if (!importMatch) continue;
 
     const isTypeOnly = Boolean(importMatch[1]);
-    const namesStr = importMatch[2];
-    const moduleSpec = importMatch[3];
+    const namesStr = importMatch[2]!;
+    const moduleSpec = importMatch[3]!;
 
     if (!moduleSpecMatches(moduleSpec, sourceModule)) {
       // Text match failed — try resolving relative imports against the known exporter path
@@ -229,7 +229,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
 
     const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
     const hasSourceType = names.some(n => {
-      const baseName = n.split(/\s+as\s+/)[0].trim();
+      const baseName = n.split(/\s+as\s+/)[0]!.trim();
       return baseName === sourceType;
     });
 
@@ -240,7 +240,7 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
       result.lineIndex = i;
       result.actualModuleSpec = moduleSpec;
       result.otherNames = names.filter(n => {
-        const baseName = n.split(/\s+as\s+/)[0].trim();
+        const baseName = n.split(/\s+as\s+/)[0]!.trim();
         return baseName !== sourceType;
       });
       break;
@@ -271,7 +271,7 @@ function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targe
 function exporterMatchesSourceModule(exporterPath: string, sourceModule: string): boolean {
   if (sourceModule.startsWith('.')) return true;
   const parts = sourceModule.split('/');
-  const pathPortion = parts[0].startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
+  const pathPortion = parts[0]!.startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
   if (!pathPortion) return true;
   const exporterBase = exporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
   return exporterBase.endsWith('/' + pathPortion);

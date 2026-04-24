@@ -129,13 +129,13 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
   for (const group of groups.values()) {
     if (group.length < 2) continue;
 
-    const winner = group[0];
+    const winner = group[0]!
     const winnerDefaultName = winner.getDefaultImport()?.getText();
 
     const winnerComments = leadingCommentTexts(winner);
 
     for (let i = 1; i < group.length; i++) {
-      const donor = group[i];
+      const donor = group[i]!
 
       // Don't merge imports with different leading comments — they may be
       // build directives (e.g., /*VUE2*/) that control conditional compilation.
