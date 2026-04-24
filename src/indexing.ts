@@ -736,8 +736,8 @@ function traverseTypeNodeWith(typeNode: any, fn: TypeRefCallback): void {
   }
   if (kind === SyntaxKind.ArrayType) {
     traverseTypeNodeWith(typeNode.getElementTypeNode(), fn);
+    return;
   }
-  traverseTypeArgs(typeNode, fn);
   if (kind === SyntaxKind.IndexedAccessType) {
     traverseIndexedAccessNode(typeNode, fn);
   }
