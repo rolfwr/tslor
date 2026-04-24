@@ -237,7 +237,9 @@ export const movingSchema = z.object({
   // Find moved symbols that remaining symbols also depend on
   const sharedNonExportedDeps = new Set<string>();
   for (const [symbol, deps] of dependencies.dependencies) {
-    if (symbolsToMove.has(symbol)) continue; // skip moved symbols
+    if (symbolsToMove.has(symbol)) {
+      continue; // skip moved symbols
+    }
     for (const dep of deps) {
       if (symbolsToMove.has(dep) && !dependencies.exports.has(dep)) {
         sharedNonExportedDeps.add(dep);

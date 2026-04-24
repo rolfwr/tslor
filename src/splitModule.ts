@@ -138,7 +138,9 @@ export function computeTransitiveDependencies(deps: IntraModuleDependencies, sym
   const visiting = new Set<string>();
   
   function visit(sym: string): void {
-    if (result.has(sym) || visiting.has(sym)) return;
+    if (result.has(sym) || visiting.has(sym)) {
+      return;
+    }
     
     visiting.add(sym);
     const directDeps = deps.dependencies.get(sym) || new Set();
@@ -173,7 +175,9 @@ export function detectCircularDependencies(deps: IntraModuleDependencies): strin
       return;
     }
     
-    if (visited.has(symbol)) return;
+    if (visited.has(symbol)) {
+      return;
+    }
     
     visited.add(symbol);
     recursionStack.add(symbol);
@@ -368,7 +372,9 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
   
   sourceFile.getFunctions().forEach(func => {
     const name = func.getName();
-    if (name) allSymbols.set(name, func);
+    if (name) {
+      allSymbols.set(name, func);
+    }
   });
   
   sourceFile.getVariableStatements().forEach(stmt => {
@@ -387,7 +393,9 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
   
   sourceFile.getClasses().forEach(cls => {
     const name = cls.getName();
-    if (name) allSymbols.set(name, cls);
+    if (name) {
+      allSymbols.set(name, cls);
+    }
   });
   
   // For each symbol, find what imports it uses
@@ -588,13 +596,19 @@ export function computeRequiredImports(
 function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
   if (Node.isVariableStatement(stmt)) {
     const name = stmt.getDeclarations()[0]?.getName();
-    if (name && exportNames.has(name)) stmt.setIsExported(true);
+    if (name && exportNames.has(name)) {
+      stmt.setIsExported(true);
+    }
   } else if (Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) {
     const name = stmt.getName();
-    if (name && exportNames.has(name)) stmt.setIsExported(true);
+    if (name && exportNames.has(name)) {
+      stmt.setIsExported(true);
+    }
   } else if (Node.isTypeAliasDeclaration(stmt) || Node.isInterfaceDeclaration(stmt)) {
     const name = stmt.getName();
-    if (exportNames.has(name)) stmt.setIsExported(true);
+    if (exportNames.has(name)) {
+      stmt.setIsExported(true);
+    }
   }
 }
 

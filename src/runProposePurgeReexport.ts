@@ -347,10 +347,14 @@ export function applyReexportRemovalsToFile(
     sourceFile.getExportDeclarations().forEach((exportDecl: ExportDeclaration) => {
       try {
         const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
-        if (!moduleSpec) return; // Not a re-export
+        if (!moduleSpec) {
+          return; // Not a re-export
+        }
 
         const specReExports = reExportsBySpec.get(moduleSpec);
-        if (!specReExports) return;
+        if (!specReExports) {
+          return;
+        }
 
         // Get all named exports from this declaration
         const namedExports = exportDecl.getNamedExports();

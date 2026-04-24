@@ -47,7 +47,9 @@ export async function runNormalizeImports(
     const sourceFile = await loadSourceFile(filePath, fileSystem);
     const changed = normalizeImportsInFile(sourceFile);
 
-    if (!changed) continue;
+    if (!changed) {
+      continue;
+    }
 
     const modifiedScriptContent = sourceFile.getFullText();
     let finalContent: string;
@@ -109,8 +111,12 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
   const groups = new Map<string, ImportDeclaration[]>();
 
   for (const importDecl of imports) {
-    if (isSideEffectImport(importDecl)) continue;
-    if (importDecl.getNamespaceImport()) continue;
+    if (isSideEffectImport(importDecl)) {
+      continue;
+    }
+    if (importDecl.getNamespaceImport()) {
+      continue;
+    }
 
     const moduleSpec = importDecl.getModuleSpecifierValue();
     const isTypeOnly = importDecl.isTypeOnly();
@@ -127,7 +133,9 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
   let changed = false;
 
   for (const group of groups.values()) {
-    if (group.length < 2) continue;
+    if (group.length < 2) {
+      continue;
+    }
 
     const winner = group[0]!
     const winnerDefaultName = winner.getDefaultImport()?.getText();
@@ -139,7 +147,9 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
 
       // Don't merge imports with different leading comments — they may be
       // build directives (e.g., /*VUE2*/) that control conditional compilation.
-      if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) continue;
+      if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) {
+        continue;
+      }
 
       // Handle default import
       const donorDefault = donor.getDefaultImport();
@@ -173,7 +183,9 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
 
       for (const namedImport of donor.getNamedImports()) {
         const key = namedImportKey(namedImport);
-        if (existingNames.has(key)) continue;
+        if (existingNames.has(key)) {
+          continue;
+        }
 
         const alias = namedImport.getAliasNode();
         winner.addNamedImport({
@@ -201,7 +213,9 @@ function leadingCommentTexts(node: ImportDeclaration): string[] {
 }
 
 function leadingCommentsEqual(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
+  if (a.length !== b.length) {
+    return false;
+  }
   return a.every((text, i) => text === b[i]);
 }
 

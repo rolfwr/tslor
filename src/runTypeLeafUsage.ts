@@ -70,7 +70,9 @@ function findLeaves(db: Storage, candidateSet: Set<string>): string[] {
 
   function hasCanditateDependency(filePath: string): boolean {
     const cached = memo.get(filePath);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      return cached;
+    }
 
     // Mark as visiting (false) to handle cycles
     memo.set(filePath, false);

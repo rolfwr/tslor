@@ -145,7 +145,9 @@ function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueu
 
   const writer: AsyncQueueWriter<T> = {
     push(item: T): void {
-      if (closed) return;
+      if (closed) {
+        return;
+      }
       const waiter = waiters.shift();
       if (waiter) {
         waiter(item);
@@ -154,17 +156,25 @@ function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueu
       }
     },
     close(): void {
-      if (closed) return;
+      if (closed) {
+        return;
+      }
       closed = true;
-      for (const waiter of waiters) waiter(null);
+      for (const waiter of waiters) {
+        waiter(null);
+      }
       waiters.length = 0;
     },
   };
 
   const reader: AsyncQueueReader<T> = {
     take(): Promise<T | null> {
-      if (items.length > 0) return Promise.resolve(items.shift()!);
-      if (closed) return Promise.resolve(null);
+      if (items.length > 0) {
+        return Promise.resolve(items.shift()!);
+      }
+      if (closed) {
+        return Promise.resolve(null);
+      }
       return new Promise<T | null>(resolve => waiters.push(resolve));
     },
   };
@@ -189,9 +199,13 @@ async function indexImportFromFilesParallel(
 
   let lastProgressAt = 0;
   function printProgress(force = false): void {
-    if (!verbose) return;
+    if (!verbose) {
+      return;
+    }
     const now = Date.now();
-    if (!force && now - lastProgressAt < 100) return;
+    if (!force && now - lastProgressAt < 100) {
+      return;
+    }
     lastProgressAt = now;
     if (!statDone) {
       process.stdout.write(`\rChecking ${checkedCount}/${paths.length} | Indexing ${processedCount}\x1b[K`);
@@ -207,7 +221,9 @@ async function indexImportFromFilesParallel(
 
   const statPromise = (async () => {
     for (const path of paths) {
-      if (abort.value) break;
+      if (abort.value) {
+        break;
+      }
       const stats = await fileSystem.stat(path);
       const mtimeMs = stats.mtimeMs;
       checkedCount++;
@@ -226,14 +242,19 @@ async function indexImportFromFilesParallel(
 
   async function runWorker(wrapper: WorkerWrapper): Promise<void> {
     const first = await reader.take();
-    if (!first) { wrapper.terminate(); return; }
+    if (!first) {
+      wrapper.terminate();
+      return;
+    }
 
     wrapper.send(first.path, repoRoot);
     let currentItem = first;
 
     for await (const [msg] of on(wrapper.worker, 'message')) {
       const nextItem = await reader.take();
-      if (nextItem) wrapper.send(nextItem.path, repoRoot); // keep worker busy
+      if (nextItem) {
+        wrapper.send(nextItem.path, repoRoot); // keep worker busy
+      }
 
       let moduleInfo: ModuleInfo | null;
       try {
@@ -255,7 +276,9 @@ async function indexImportFromFilesParallel(
       processedCount++;
       printProgress();
 
-      if (!nextItem) break;
+      if (!nextItem) {
+        break;
+      }
       currentItem = nextItem;
     }
 
@@ -281,7 +304,9 @@ async function indexImportFromFilesParallel(
   await Promise.all([statPromise, ...workers.map(runWorkerSafe)]);
 
   printProgress(true);
-  if (verbose) console.log();
+  if (verbose) {
+    console.log();
+  }
 
   if (firstError.value) {
     throw firstError.value;
@@ -316,7 +341,9 @@ async function refreshImportsFromFile(db: Storage, somePath: string, repoRoot: s
     }
 
     const moduleInfo = await inspectModule(repoRoot, somePath, fileSystem);
-    if (!moduleInfo) return; // no tsconfig — skip
+    if (!moduleInfo) {
+      return; // no tsconfig — skip
+    }
     await storeImportsFromFile(moduleInfo, db, mtimeMs, fileSystem);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -425,14 +452,18 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
 
   async function cachedGetTsconfigPath(repoRoot: string, filePath: string): Promise<string | null> {
     const dir = dirname(filePath);
-    if (tsconfigPathByDir.has(dir)) return tsconfigPathByDir.get(dir)!;
+    if (tsconfigPathByDir.has(dir)) {
+      return tsconfigPathByDir.get(dir)!;
+    }
     const result = await getTsconfigPathForFile(repoRoot, filePath, fileSystem);
     tsconfigPathByDir.set(dir, result);
     return result;
   }
 
   async function cachedGetCompilerOptions(tsconfigFile: string): Promise<CompilerOptions> {
-    if (compilerOptionsByTsconfig.has(tsconfigFile)) return compilerOptionsByTsconfig.get(tsconfigFile)!;
+    if (compilerOptionsByTsconfig.has(tsconfigFile)) {
+      return compilerOptionsByTsconfig.get(tsconfigFile)!;
+    }
     const result = await getCompilerOptions(tsconfigFile, fileSystem);
     compilerOptionsByTsconfig.set(tsconfigFile, result);
     return result;
@@ -442,7 +473,9 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
     const compilerOptions = await cachedGetCompilerOptions(tsconfigPath);
     if (spec.startsWith('.')) {
       const resolvedPath = await resolveSourceFile(spec, dirname(tsFilePath), fileSystem);
-      if (resolvedPath !== null) return resolvedPath;
+      if (resolvedPath !== null) {
+        return resolvedPath;
+      }
     }
     return importSpecAliasToModulePath(compilerOptions, dirname(tsconfigPath), spec, fileSystem);
   }
@@ -548,7 +581,9 @@ function addIdentifierUses(
   symbolName: string,
   uses: string[]
 ): void {
-  if (uses.length === 0) return;
+  if (uses.length === 0) {
+    return;
+  }
   
   let usedIds = staticModuleInfo.identifierUses.get(symbolName);
   if (!usedIds) {
@@ -589,7 +624,9 @@ function extractTypeReferences(node: any): string[] {
 
   // Traverse type nodes to find type references
   function traverseTypeNode(typeNode: any) {
-    if (!typeNode) return;
+    if (!typeNode) {
+      return;
+    }
 
     // Handle type references (e.g., User, MyType)
     if (typeNode.getKind() === SyntaxKind.TypeReference) {
@@ -937,7 +974,9 @@ function isInTypeContext(node: ts.Node): boolean {
   // Walk up the tree looking for type-only contexts
   while (current) {
     const parent: ts.Node | undefined = current.parent;
-    if (!parent) break;
+    if (!parent) {
+      break;
+    }
 
     // Check if this is a runtime typeof expression
     if (ts.isTypeOfExpression(parent)) {
@@ -1229,7 +1268,9 @@ function parseImportDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const idecl = node.asKind(SyntaxKind.ImportDeclaration);
-  if (!idecl) return;
+  if (!idecl) {
+    return;
+  }
   
   const importClause = idecl.getImportClause();
   if (!importClause) {
@@ -1295,7 +1336,9 @@ function parseVariableStatement(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const varStatement = node.asKind(SyntaxKind.VariableStatement);
-  if (!varStatement) return;
+  if (!varStatement) {
+    return;
+  }
 
   /*
     We should not call varStatement.isExported(), since that causes file
@@ -1338,7 +1381,9 @@ function parseFunctionDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const funcDecl = node.asKind(SyntaxKind.FunctionDeclaration);
-  if (!funcDecl) return;
+  if (!funcDecl) {
+    return;
+  }
   
   /*
     We should not use funcDecl.isNamedExport() here, since that causes file
@@ -1431,7 +1476,9 @@ function parseInterfaceDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const interfaceDecl = node.asKind(SyntaxKind.InterfaceDeclaration);
-  if (!interfaceDecl) return;
+  if (!interfaceDecl) {
+    return;
+  }
   
   const exported = interfaceDecl.hasModifier(SyntaxKind.ExportKeyword);
   const name = interfaceDecl.getName();
@@ -1447,7 +1494,9 @@ function parseTypeAliasDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const typeAliasDecl = node.asKind(SyntaxKind.TypeAliasDeclaration);
-  if (!typeAliasDecl) return;
+  if (!typeAliasDecl) {
+    return;
+  }
   
   const exported = typeAliasDecl.hasModifier(SyntaxKind.ExportKeyword);
   const name = typeAliasDecl.getName();
@@ -1463,7 +1512,9 @@ function parseClassDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const classDecl = node.asKind(SyntaxKind.ClassDeclaration);
-  if (!classDecl) return;
+  if (!classDecl) {
+    return;
+  }
 
   const exported = classDecl.hasModifier(SyntaxKind.ExportKeyword);
   const name = classDecl.getName();
@@ -1481,10 +1532,14 @@ function parseExportDeclaration(
   staticModuleInfo: StaticModuleInfo
 ): void {
   const exportDecl = node.asKind(SyntaxKind.ExportDeclaration);
-  if (!exportDecl) return;
+  if (!exportDecl) {
+    return;
+  }
 
   const moduleSpecifier = exportDecl.getModuleSpecifier();
-  if (!moduleSpecifier) return; // Not a re-export
+  if (!moduleSpecifier) {
+    return; // Not a re-export
+  }
 
   const moduleSpec = moduleSpecifier.getLiteralText();
   const isTypeOnly = exportDecl.isTypeOnly();

@@ -92,7 +92,9 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
 
     const exporter = obj.exporter as { path?: string; spec?: string } | undefined;
     if (exporter && 'path' in exporter && typeof exporter.path === 'string') {
-      if (!exporterMatchesSourceModule(exporter.path, sourceModule)) continue;
+      if (!exporterMatchesSourceModule(exporter.path, sourceModule)) {
+        continue;
+      }
       files.set(importerPath, exporter.path);
     }
   }
@@ -113,13 +115,17 @@ export function replaceTypeInFile(
   let scriptContent: string;
   if (isVue) {
     scriptContent = extractScript(originalContent);
-    if (!scriptContent.trim()) return null;
+    if (!scriptContent.trim()) {
+      return null;
+    }
   } else {
     scriptContent = originalContent;
   }
 
   const importInfo = analyzeImports(scriptContent, sourceType, sourceModule, filePath, resolvedExporterPath);
-  if (!importInfo.hasImport) return null;
+  if (!importInfo.hasImport) {
+    return null;
+  }
 
   const lines = scriptContent.split('\n');
   let changed = false;
@@ -156,12 +162,20 @@ export function replaceTypeInFile(
   sourceFile.forEachDescendant((node) => {
     if (node.getKind() === SyntaxKind.Identifier && node.getText() === sourceType) {
       const parent = node.getParent();
-      if (!parent) return;
+      if (!parent) {
+        return;
+      }
       const parentKind = parent.getKind();
-      if (parentKind !== SyntaxKind.TypeReference && parentKind !== SyntaxKind.ExpressionWithTypeArguments) return;
+      if (parentKind !== SyntaxKind.TypeReference && parentKind !== SyntaxKind.ExpressionWithTypeArguments) {
+        return;
+      }
       const lineNum = node.getStartLineNumber() - 1; // 0-based
-      if (lineNum === importInfo.lineIndex) return;
-      if (spliced && lineNum === importInfo.lineIndex + 1) return;
+      if (lineNum === importInfo.lineIndex) {
+        return;
+      }
+      if (spliced && lineNum === importInfo.lineIndex + 1) {
+        return;
+      }
       node.replaceWithText(targetType);
       changed = true;
     }
@@ -173,7 +187,9 @@ export function replaceTypeInFile(
     lines.push(...updatedLines);
   }
 
-  if (!changed) return null;
+  if (!changed) {
+    return null;
+  }
 
   const result = lines.join('\n');
   if (isVue) {
@@ -212,7 +228,9 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     }
 
     const importMatch = line.match(/^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/);
-    if (!importMatch) continue;
+    if (!importMatch) {
+      continue;
+    }
 
     const isTypeOnly = Boolean(importMatch[1]);
     const namesStr = importMatch[2]!;
@@ -220,11 +238,17 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
 
     if (!moduleSpecMatches(moduleSpec, sourceModule)) {
       // Text match failed — try resolving relative imports against the known exporter path
-      if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) continue;
-      if (!exporterMatchesSourceModule(resolvedExporterPath, sourceModule)) continue;
+      if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) {
+        continue;
+      }
+      if (!exporterMatchesSourceModule(resolvedExporterPath, sourceModule)) {
+        continue;
+      }
       const resolved = resolve(dirname(importerPath), moduleSpec);
       const exporterBase = resolvedExporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
-      if (resolved !== exporterBase && resolved !== resolvedExporterPath) continue;
+      if (resolved !== exporterBase && resolved !== resolvedExporterPath) {
+        continue;
+      }
     }
 
     const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
@@ -251,14 +275,22 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
 }
 
 function moduleSpecMatches(actual: string, expected: string): boolean {
-  if (actual === expected) return true;
-  if (actual.endsWith('/' + expected) || actual.endsWith(expected)) return true;
+  if (actual === expected) {
+    return true;
+  }
+  if (actual.endsWith('/' + expected) || actual.endsWith(expected)) {
+    return true;
+  }
   return false;
 }
 
 function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targetModule: string): string {
-  if (sourceModule === targetModule) return actualSpec;
-  if (!targetModule.startsWith('.')) return targetModule;
+  if (sourceModule === targetModule) {
+    return actualSpec;
+  }
+  if (!targetModule.startsWith('.')) {
+    return targetModule;
+  }
   const sourceBare = sourceModule.replace(/^\.\//, '');
   const targetBare = targetModule.replace(/^\.\//, '');
   if (actualSpec.endsWith(sourceBare)) {
@@ -269,10 +301,14 @@ function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targe
 }
 
 function exporterMatchesSourceModule(exporterPath: string, sourceModule: string): boolean {
-  if (sourceModule.startsWith('.')) return true;
+  if (sourceModule.startsWith('.')) {
+    return true;
+  }
   const parts = sourceModule.split('/');
   const pathPortion = parts[0]!.startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
-  if (!pathPortion) return true;
+  if (!pathPortion) {
+    return true;
+  }
   const exporterBase = exporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
   return exporterBase.endsWith('/' + pathPortion);
 }

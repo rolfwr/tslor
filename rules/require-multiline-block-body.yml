@@ -1,0 +1,85 @@
+id: require-multiline-block-body
+language: TypeScript
+severity: error
+message: "Language construct bodies must use a { ... } block body spanning multiple lines"
+rule:
+  any:
+    # if consequence: braceless
+    - kind: if_statement
+      has:
+        field: consequence
+        not:
+          kind: statement_block
+    # if consequence: single-line block
+    - kind: if_statement
+      has:
+        field: consequence
+        kind: statement_block
+        not:
+          regex: "\n"
+    # else: braceless (else-if is not flagged because it has an if_statement descendant)
+    - kind: else_clause
+      not:
+        has:
+          any:
+            - kind: statement_block
+            - kind: if_statement
+    # else: single-line block
+    - kind: else_clause
+      has:
+        stopBy: neighbor
+        kind: statement_block
+        not:
+          regex: "\n"
+    # for: braceless
+    - kind: for_statement
+      has:
+        field: body
+        not:
+          kind: statement_block
+    # for: single-line block
+    - kind: for_statement
+      has:
+        field: body
+        kind: statement_block
+        not:
+          regex: "\n"
+    # for...in / for...of: braceless
+    - kind: for_in_statement
+      has:
+        field: body
+        not:
+          kind: statement_block
+    # for...in / for...of: single-line block
+    - kind: for_in_statement
+      has:
+        field: body
+        kind: statement_block
+        not:
+          regex: "\n"
+    # while: braceless
+    - kind: while_statement
+      has:
+        field: body
+        not:
+          kind: statement_block
+    # while: single-line block
+    - kind: while_statement
+      has:
+        field: body
+        kind: statement_block
+        not:
+          regex: "\n"
+    # do...while: braceless
+    - kind: do_statement
+      has:
+        field: body
+        not:
+          kind: statement_block
+    # do...while: single-line block
+    - kind: do_statement
+      has:
+        field: body
+        kind: statement_block
+        not:
+          regex: "\n"

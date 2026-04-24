@@ -263,7 +263,9 @@ async function generateChanges(
   // Find non-exported moved symbols that remaining symbols also depend on
   const sharedNonExportedDeps = new Set<string>();
   for (const [symbol, deps] of dependencies.dependencies) {
-    if (symbolsToMove.has(symbol)) continue;
+    if (symbolsToMove.has(symbol)) {
+      continue;
+    }
     for (const dep of deps) {
       if (symbolsToMove.has(dep) && !dependencies.exports.has(dep)) {
         sharedNonExportedDeps.add(dep);

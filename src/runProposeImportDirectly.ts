@@ -150,10 +150,14 @@ async function findImportChangesForReExports(
 
     // Extract symbol name from the export group
     const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
-    if (!exportGroup) continue;
+    if (!exportGroup) {
+      continue;
+    }
 
     const exportParts = exportGroup.split('|');
-    if (exportParts.length < 3) continue;
+    if (exportParts.length < 3) {
+      continue;
+    }
 
     const exporterPath = exportParts[1]!;
     const symbolName = exportParts[2]!;
@@ -175,7 +179,9 @@ async function findImportChangesForReExports(
 
       // Resolve the original module spec relative to the re-exporter to get the absolute path
       const originalModulePath = await resolveImportSpecFromIndexing(repoRoot, exporterPath, reExportInfo.originalModuleSpec, fileSystem);
-      if (!originalModulePath) continue;
+      if (!originalModulePath) {
+        continue;
+      }
 
       /*
         Compute newModuleSpec in the same form as the source file uses.

@@ -49,14 +49,18 @@ export async function runProjectUse(
     for (const exporterPath of exporterPaths) {
       console.log(exporterPath + ':');
       const symbolMap = exportersBySymbol.get(exporterPath);
-      if (!symbolMap) continue;
+      if (!symbolMap) {
+        continue;
+      }
       
       const symbols = Array.from(symbolMap.keys());
       symbols.sort();
       
       for (const symbol of symbols) {
         const importers = symbolMap.get(symbol);
-        if (!importers) continue;
+        if (!importers) {
+          continue;
+        }
         
         const importerPaths = Array.from(importers);
         importerPaths.sort();

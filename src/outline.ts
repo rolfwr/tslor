@@ -126,12 +126,16 @@ function getImportSignature(importDecl: any): string {
   
   if (defaultImport) {
     signature += defaultImport.getName();
-    if (namedImports.length > 0 || namespaceImport) signature += ', ';
+    if (namedImports.length > 0 || namespaceImport) {
+      signature += ', ';
+    }
   }
   
   if (namespaceImport) {
     signature += `* as ${namespaceImport.getName()}`;
-    if (namedImports.length > 0) signature += ', ';
+    if (namedImports.length > 0) {
+      signature += ', ';
+    }
   }
   
   if (namedImports.length > 0) {
@@ -302,7 +306,9 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
   const absolutePath = resolve(filePath);
   
   if (!existsSync(absolutePath)) {
-    if (!options.quiet) console.error(`File not found: ${absolutePath}`);
+    if (!options.quiet) {
+      console.error(`File not found: ${absolutePath}`);
+    }
     process.exit(1);
   }
   
@@ -323,7 +329,9 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
     const members = analyzeSourceFile(sourceFile);
     
     if (members.length === 0) {
-      if (!options.quiet) console.log('(no members)');
+      if (!options.quiet) {
+        console.log('(no members)');
+      }
       return;
     }
     
@@ -351,7 +359,9 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
     });
     
   } catch (error) {
-    if (!options.quiet) console.error(`Error: ${error}`);
+    if (!options.quiet) {
+      console.error(`Error: ${error}`);
+    }
     process.exit(1);
   }
 }
@@ -401,7 +411,9 @@ if (require.main === module) {
   }
   
   outline(filePath, { verbose, quiet, includeImports }).catch(error => {
-    if (!quiet) console.error('Error:', error);
+    if (!quiet) {
+      console.error('Error:', error);
+    }
     process.exit(1);
   });
 }

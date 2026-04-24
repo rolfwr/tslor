@@ -142,7 +142,9 @@ export async function runNormalizeNamespaceImports(
       // Check if there were namespace imports that were skipped
       const importDecls = sourceFile.getImportDeclarations();
       for (const decl of importDecls) {
-        if (decl.getNamespaceImport()) totalSkipped++;
+        if (decl.getNamespaceImport()) {
+          totalSkipped++;
+        };
       }
       continue;
     }
@@ -236,11 +238,15 @@ function collectExistingBindings(sourceFile: SourceFile, namespaceNames: Set<str
   }
   for (const fn of sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
     const name = fn.getName();
-    if (name) bindings.add(name);
+    if (name) {
+      bindings.add(name);
+    }
   }
   for (const cls of sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration)) {
     const name = cls.getName();
-    if (name) bindings.add(name);
+    if (name) {
+      bindings.add(name);
+    }
   }
   for (const iface of sourceFile.getDescendantsOfKind(SyntaxKind.InterfaceDeclaration)) {
     bindings.add(iface.getName());
@@ -265,7 +271,9 @@ function collectExistingBindings(sourceFile: SourceFile, namespaceNames: Set<str
     }
 
     const defaultImport = importDecl.getDefaultImport();
-    if (defaultImport) bindings.add(defaultImport.getText());
+    if (defaultImport) {
+      bindings.add(defaultImport.getText());
+    }
 
     for (const named of importDecl.getNamedImports()) {
       bindings.add(named.getName());

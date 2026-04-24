@@ -86,7 +86,9 @@ export async function runTraceImports(
   let totalSymbols = 0;
   for (const exporterPath of exporterPaths) {
     const symbols = importsByExporter.get(exporterPath);
-    if (!symbols) continue;
+    if (!symbols) {
+      continue;
+    }
     
     totalSymbols += symbols.size;
     console.log(`${exporterPath}:`);

@@ -16,7 +16,9 @@ if (!parentPort) {
 const fileSystem = new RealFileSystem();
 
 parentPort.on('message', (msg: { type: string; path: string; repoRoot: string }) => {
-  if (msg.type !== 'index') return;
+  if (msg.type !== 'index') {
+    return;
+  }
   const { path, repoRoot } = msg;
   inspectModule(repoRoot, path, fileSystem)
     .then((moduleInfo) => {
