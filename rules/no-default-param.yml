@@ -1,0 +1,9 @@
+id: no-default-param
+language: TypeScript
+severity: error
+message: "Function parameters must not have default values; pass all values explicitly at every call site"
+rule:
+  kind: required_parameter
+  has:
+    field: value
+    pattern: $DEFAULT

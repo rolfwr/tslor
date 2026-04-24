@@ -94,7 +94,7 @@ export async function runNormalizeImports(
   } else {
     console.log(`Found ${changes.length} files with mergeable imports`);
     await writePlan(plan, PLAN_FILE_NAME);
-    await displayPlan(plan);
+    await displayPlan(plan, {});
   }
 
   return plan;

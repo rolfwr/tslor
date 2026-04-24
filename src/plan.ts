@@ -81,7 +81,7 @@ export function computeStringChecksum(content: string): string {
 /**
  * Write a plan to a file.
  */
-export async function writePlan(plan: TslorPlan, planFile: string = PLAN_FILE_NAME): Promise<void> {
+export async function writePlan(plan: TslorPlan, planFile: string): Promise<void> {
   const planJson = JSON.stringify(plan, null, 2);
   await fsp.writeFile(planFile, planJson, 'utf-8');
 }
@@ -89,7 +89,7 @@ export async function writePlan(plan: TslorPlan, planFile: string = PLAN_FILE_NA
 /**
  * Read a plan from a file.
  */
-export async function readPlan(planFile: string = PLAN_FILE_NAME): Promise<TslorPlan> {
+export async function readPlan(planFile: string): Promise<TslorPlan> {
   if (!existsSync(planFile)) {
     throw new Error(`Plan file does not exist: ${planFile}`);
   }
@@ -138,7 +138,7 @@ export function validatePlanFormat(plan: TslorPlan): void {
 /**
  * Validate that files haven't changed since plan was created.
  */
-export async function validateChecksums(plan: TslorPlan, force: boolean = false): Promise<void> {
+export async function validateChecksums(plan: TslorPlan, force: boolean): Promise<void> {
   const mismatches: string[] = [];
   const missing: string[] = [];
   
@@ -181,7 +181,7 @@ export async function validateChecksums(plan: TslorPlan, force: boolean = false)
 /**
  * Display a human-readable preview of the plan.
  */
-export async function displayPlan(plan: TslorPlan, options: { noDiff?: boolean } = {}): Promise<void> {
+export async function displayPlan(plan: TslorPlan, options: { noDiff?: boolean }): Promise<void> {
   console.log('\n=== PROPOSED CHANGES ===');
   console.log(`Command: ${plan.command}`);
   console.log(`Proposed at: ${plan.timestamp}`);
@@ -307,7 +307,7 @@ export async function executeUndo(plan: TslorPlan): Promise<void> {
 /**
  * Archive a plan file after application.
  */
-export async function archivePlan(planFile: string = PLAN_FILE_NAME): Promise<string> {
+export async function archivePlan(planFile: string): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '_');
   const appliedFile = `.applied-${timestamp}.json`;
   
@@ -386,7 +386,7 @@ export async function generatePlanDiff(plan: TslorPlan): Promise<string> {
 /**
  * Display unified diff for a plan.
  */
-export async function displayPlanDiff(plan: TslorPlan, options: { stats?: boolean; namesOnly?: boolean } = {}): Promise<void> {
+export async function displayPlanDiff(plan: TslorPlan, options: { stats?: boolean; namesOnly?: boolean }): Promise<void> {
   if (options.namesOnly) {
     // Just show file names
     console.log('Files to be changed:');

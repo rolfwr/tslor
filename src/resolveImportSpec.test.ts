@@ -5,7 +5,7 @@ import { InMemoryFileSystem } from './filesystem';
 describe('resolveImportSpec', () => {
   test('resolves relative imports correctly', async () => {
     // Setup in-memory filesystem
-    const fileSystem = new InMemoryFileSystem();
+    const fileSystem = new InMemoryFileSystem(new Map());
     const repoRoot = '/repo';
     
     // Create directory structure in memory
@@ -32,7 +32,7 @@ describe('resolveImportSpec', () => {
   });
 
   test('resolves relative imports to parent directory', async () => {
-    const fileSystem = new InMemoryFileSystem();
+    const fileSystem = new InMemoryFileSystem(new Map());
     const repoRoot = '/repo';
     
     fileSystem.setFile('/repo/tsconfig.json', JSON.stringify({
@@ -54,7 +54,7 @@ describe('resolveImportSpec', () => {
   });
 
   test('resolves index.ts in directories', async () => {
-    const fileSystem = new InMemoryFileSystem();
+    const fileSystem = new InMemoryFileSystem(new Map());
     const repoRoot = '/repo';
     
     fileSystem.setFile('/repo/tsconfig.json', JSON.stringify({
@@ -76,7 +76,7 @@ describe('resolveImportSpec', () => {
   });
 
   test('resolves path aliases', async () => {
-    const fileSystem = new InMemoryFileSystem();
+    const fileSystem = new InMemoryFileSystem(new Map());
     const repoRoot = '/repo';
     
     fileSystem.setFile('/repo/tsconfig.json', JSON.stringify({
@@ -108,7 +108,7 @@ describe('resolveImportSpec', () => {
     // The bug was: if (!stat.isFile()) return null; 
     // which should have been: if (stat.isFile()) return null;
     
-    const fileSystem = new InMemoryFileSystem();
+    const fileSystem = new InMemoryFileSystem(new Map());
     const repoRoot = '/repo';
     
     fileSystem.setFile('/repo/tsconfig.json', JSON.stringify({

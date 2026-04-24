@@ -198,7 +198,7 @@ async function indexImportFromFilesParallel(
   const { writer, reader } = createAsyncQueue<{ path: string; mtimeMs: number }>();
 
   let lastProgressAt = 0;
-  function printProgress(force = false): void {
+  function printProgress(force: boolean): void {
     if (!verbose) {
       return;
     }
@@ -231,7 +231,7 @@ async function indexImportFromFilesParallel(
         changedCount++;
         writer.push({ path, mtimeMs });
       }
-      printProgress();
+      printProgress(false);
     }
     statDone = true;
     writer.close();
@@ -274,7 +274,7 @@ async function indexImportFromFilesParallel(
       }
 
       processedCount++;
-      printProgress();
+      printProgress(false);
 
       if (!nextItem) {
         break;
@@ -1677,7 +1677,7 @@ export async function loadSourceFile(srcPath: string, fileSystem: FileSystem, fi
   // Determine if we're using in-memory filesystem based on the filesystem type
   const isInMemory = fileSystem instanceof InMemoryFileSystem;
 
-  const project = isInMemory ? new Project(inMemoryProjectOptions(fileContents)) : createProject();
+  const project = isInMemory ? new Project(inMemoryProjectOptions(fileContents ?? new Map())) : createProject();
 
   if (!isInMemory) {
     // Verify that the source file exists first using the filesystem abstraction
@@ -1726,7 +1726,7 @@ export function defaultProjectOptions(): ProjectOptions {
   };
 }
 
-export function inMemoryProjectOptions(fileContents: Map<string, string> = new Map()): ProjectOptions {
+export function inMemoryProjectOptions(fileContents: Map<string, string>): ProjectOptions {
   return {
     skipAddingFilesFromTsConfig: true,
     skipFileDependencyResolution: true,

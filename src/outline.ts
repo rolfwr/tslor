@@ -278,7 +278,7 @@ function analyzeSourceFile(sourceFile: SourceFile): MemberInfo[] {
 /**
  * Format member information for display
  */
-function formatMember(member: MemberInfo, verbose: boolean = false): string {
+function formatMember(member: MemberInfo, verbose: boolean): string {
   const lineRange = member.line === member.endLine ? 
     `${member.line}` : 
     `${member.line}-${member.endLine}`;
@@ -302,7 +302,7 @@ function formatMember(member: MemberInfo, verbose: boolean = false): string {
 /**
  * Main outline function
  */
-async function outline(filePath: string, options: { verbose?: boolean; quiet?: boolean; includeImports?: boolean } = {}): Promise<void> {
+async function outline(filePath: string, options: { verbose?: boolean; quiet?: boolean; includeImports?: boolean }): Promise<void> {
   const absolutePath = resolve(filePath);
   
   if (!existsSync(absolutePath)) {
@@ -355,7 +355,7 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
     
     // Output members in minimal format
     filteredMembers.forEach(member => {
-      console.log(formatMember(member, options.verbose));
+      console.log(formatMember(member, options.verbose ?? false));
     });
     
   } catch (error) {

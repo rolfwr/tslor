@@ -28,7 +28,7 @@ export function normalizePaths(filePaths: string[]): string[] {
 /**
  * Validate that a normalized path exists and throw a descriptive error if not.
  */
-export function validatePathExists(normalizedPath: string, description: string = "Path"): void {
+export function validatePathExists(normalizedPath: string, description: string): void {
   if (!existsSync(normalizedPath)) {
     throw new Error(`${description} does not exist: ${normalizedPath}`);
   }

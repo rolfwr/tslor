@@ -64,7 +64,7 @@ export class RealFileSystem implements FileSystem {
 export class InMemoryFileSystem implements FileSystem {
   private files = new Map<string, { content: string; mtimeMs: number }>();
 
-  constructor(initialFiles: Map<string, string> = new Map()) {
+  constructor(initialFiles: Map<string, string>) {
     for (const [path, content] of initialFiles) {
       this.files.set(path, { content, mtimeMs: Date.now() });
     }

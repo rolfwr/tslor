@@ -86,7 +86,7 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
 
   // Write and display plan
   await writePlan(plan, PLAN_FILE_NAME);
-  await displayPlan(plan);
+  await displayPlan(plan, {});
 
   return plan;
 }

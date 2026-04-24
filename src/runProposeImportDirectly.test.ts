@@ -77,7 +77,7 @@ export function useCustomIcons(): ItemCustomIconsDto {
 
   // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
-  const fileSystem = new InMemoryFileSystem();
+  const fileSystem = new InMemoryFileSystem(new Map());
   const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
 
   // The plan should have changes (imports to modify)
@@ -160,7 +160,7 @@ import { realFunction, fakeFunction } from './vueCompat';
 
   // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
-  const fileSystem = new InMemoryFileSystem();
+  const fileSystem = new InMemoryFileSystem(new Map());
   const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
 
   // The plan should have NO changes for consumer.ts because fakeFunction doesn't exist in realModule

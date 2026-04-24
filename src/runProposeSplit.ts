@@ -90,7 +90,7 @@ export async function runProposeSplit(
 
   // Phase 6: Write and Display Plan
   await writePlan(plan, PLAN_FILE_NAME);
-  await displayPlan(plan);
+  await displayPlan(plan, {});
 
   return plan;
 }

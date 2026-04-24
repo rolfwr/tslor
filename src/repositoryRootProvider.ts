@@ -39,7 +39,7 @@ export class InMemoryRepositoryRootProvider implements RepositoryRootProvider {
   private repoRoot: string;
   private tsFiles: string[];
 
-  constructor(repoRoot: string, tsFiles: string[] = []) {
+  constructor(repoRoot: string, tsFiles: string[]) {
     this.repoRoot = repoRoot;
     this.tsFiles = tsFiles;
   }
