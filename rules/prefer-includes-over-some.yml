@@ -1,0 +1,8 @@
+id: prefer-includes-over-some
+language: TypeScript
+severity: error
+message: "Use .includes() instead of .some() for simple equality checks"
+rule:
+  any:
+    - pattern: $ARRAY.some(($T) => $VAL === $T)
+    - pattern: $ARRAY.some(($T) => $T === $VAL)

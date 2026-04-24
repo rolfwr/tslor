@@ -1,0 +1,17 @@
+id: no-reexport
+language: TypeScript
+severity: error
+message: "Re-export detected: consumers should import directly from the defining module"
+# Test files are excluded because tslor's tests use re-export fixtures
+# to exercise tslor's own re-export analysis features. These are test
+# scaffolding, not architectural re-exports.
+files:
+  - "**/*.ts"
+  - "!**/*.test.ts"
+rule:
+  kind: export_statement
+  all:
+    - has:
+        kind: export_clause
+    - has:
+        kind: string
