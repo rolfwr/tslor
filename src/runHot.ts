@@ -211,7 +211,7 @@ function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
   }
 }
 
-function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo {
+function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo | null {
   if (options.select) {
     const found = hotMods[options.select] ?? null;
     if (!found) {
@@ -219,11 +219,7 @@ function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotMo
     }
     return found;
   }
-  const first = hotArray[0];
-  if (!first) {
-    throw new Error('No modules found to analyze.');
-  }
-  return first;
+  return hotArray[0] ?? null;
 }
 
 function printTopModules(hotArray: HotModuleInfo[], cwd: string): void {
