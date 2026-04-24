@@ -171,7 +171,7 @@ function hotnessColor(hotness: number, leastHot: number, medianHot: number, most
   return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
-function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, HotModuleInfo> {
+export function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, HotModuleInfo> {
   const hotMods: Record<string, HotModuleInfo> = {};
   const fileSet = new Set(filePaths);
 
@@ -202,7 +202,7 @@ function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, H
   return hotMods;
 }
 
-function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
+export function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
   for (const modulePath in hotMods) {
     const hotModule = hotMods[modulePath]!;
     calcUpwards(hotMods, hotModule, new Set());
@@ -211,7 +211,7 @@ function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
   }
 }
 
-function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo | null {
+export function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo | null {
   if (options.select) {
     const found = hotMods[options.select] ?? null;
     if (!found) {
@@ -232,9 +232,9 @@ function printTopModules(hotArray: HotModuleInfo[], cwd: string): void {
   console.log();
 }
 
-function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
+export function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
   const chain: HotModuleInfo[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>([selected.path]);
   let current = selected;
   while (true) {
     let best: HotModuleInfo | null = null;
@@ -259,9 +259,9 @@ function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, selected: 
   return chain;
 }
 
-function buildImportChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
+export function buildImportChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
   const chain: HotModuleInfo[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>([selected.path]);
   let current = selected;
   while (true) {
     let best: HotModuleInfo | null = null;
