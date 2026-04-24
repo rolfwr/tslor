@@ -71,68 +71,52 @@ interface MoveFixup {
   newExport: NamedExport;
 };
 
+async function fixAliasesInMovedFile(
+  repoRoot: string,
+  fixupFileMove: FileMove,
+  fileSystem: FileSystem
+): Promise<void> {
+  const oldTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.oldPath, fileSystem);
+  const newTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.newPath, fileSystem);
+  if (!oldTsconfigPath || !newTsconfigPath || oldTsconfigPath === newTsconfigPath) {
+    return;
+  }
+  const movedModule = await loadSourceFile(fixupFileMove.newPath, fileSystem);
+  const importDecls = movedModule.getImportDeclarations();
+  for (const imp of importDecls) {
+    const moduleSpecifier = imp.getModuleSpecifierValue();
+    const resolvedPath = await resolveImportSpec(repoRoot, fixupFileMove.oldPath, moduleSpecifier, fileSystem);
+    if (resolvedPath) {
+      const newImportAliasSpec = await resolveImportSpecAlias(repoRoot, fixupFileMove.newPath, resolvedPath, fileSystem);
+      if (newImportAliasSpec) {
+        imp.setModuleSpecifier(newImportAliasSpec);
+      }
+    }
+  }
+  if (!movedModule.isSaved()) {
+    await movedModule.save();
+    console.log('M ' + movedModule.getFilePath());
+  }
+}
+
 async function mvCore(db: Storage, repoRoot: string, fixupFileMove: FileMove, fileSystem: FileSystem) {
-
   const srcPath = fixupFileMove.newPath;
-
   if (!existsSync(srcPath)) {
     console.log('Fixup File Move New Path does not exist:', srcPath);
     return;
   }
 
-  /*
-    Fix the aliases in the moved file itself. The path aliases in the tsconfig
-    file used in its previous location may be different than the path aliases in
-    the tsconfig file used in its new location.
-  */
+  await fixAliasesInMovedFile(repoRoot, fixupFileMove, fileSystem);
 
-  const oldTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.oldPath, fileSystem);
-  const newTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.newPath, fileSystem);
-  if (oldTsconfigPath && newTsconfigPath && oldTsconfigPath !== newTsconfigPath) {
-    const movedModule = await loadSourceFile(fixupFileMove.newPath, fileSystem);
-
-    const importDecls: ImportDeclaration[] = [];
-    movedModule.getImportDeclarations().forEach((imp) => {
-      importDecls.push(imp);
-    });
-
-    for (const imp of importDecls) {
-      const moduleSpecifier = imp.getModuleSpecifierValue();
-      const resolvedPath = await resolveImportSpec(repoRoot, fixupFileMove.oldPath, moduleSpecifier, fileSystem);
-      if (resolvedPath) {
-        const newImportAliasSpec = await resolveImportSpecAlias(repoRoot, fixupFileMove.newPath, resolvedPath, fileSystem);
-        if (newImportAliasSpec) {
-          imp.setModuleSpecifier(newImportAliasSpec);
-        }
-      }
-    }
-    if (!movedModule.isSaved()) {
-      await movedModule.save();
-      console.log('M ' + movedModule.getFilePath());
-    }
+  const moveFixups: MoveFixup[] = await getFixups(srcPath, fixupFileMove.oldPath, fileSystem);
+  if (moveFixups.length === 0) {
+    console.log('No fixups needed');
+    return;
   }
-  
 
-  
-
-  const fixupReferences = true;
-  if (fixupReferences) {
-    const moveFixups: MoveFixup[] = await getFixups(srcPath, fixupFileMove.oldPath, fileSystem);
-
-    if (moveFixups.length === 0) {
-      console.log('No fixups needed'); 
-      return;
-    }
-
-    /*
-      TODO: Group fixups by files that need to be modified.
-    */
-
-    const paths: string[] = await getTypeScriptFilePaths(repoRoot, true);
-
-    for (const fixup of moveFixups) {
-      await applyFixup(db, repoRoot, paths, fixup, fileSystem);
-    }
+  const paths: string[] = await getTypeScriptFilePaths(repoRoot, true);
+  for (const fixup of moveFixups) {
+    await applyFixup(db, repoRoot, paths, fixup, fileSystem);
   }
 }
 
@@ -228,101 +212,97 @@ interface UnresolvedImportDecls {
   moduleSpec: string;
 }
 
-async function updateImportDeclarations(importer: string, repoRoot: string, fixup: MoveFixup, fileSystem: FileSystem) {
-  const importerSourceFile = await loadSourceFile(importer, fileSystem);
+function collectUnresolvedImports(sourceFile: import("ts-morph").SourceFile): UnresolvedImportDecls[] {
   const unresolvedImports: UnresolvedImportDecls[] = [];
-  importerSourceFile.forEachChild((node) => {
+  sourceFile.forEachChild((node) => {
     const importDecl = node.asKind(SyntaxKind.ImportDeclaration) as ImportDeclaration;
-    if (importDecl) {
-
-      const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
-      if (!moduleSpecifier) {
-        throw new Error('No module specifier found');
-      }
-
-      const moduleSpec = moduleSpecifier.getLiteralText();
-      unresolvedImports.push({
-        node: importDecl,
-        moduleSpec,
-      });
+    if (!importDecl) {
       return;
     }
+    const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
+    if (!moduleSpecifier) {
+      throw new Error('No module specifier found');
+    }
+    unresolvedImports.push({ node: importDecl, moduleSpec: moduleSpecifier.getLiteralText() });
   });
+  return unresolvedImports;
+}
+
+function moveDefaultExport(
+  unres: UnresolvedImportDecls,
+  targetDecl: ImportDeclaration,
+  fixup: MoveFixup
+): void {
+  const oldDefaultImport = unres.node.getDefaultImport();
+  if (!oldDefaultImport) {
+    throw new Error('No default import found for fixup ' + JSON.stringify(fixup));
+  }
+  const localDefaultName = oldDefaultImport.getText();
+  unres.node.removeDefaultImport();
+  targetDecl.setDefaultImport(localDefaultName);
+}
+
+function moveNamedExport(
+  unres: UnresolvedImportDecls,
+  targetDecl: ImportDeclaration,
+  fixup: MoveFixup
+): boolean {
+  const oldNamedImports = unres.node.getNamedImports();
+  const oldNamespaceImport = unres.node.getNamespaceImport();
+
+  if (oldNamespaceImport) {
+    throw new Error('Namespace imports not supported');
+  }
+  if (oldNamedImports.length === 0) {
+    throw new Error('No named imports found');
+  }
+
+  const oldNamedImport = oldNamedImports.find((ni) => ni.getName() === fixup.oldExport.name);
+  if (!oldNamedImport) {
+    return false;
+  }
+
+  const localName = oldNamedImport.getName();
+  oldNamedImport.remove();
+  if (localName !== fixup.newExport.name) {
+    throw new Error('Aliases not supported');
+  }
+  targetDecl.addNamedImport(fixup.newExport.name);
+  return true;
+}
+
+async function updateImportDeclarations(importer: string, repoRoot: string, fixup: MoveFixup, fileSystem: FileSystem) {
+  const importerSourceFile = await loadSourceFile(importer, fileSystem);
+  const unresolvedImports = collectUnresolvedImports(importerSourceFile);
 
   const newImportAliasSpec = await resolveImportSpecAlias(repoRoot, importer, fixup.newExport.path, fileSystem);
   if (!newImportAliasSpec) {
     throw new Error('Failed to resolve import alias for module path ' + fixup.newExport.path + ' referenced from ' + importer);
   }
 
-  let targetUnresolvedImportDecl: ImportDeclaration | null = null;
-  for (const unres of unresolvedImports) {
-    if (unres.moduleSpec === fixup.oldExport.path) {
-      targetUnresolvedImportDecl = unres.node.asKind(SyntaxKind.ImportDeclaration) as ImportDeclaration;
-      break;
-    }
-  }
-
   for (const unres of unresolvedImports) {
     const resolvedPath = await resolveImportSpec(repoRoot, importer, unres.moduleSpec, fileSystem);
-    if (resolvedPath) {
-      if (resolvedPath === fixup.oldExport.path) {
+    if (!resolvedPath || resolvedPath !== fixup.oldExport.path) {
+      continue;
+    }
 
-        const indexAfter = unres.node.getChildIndex() + 1;
-        targetUnresolvedImportDecl = importerSourceFile.insertImportDeclaration(indexAfter, {
-          moduleSpecifier: newImportAliasSpec,
-        });
+    const indexAfter = unres.node.getChildIndex() + 1;
+    const targetDecl = importerSourceFile.insertImportDeclaration(indexAfter, {
+      moduleSpecifier: newImportAliasSpec,
+    });
 
-        if (!targetUnresolvedImportDecl) {
-          console.log('Since we do not have a target unresolved import decl yet, we will create one.');
-        }
-
-        if (fixup.oldExport.name === 'default') {
-          const oldDefaultImport = unres.node.getDefaultImport();
-          if (!oldDefaultImport) {
-            throw new Error('No default import found for fixup ' + JSON.stringify(fixup));
-          }
-          const localDefaultName = oldDefaultImport.getText();
-
-          unres.node.removeDefaultImport();
-
-          targetUnresolvedImportDecl.setDefaultImport(localDefaultName);
-        } else {
-          const oldNamedImports = unres.node.getNamedImports();
-          const oldNamespaceImport = unres.node.getNamespaceImport();
-
-          if (oldNamespaceImport) {
-            throw new Error('Namespace imports not supported');
-          }
-
-          if (oldNamedImports.length === 0) {
-            throw new Error('No named imports found');
-          }
-
-          const oldNamedImport = oldNamedImports.find((ni) => ni.getName() === fixup.oldExport.name);
-          if (!oldNamedImport) {
-            continue;
-          }
-
-          const localName = oldNamedImport.getName();
-          oldNamedImport.remove();
-          if (localName !== fixup.newExport.name) {
-            throw new Error('Aliases not supported');
-          }
-
-          targetUnresolvedImportDecl.addNamedImport(fixup.newExport.name);
-        }
-
-
-        const oldEmpty = isEmptyImportDecl(unres.node);
-
-        if (oldEmpty) {
-          unres.node.remove();
-        }
-
-
+    if (fixup.oldExport.name === 'default') {
+      moveDefaultExport(unres, targetDecl, fixup);
+    } else {
+      const moved = moveNamedExport(unres, targetDecl, fixup);
+      if (!moved) {
+        continue;
       }
     }
 
+    if (isEmptyImportDecl(unres.node)) {
+      unres.node.remove();
+    }
   }
 
   if (!importerSourceFile.isSaved()) {

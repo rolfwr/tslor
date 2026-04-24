@@ -35,22 +35,15 @@ describe('tsort', () => {
     return storage;
   }
 
-  // Helper to perform topological sort on a storage
-  function performTsort(storage: Storage, modules: string[]): string[] | null {
-    const moduleSet = new Set(modules);
+  function buildGraphs(storage: Storage, moduleSet: Set<string>) {
     const graph = new Map<string, Set<string>>();
     const reverseGraph = new Map<string, Set<string>>();
-
-    // Initialize all nodes
     for (const modulePath of moduleSet) {
       graph.set(modulePath, new Set());
       reverseGraph.set(modulePath, new Set());
     }
-
-    // Build edges
     for (const modulePath of moduleSet) {
       const exporters = storage.getExporterPathsOfImport(modulePath);
-
       for (const exporter of exporters) {
         if (moduleSet.has(exporter.path)) {
           graph.get(modulePath)!.add(exporter.path);
@@ -58,13 +51,46 @@ describe('tsort', () => {
         }
       }
     }
+    return { graph, reverseGraph };
+  }
 
-    // Kahn's algorithm
+  function insertSorted(queue: string[], item: string): void {
+    const insertIndex = queue.findIndex(q => q > item);
+    if (insertIndex === -1) {
+      queue.push(item);
+    } else {
+      queue.splice(insertIndex, 0, item);
+    }
+  }
+
+  function processKahnQueue(
+    queue: string[],
+    graph: Map<string, Set<string>>,
+    inDegree: Map<string, number>,
+    result: string[]
+  ): void {
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      result.push(current);
+      for (const dep of graph.get(current)!) {
+        const newInDegree = inDegree.get(dep)! - 1;
+        inDegree.set(dep, newInDegree);
+        if (newInDegree === 0) {
+          insertSorted(queue, dep);
+        }
+      }
+    }
+  }
+
+  function kahnSort(
+    moduleSet: Set<string>,
+    graph: Map<string, Set<string>>,
+    reverseGraph: Map<string, Set<string>>
+  ): string[] | null {
     const inDegree = new Map<string, number>();
     for (const modulePath of moduleSet) {
       inDegree.set(modulePath, reverseGraph.get(modulePath)!.size);
     }
-
     const queue: string[] = [];
     for (const modulePath of moduleSet) {
       if (inDegree.get(modulePath) === 0) {
@@ -72,33 +98,16 @@ describe('tsort', () => {
       }
     }
     queue.sort();
-
     const result: string[] = [];
+    processKahnQueue(queue, graph, inDegree, result);
+    return result.length < moduleSet.size ? null : result;
+  }
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      result.push(current);
-
-      for (const dependency of graph.get(current)!) {
-        const newInDegree = inDegree.get(dependency)! - 1;
-        inDegree.set(dependency, newInDegree);
-
-        if (newInDegree === 0) {
-          const insertIndex = queue.findIndex(q => q > dependency);
-          if (insertIndex === -1) {
-            queue.push(dependency);
-          } else {
-            queue.splice(insertIndex, 0, dependency);
-          }
-        }
-      }
-    }
-
-    if (result.length < moduleSet.size) {
-      return null;
-    }
-
-    return result;
+  // Helper to perform topological sort on a storage
+  function performTsort(storage: Storage, modules: string[]): string[] | null {
+    const moduleSet = new Set(modules);
+    const { graph, reverseGraph } = buildGraphs(storage, moduleSet);
+    return kahnSort(moduleSet, graph, reverseGraph);
   }
 
   test('linear dependency chain (A→B→C) outputs C, B, A', () => {

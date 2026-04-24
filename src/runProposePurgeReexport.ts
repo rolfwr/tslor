@@ -94,8 +94,8 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
 /**
  * Find all re-exports in the codebase
  */
-function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> {
-  const reExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> = [];
+function findAllReExports(db: Storage): ReExportItem[] {
+  const reExports: ReExportItem[] = [];
 
   const allReExportObjs = db.getAllReExports();
 
@@ -133,15 +133,52 @@ export function hasPublicTag(exportDecl: ExportDeclaration): boolean {
   return false;
 }
 
+type ReExportItem = { reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean };
+
+function collectPublicSymbolsFromDecl(
+  exportDecl: ExportDeclaration,
+  fileReExports: ReExportItem[],
+  publicSymbols: Set<string>
+): void {
+  for (const namedExport of exportDecl.getNamedExports()) {
+    publicSymbols.add(namedExport.getName());
+  }
+  if (exportDecl.getNamedExports().length === 0) {
+    const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
+    if (moduleSpec) {
+      for (const reExport of fileReExports) {
+        if (reExport.originalModuleSpec === moduleSpec) {
+          publicSymbols.add(reExport.symbolName);
+        }
+      }
+    }
+  }
+}
+
+async function extractPublicSymbolsForFile(
+  filePath: string,
+  fileReExports: ReExportItem[],
+  fileSystem: FileSystem
+): Promise<Set<string>> {
+  const sourceFile = await loadSourceFile(filePath, fileSystem);
+  const exportDecls = sourceFile.getExportDeclarations();
+  const publicSymbols = new Set<string>();
+  for (const exportDecl of exportDecls) {
+    if (hasPublicTag(exportDecl)) {
+      collectPublicSymbolsFromDecl(exportDecl, fileReExports, publicSymbols);
+    }
+  }
+  return publicSymbols;
+}
+
 /**
  * Filter out re-exports whose export declarations are tagged with @public.
  */
 async function filterPublicExports(
-  allReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
+  allReExports: ReExportItem[],
   fileSystem: FileSystem
-): Promise<Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>> {
-  // Group by file to load each source file only once
-  const byFile = new Map<string, typeof allReExports>();
+): Promise<ReExportItem[]> {
+  const byFile = new Map<string, ReExportItem[]>();
   for (const reExport of allReExports) {
     if (!byFile.has(reExport.reExporterPath)) {
       byFile.set(reExport.reExporterPath, []);
@@ -149,35 +186,11 @@ async function filterPublicExports(
     byFile.get(reExport.reExporterPath)!.push(reExport);
   }
 
-  const kept: typeof allReExports = [];
+  const kept: ReExportItem[] = [];
   let skippedCount = 0;
 
   for (const [filePath, fileReExports] of byFile) {
-    const sourceFile = await loadSourceFile(filePath, fileSystem);
-    const exportDecls = sourceFile.getExportDeclarations();
-
-    // Build a set of symbol names protected by @public on their declaration
-    const publicSymbols = new Set<string>();
-    for (const exportDecl of exportDecls) {
-      if (hasPublicTag(exportDecl)) {
-        for (const namedExport of exportDecl.getNamedExports()) {
-          publicSymbols.add(namedExport.getName());
-        }
-        // Also handle namespace re-exports (export * from '...')
-        if (exportDecl.getNamedExports().length === 0) {
-          // All symbols from this declaration are public
-          const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
-          if (moduleSpec) {
-            for (const reExport of fileReExports) {
-              if (reExport.originalModuleSpec === moduleSpec) {
-                publicSymbols.add(reExport.symbolName);
-              }
-            }
-          }
-        }
-      }
-    }
-
+    const publicSymbols = await extractPublicSymbolsForFile(filePath, fileReExports, fileSystem);
     for (const reExport of fileReExports) {
       if (publicSymbols.has(reExport.symbolName)) {
         skippedCount++;
@@ -199,9 +212,9 @@ async function filterPublicExports(
  */
 async function findUnusedReExports(
   db: Storage,
-  allReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>
-): Promise<Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>> {
-  const unusedReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> = [];
+  allReExports: ReExportItem[]
+): Promise<ReExportItem[]> {
+  const unusedReExports: ReExportItem[] = [];
   let skippedNamespaceCount = 0;
 
   // Cache namespace importer lookups per re-exporter path
@@ -239,7 +252,7 @@ async function findUnusedReExports(
  * Create a plan with re-export removal changes
  */
 async function createPurgeReexportPlan(
-  unusedReExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
+  unusedReExports: ReExportItem[],
   fileSystem: FileSystem
 ): Promise<TslorPlan> {
   const changes: ModifyFileChange[] = [];

@@ -516,6 +516,26 @@ function adjustModuleSpecForNewLocation(
 /**
  * Generate import statements for the new module based on symbol usage
  */
+type ImportMapEntry = { namedImports: Set<string>; defaultImport?: string; isTypeOnly: boolean };
+
+function addImportToMap(
+  requiredImportsMap: Map<string, ImportMapEntry>,
+  imp: { moduleSpec: string; importedName: string; isTypeOnly: boolean; isDefault: boolean }
+): void {
+  if (!requiredImportsMap.has(imp.moduleSpec)) {
+    requiredImportsMap.set(imp.moduleSpec, { namedImports: new Set(), isTypeOnly: imp.isTypeOnly });
+  }
+  const entry = requiredImportsMap.get(imp.moduleSpec)!;
+  if (imp.isDefault) {
+    entry.defaultImport = imp.importedName;
+  } else {
+    entry.namedImports.add(imp.importedName);
+  }
+  if (!imp.isTypeOnly) {
+    entry.isTypeOnly = false;
+  }
+}
+
 export function computeRequiredImports(
   symbolDefinitions: SymbolDefinition[],
   importUsages: ImportUsage[],
@@ -523,56 +543,25 @@ export function computeRequiredImports(
   sourceFilePath?: string,
   targetFilePath?: string
 ): RequiredImport[] {
-  const requiredImportsMap = new Map<string, {
-    namedImports: Set<string>;
-    defaultImport?: string;
-    isTypeOnly: boolean;
-  }>();
-  
-  // Find which imports the moved symbols need
+  const requiredImportsMap = new Map<string, ImportMapEntry>();
   const movedSymbolNames = new Set(symbolDefinitions.map(def => def.name));
   
   for (const usage of importUsages) {
-    if (movedSymbolNames.has(usage.symbol)) {
-      for (const imp of usage.usesImports) {
-        const importKey = `${imp.moduleSpec}:${imp.importedName}`;
-        
-        // Only include imports that are exclusively used by target symbols
-        // or imports that are shared but needed by the moved symbols
-        if (onlyUsedByTarget.has(importKey) || 
-            usage.usesImports.some(() => movedSymbolNames.has(usage.symbol))) {
-          
-          if (!requiredImportsMap.has(imp.moduleSpec)) {
-            requiredImportsMap.set(imp.moduleSpec, {
-              namedImports: new Set(),
-              isTypeOnly: imp.isTypeOnly
-            });
-          }
-          
-          const entry = requiredImportsMap.get(imp.moduleSpec)!;
-          
-          if (imp.isDefault) {
-            entry.defaultImport = imp.importedName;
-          } else {
-            entry.namedImports.add(imp.importedName);
-          }
-          
-          // Update isTypeOnly - it should be true only if ALL imports from this module are type-only
-          if (!imp.isTypeOnly) {
-            entry.isTypeOnly = false;
-          }
-        }
+    if (!movedSymbolNames.has(usage.symbol)) {
+      continue;
+    }
+    for (const imp of usage.usesImports) {
+      const importKey = `${imp.moduleSpec}:${imp.importedName}`;
+      if (onlyUsedByTarget.has(importKey) || usage.usesImports.some(() => movedSymbolNames.has(usage.symbol))) {
+        addImportToMap(requiredImportsMap, imp);
       }
     }
   }
   
-  // Convert to RequiredImport array and adjust paths if file locations provided
   return Array.from(requiredImportsMap.entries()).map(([moduleSpec, info]) => {
-    // Adjust relative paths if we have source and target file paths
     const adjustedModuleSpec = (sourceFilePath && targetFilePath)
       ? adjustModuleSpecForNewLocation(moduleSpec, sourceFilePath, targetFilePath)
       : moduleSpec;
-    
     return {
       moduleSpec: adjustedModuleSpec,
       importedNames: Array.from(info.namedImports).sort(),
@@ -612,60 +601,28 @@ function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
   }
 }
 
+function addImportStructureToFile(newFile: SourceFile, imp: RequiredImport): void {
+  const base = { moduleSpecifier: imp.moduleSpec, ...(imp.isTypeOnly ? { isTypeOnly: true } : {}) };
+  if (imp.defaultImport && imp.importedNames.length > 0) {
+    newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
+    newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
+  } else if (imp.defaultImport) {
+    newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
+  } else if (imp.importedNames.length > 0) {
+    newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
+  }
+}
+
 export function generateNewModuleSource(
   symbolDefinitions: SymbolDefinition[],
   requiredImports: RequiredImport[],
   additionalExports?: Set<string>
 ): string {
-  // Create a new source file using ts-morph
   const project = new Project({ useInMemoryFileSystem: true });
   const newFile = project.createSourceFile('new-module.ts', '');
   
-  // Add imports using AST methods
   for (const imp of requiredImports) {
-    // Handle default imports separately from named imports
-    // If there's both a default and named imports, we need two separate import declarations
-    if (imp.defaultImport && imp.importedNames.length > 0) {
-      // Add default import
-      const defaultStructure: any = {
-        moduleSpecifier: imp.moduleSpec,
-        defaultImport: imp.defaultImport
-      };
-      if (imp.isTypeOnly) {
-        defaultStructure.isTypeOnly = true;
-      }
-      newFile.addImportDeclaration(defaultStructure);
-      
-      // Add named imports
-      const namedStructure: any = {
-        moduleSpecifier: imp.moduleSpec,
-        namedImports: imp.importedNames
-      };
-      if (imp.isTypeOnly) {
-        namedStructure.isTypeOnly = true;
-      }
-      newFile.addImportDeclaration(namedStructure);
-    } else if (imp.defaultImport) {
-      // Just default import
-      const importStructure: any = {
-        moduleSpecifier: imp.moduleSpec,
-        defaultImport: imp.defaultImport
-      };
-      if (imp.isTypeOnly) {
-        importStructure.isTypeOnly = true;
-      }
-      newFile.addImportDeclaration(importStructure);
-    } else if (imp.importedNames.length > 0) {
-      // Just named imports
-      const importStructure: any = {
-        moduleSpecifier: imp.moduleSpec,
-        namedImports: imp.importedNames
-      };
-      if (imp.isTypeOnly) {
-        importStructure.isTypeOnly = true;
-      }
-      newFile.addImportDeclaration(importStructure);
-    }
+    addImportStructureToFile(newFile, imp);
   }
   
   // Add symbol definitions by inserting their full AST text

@@ -102,6 +102,69 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
   return files;
 }
 
+function shouldReplaceTypeNode(
+  node: import("ts-morph").Node,
+  sourceType: string,
+  lineIndex: number,
+  spliced: boolean
+): boolean {
+  if (node.getKind() !== SyntaxKind.Identifier || node.getText() !== sourceType) {
+    return false;
+  }
+  const parent = node.getParent();
+  if (!parent) {
+    return false;
+  }
+  const parentKind = parent.getKind();
+  if (parentKind !== SyntaxKind.TypeReference && parentKind !== SyntaxKind.ExpressionWithTypeArguments) {
+    return false;
+  }
+  const lineNum = node.getStartLineNumber() - 1;
+  if (lineNum === lineIndex) {
+    return false;
+  }
+  if (spliced && lineNum === lineIndex + 1) {
+    return false;
+  }
+  return true;
+}
+
+function replaceTypeReferences(
+  scriptText: string,
+  sourceType: string,
+  targetType: string,
+  lineIndex: number,
+  spliced: boolean
+): { changed: boolean; fullText: string } {
+  const project = new Project({ useInMemoryFileSystem: true, skipLoadingLibFiles: true });
+  const sourceFile = project.createSourceFile('temp.ts', scriptText);
+  let changed = false;
+  sourceFile.forEachDescendant((node) => {
+    if (shouldReplaceTypeNode(node, sourceType, lineIndex, spliced)) {
+      node.replaceWithText(targetType);
+      changed = true;
+    }
+  });
+  return { changed, fullText: sourceFile.getFullText() };
+}
+
+function applyImportLineChange(
+  lines: string[],
+  importInfo: ImportAnalysis,
+  targetType: string,
+  targetSpec: string
+): void {
+  if (importInfo.hasReExport) {
+    lines.splice(importInfo.lineIndex + 1, 0, `import type { ${targetType} } from '${targetSpec}';`);
+  } else if (importInfo.otherNames.length > 0) {
+    const typePrefix = importInfo.isTypeOnly ? 'type ' : '';
+    lines[importInfo.lineIndex] = `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${importInfo.actualModuleSpec}';`;
+    lines.splice(importInfo.lineIndex + 1, 0, `import type { ${targetType} } from '${targetSpec}';`);
+  } else {
+    lines[importInfo.lineIndex] = `import type { ${targetType} } from '${targetSpec}';`;
+  }
+}
+
 export function replaceTypeInFile(
   filePath: string,
   originalContent: string,
@@ -134,57 +197,18 @@ export function replaceTypeInFile(
   if (importInfo.lineIndex >= 0) {
     const actualSpec = importInfo.actualModuleSpec;
     const targetSpec = computeTargetModuleSpec(actualSpec, sourceModule, targetModule);
-    if (importInfo.hasReExport) {
-      // Re-export present — keep original import, add new import line after it
-      const newImportLine = `import type { ${targetType} } from '${targetSpec}';`;
-      lines.splice(importInfo.lineIndex + 1, 0, newImportLine);
-      changed = true;
-    } else if (importInfo.otherNames.length > 0) {
-      // Shared import — remove source type, add new import
-      const typePrefix = importInfo.isTypeOnly ? 'type ' : '';
-      lines[importInfo.lineIndex] = `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${actualSpec}';`;
-      const newImportLine = `import type { ${targetType} } from '${targetSpec}';`;
-      lines.splice(importInfo.lineIndex + 1, 0, newImportLine);
-      changed = true;
-    } else {
-      // Sole import — replace entirely
-      lines[importInfo.lineIndex] = `import type { ${targetType} } from '${targetSpec}';`;
-      changed = true;
-    }
+    applyImportLineChange(lines, importInfo, targetType, targetSpec);
+    changed = true;
   }
 
   // Replace type references using AST to avoid touching strings/comments
   const spliced = changed && (importInfo.otherNames.length > 0 || importInfo.hasReExport);
   const scriptText = lines.join('\n');
-  const project = new Project({ useInMemoryFileSystem: true, skipLoadingLibFiles: true });
-  const sourceFile = project.createSourceFile('temp.ts', scriptText);
-
-  sourceFile.forEachDescendant((node) => {
-    if (node.getKind() === SyntaxKind.Identifier && node.getText() === sourceType) {
-      const parent = node.getParent();
-      if (!parent) {
-        return;
-      }
-      const parentKind = parent.getKind();
-      if (parentKind !== SyntaxKind.TypeReference && parentKind !== SyntaxKind.ExpressionWithTypeArguments) {
-        return;
-      }
-      const lineNum = node.getStartLineNumber() - 1; // 0-based
-      if (lineNum === importInfo.lineIndex) {
-        return;
-      }
-      if (spliced && lineNum === importInfo.lineIndex + 1) {
-        return;
-      }
-      node.replaceWithText(targetType);
-      changed = true;
-    }
-  });
-
-  if (changed) {
-    const updatedLines = sourceFile.getFullText().split('\n');
+  const { changed: refChanged, fullText } = replaceTypeReferences(scriptText, sourceType, targetType, importInfo.lineIndex, spliced);
+  if (refChanged) {
+    changed = true;
     lines.length = 0;
-    lines.push(...updatedLines);
+    lines.push(...fullText.split('\n'));
   }
 
   if (!changed) {
@@ -208,6 +232,26 @@ interface ImportAnalysis {
   actualModuleSpec: string;
 }
 
+function checkModuleSpecMatch(
+  moduleSpec: string,
+  sourceModule: string,
+  importerPath: string | undefined,
+  resolvedExporterPath: string | undefined
+): boolean {
+  if (moduleSpecMatches(moduleSpec, sourceModule)) {
+    return true;
+  }
+  if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) {
+    return false;
+  }
+  if (!exporterMatchesSourceModule(resolvedExporterPath, sourceModule)) {
+    return false;
+  }
+  const resolved = resolve(dirname(importerPath), moduleSpec);
+  const exporterBase = resolvedExporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
+  return resolved === exporterBase || resolved === resolvedExporterPath;
+}
+
 function analyzeImports(script: string, sourceType: string, sourceModule: string, importerPath?: string, resolvedExporterPath?: string): ImportAnalysis {
   const lines = script.split('\n');
   const result: ImportAnalysis = {
@@ -222,51 +266,28 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!
-
     if (line.match(new RegExp(`export\\s+.*\\b${escapeRegex(sourceType)}\\b.*from\\s`))) {
       result.hasReExport = true;
     }
-
     const importMatch = line.match(/^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/);
     if (!importMatch) {
       continue;
     }
-
     const isTypeOnly = Boolean(importMatch[1]);
     const namesStr = importMatch[2]!;
     const moduleSpec = importMatch[3]!;
-
-    if (!moduleSpecMatches(moduleSpec, sourceModule)) {
-      // Text match failed — try resolving relative imports against the known exporter path
-      if (!importerPath || !resolvedExporterPath || !moduleSpec.startsWith('.')) {
-        continue;
-      }
-      if (!exporterMatchesSourceModule(resolvedExporterPath, sourceModule)) {
-        continue;
-      }
-      const resolved = resolve(dirname(importerPath), moduleSpec);
-      const exporterBase = resolvedExporterPath.replace(/\.(ts|tsx|js|jsx)$/, '');
-      if (resolved !== exporterBase && resolved !== resolvedExporterPath) {
-        continue;
-      }
+    if (!checkModuleSpecMatch(moduleSpec, sourceModule, importerPath, resolvedExporterPath)) {
+      continue;
     }
-
     const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
-    const hasSourceType = names.some(n => {
-      const baseName = n.split(/\s+as\s+/)[0]!.trim();
-      return baseName === sourceType;
-    });
-
+    const hasSourceType = names.some(n => n.split(/\s+as\s+/)[0]!.trim() === sourceType);
     if (hasSourceType) {
       result.hasImport = true;
       result.isTypeOnly = isTypeOnly;
       result.importLine = line;
       result.lineIndex = i;
       result.actualModuleSpec = moduleSpec;
-      result.otherNames = names.filter(n => {
-        const baseName = n.split(/\s+as\s+/)[0]!.trim();
-        return baseName !== sourceType;
-      });
+      result.otherNames = names.filter(n => n.split(/\s+as\s+/)[0]!.trim() !== sourceType);
       break;
     }
   }

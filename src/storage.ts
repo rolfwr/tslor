@@ -145,32 +145,44 @@ export class Storage {
     const result: { importerPath: string, exporterPath: string, symbolName: string }[] = [];
     
     for (const obj of projectUseImports) {
-      const id = obj.id;
-      const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
-      const exporter = obj.exporter;
-      
-      if (exporter === null || typeof exporter !== 'object' || !('path' in exporter)) {
-        continue; // Skip invalid exporters
-      }
-      
-      const exporterPath = exporter.path;
-      if (typeof exporterPath !== 'string') {
+      const importerPath = obj.id.slice('import|'.length, obj.id.lastIndexOf('|'));
+      const exporterPath = this.extractExporterPath(obj);
+      if (!exporterPath) {
         continue;
       }
-      
-      // Extract symbol name directly from this import object's groups
-      const groups = obj.groups || [];
-      for (const group of groups) {
-        if (typeof group === 'string' && group.startsWith('export|' + exporterPath + '|')) {
-          const symbolName = group.split('|')[2];
-          if (symbolName) {
-            result.push({ importerPath, exporterPath, symbolName });
-          }
-        }
+      for (const symbolName of this.extractSymbolNamesFromGroups(obj.groups, exporterPath)) {
+        result.push({ importerPath, exporterPath, symbolName });
       }
     }
     
     return result;
+  }
+
+  private extractExporterPath(obj: Readonly<Obj>): string | null {
+    const exporter = obj.exporter;
+    if (exporter === null || typeof exporter !== 'object' || !('path' in exporter)) {
+      return null;
+    }
+    const path = (exporter as Record<string, unknown>)['path'];
+    return typeof path === 'string' ? path : null;
+  }
+
+  private extractSymbolNamesFromGroups(groups: unknown, exporterPath: string): string[] {
+    const prefix = 'export|' + exporterPath + '|';
+    const symbols: string[] = [];
+    if (!Array.isArray(groups)) {
+      return symbols;
+    }
+    for (const group of groups) {
+      if (typeof group !== 'string' || !group.startsWith(prefix)) {
+        continue;
+      }
+      const symbolName = group.split('|')[2];
+      if (symbolName) {
+        symbols.push(symbolName);
+      }
+    }
+    return symbols;
   }
 
   addFileTimestamp(file: string, mtimeMs: number) {

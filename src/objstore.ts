@@ -135,6 +135,60 @@ export class ObjStore {
   }
 }
 
+function findDifferenceInMaps(what: string, a: Map<unknown, unknown>, b: unknown): string | null {
+  if (!(b instanceof Map)) {
+    return what + ' types differ, Map vs non-Map object';
+  }
+  const mapKeyUnion = new Set([...a.keys(), ...b.keys()]);
+  for (const key of mapKeyUnion) {
+    if (!a.has(key)) {
+      return what + '[' + JSON.stringify(key) + '] exists in b but not in a';
+    }
+    if (!b.has(key)) {
+      return what + '[' + JSON.stringify(key) + '] exists in a but not in b';
+    }
+    const diff = findDifference(what + '[' + JSON.stringify(key) + ']', a.get(key), b.get(key));
+    if (diff) {
+      return diff;
+    }
+  }
+  return null;
+}
+
+function findDifferenceInArrays(what: string, a: unknown[], b: unknown): string | null {
+  if (!Array.isArray(b)) {
+    return what + ' types differ, Array vs non-Array object';
+  }
+  const maxLength = Math.max(a.length, b.length);
+  for (let i = 0; i < maxLength; i++) {
+    const diff = findDifference(what + '[' + JSON.stringify(i) + ']', a[i], b[i]);
+    if (diff) {
+      return diff;
+    }
+  }
+  if (a.length !== b.length) {
+    return what + ' array lengths differ, ' + a.length + ' vs ' + b.length;
+  }
+  return null;
+}
+
+function findDifferenceInObjects(what: string, a: Record<string, unknown>, b: Record<string, unknown>): string | null {
+  const keyUnion = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keyUnion) {
+    if (!(key in a)) {
+      return what + '[' + JSON.stringify(key) + '] key exists in b but not in a';
+    }
+    if (!(key in b)) {
+      return what + '[' + JSON.stringify(key) + '] key exists in a but not in b';
+    }
+    const diff = findDifference(what + '.' + key, a[key], b[key]);
+    if (diff) {
+      return diff;
+    }
+  }
+  return null;
+}
+
 export function findDifference(what: string, a: unknown, b: unknown): string | null {
   if (typeof a !== typeof b) {
     return what + ' types differ, ' + typeof a + ' vs ' + typeof b;
@@ -143,82 +197,19 @@ export function findDifference(what: string, a: unknown, b: unknown): string | n
   const type = typeof a;
   if (type === 'object') {
     if (a === null) {
-      if (b !== null) {
-        return what + ' types differ, null vs non-null object';
-      }
-      return null;
+      return b !== null ? what + ' types differ, null vs non-null object' : null;
     }
-
     if (a instanceof Map) {
-      if (!(b instanceof Map)) {
-        return what + ' types differ, Map vs non-Map object';
-      }
-
-      const aKeys = Array.from(a.keys());
-      const bKeys = Array.from(b.keys());
-      const mapKeyUnion = new Set([...aKeys, ...bKeys]);
-      for (const key of mapKeyUnion) {
-        if (!a.has(key)) {
-          return what + '[' + JSON.stringify(key) + '] exists in b but not in a';
-        }
-        if (!b.has(key)) {
-          return what + '[' + JSON.stringify(key) + '] exists in a but not in b';
-        }
-
-        const valueA = a.get(key);
-        const valueB = b.get(key);
-        const diff = findDifference(what + '[' + JSON.stringify(key) + ']', valueA, valueB);
-        if (diff) {
-          return diff;
-        }
-      }
-      return null;
+      return findDifferenceInMaps(what, a, b);
     }
-
     if (Array.isArray(a)) {
-      if (!Array.isArray(b)) {
-        return what + ' types differ, Array vs non-Array object';
-      }
-
-      const maxLength = Math.max(a.length, b.length);
-      for (let i = 0; i < maxLength; i++) {
-        const diff = findDifference(what + '[' + JSON.stringify(i) + ']', a[i], b[i]);
-        if (diff) {
-          return diff;
-        }
-      }
-
-      if (a.length !== b.length) {
-        return what + ' array lengths differ, ' + a.length + ' vs ' + b.length;
-      }
-      return null;
+      return findDifferenceInArrays(what, a, b);
     }
-
-    const aObj = a as Record<string, unknown>;
-    const bObj = b as Record<string, unknown>;
-    const keysA = Object.keys(aObj);
-    const keysB = Object.keys(bObj);
-    const keyUnion = new Set([...keysA, ...keysB]);
-    for (const key of keyUnion) {
-      if (!(key in aObj)) {
-        return what + '[' + JSON.stringify(key) + '] key exists in b but not in a';
-      }
-      if (!(key in bObj)) {
-        return what + '[' + JSON.stringify(key) + '] key exists in a but not in b';
-      }
-      const diff = findDifference(what + '.' + key, aObj[key], bObj[key]);
-      if (diff) {
-        return diff;
-      }
-    }
-    return null;
+    return findDifferenceInObjects(what, a as Record<string, unknown>, b as Record<string, unknown>);
   }
 
   if (type === 'number' || type === 'string' || type === 'boolean') {
-    if (a !== b) {
-      return what + ' values differ, ' + a + ' vs ' + b;
-    }
-    return null;
+    return a !== b ? what + ' values differ, ' + a + ' vs ' + b : null;
   }
 
   throw new Error('Unsupported type: ' + type);

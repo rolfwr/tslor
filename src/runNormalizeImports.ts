@@ -136,72 +136,115 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
     if (group.length < 2) {
       continue;
     }
-
-    const winner = group[0]!
-    const winnerDefaultName = winner.getDefaultImport()?.getText();
-
-    const winnerComments = leadingCommentTexts(winner);
-
-    for (let i = 1; i < group.length; i++) {
-      const donor = group[i]!
-
-      // Don't merge imports with different leading comments — they may be
-      // build directives (e.g., /*VUE2*/) that control conditional compilation.
-      if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) {
-        continue;
-      }
-
-      // Handle default import
-      const donorDefault = donor.getDefaultImport();
-
-      // TypeScript forbids `import type Default, { Named } from '...'` (TS1363).
-      // Skip merge if the result would have both a default and named imports on a type-only import.
-      if (winner.isTypeOnly()) {
-        const mergedHasDefault = Boolean(winnerDefaultName) || Boolean(donorDefault);
-        const mergedHasNamed = winner.getNamedImports().length > 0 || donor.getNamedImports().length > 0;
-        if (mergedHasDefault && mergedHasNamed) {
-          continue;
-        }
-      }
-
-      if (donorDefault) {
-        if (!winnerDefaultName) {
-          winner.setDefaultImport(donorDefault.getText());
-        } else if (winnerDefaultName !== donorDefault.getText()) {
-          console.warn(
-            `Warning: conflicting default imports from '${winner.getModuleSpecifierValue()}': ` +
-            `'${winnerDefaultName}' vs '${donorDefault.getText()}'. Skipping merge of this declaration.`
-          );
-          continue;
-        }
-      }
-
-      // Merge named imports
-      const existingNames = new Set(
-        winner.getNamedImports().map(ni => namedImportKey(ni))
-      );
-
-      for (const namedImport of donor.getNamedImports()) {
-        const key = namedImportKey(namedImport);
-        if (existingNames.has(key)) {
-          continue;
-        }
-
-        const alias = namedImport.getAliasNode();
-        winner.addNamedImport({
-          name: namedImport.getName(),
-          ...(alias ? { alias: alias.getText() } : {}),
-          ...(namedImport.isTypeOnly() ? { isTypeOnly: true } : {}),
-        });
-        existingNames.add(key);
-      }
-
-      donor.remove();
+    if (mergeImportGroup(group)) {
       changed = true;
     }
   }
 
   return changed;
+}
+
+function mergeImportGroup(group: ImportDeclaration[]): boolean {
+  const winner = group[0]!;
+  const winnerDefaultName = winner.getDefaultImport()?.getText();
+  const winnerComments = leadingCommentTexts(winner);
+  let changed = false;
+
+  for (let i = 1; i < group.length; i++) {
+    const donor = group[i]!;
+    if (tryMergeDonorIntoWinner(winner, donor, winnerDefaultName, winnerComments)) {
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function tryMergeDonorIntoWinner(
+  winner: ImportDeclaration,
+  donor: ImportDeclaration,
+  winnerDefaultName: string | undefined,
+  winnerComments: string[]
+): boolean {
+  // Don't merge imports with different leading comments — they may be
+  // build directives (e.g., /*VUE2*/) that control conditional compilation.
+  if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) {
+    return false;
+  }
+
+  // TypeScript forbids `import type Default, { Named } from '...'` (TS1363).
+  // Skip merge if the result would have both a default and named imports on a type-only import.
+  if (wouldViolateTypeOnlyRestriction(winner, donor, winnerDefaultName)) {
+    return false;
+  }
+
+  if (!mergeDefaultImport(winner, donor, winnerDefaultName)) {
+    return false;
+  }
+
+  mergeNamedImports(winner, donor);
+  donor.remove();
+  return true;
+}
+
+function wouldViolateTypeOnlyRestriction(
+  winner: ImportDeclaration,
+  donor: ImportDeclaration,
+  winnerDefaultName: string | undefined
+): boolean {
+  if (!winner.isTypeOnly()) {
+    return false;
+  }
+  const mergedHasDefault = Boolean(winnerDefaultName) || Boolean(donor.getDefaultImport());
+  const mergedHasNamed = winner.getNamedImports().length > 0 || donor.getNamedImports().length > 0;
+  return mergedHasDefault && mergedHasNamed;
+}
+
+/**
+ * Merges the default import from donor into winner.
+ * Returns false if a conflict prevents the merge.
+ */
+function mergeDefaultImport(
+  winner: ImportDeclaration,
+  donor: ImportDeclaration,
+  winnerDefaultName: string | undefined
+): boolean {
+  const donorDefault = donor.getDefaultImport();
+  if (!donorDefault) {
+    return true;
+  }
+  if (!winnerDefaultName) {
+    winner.setDefaultImport(donorDefault.getText());
+    return true;
+  }
+  if (winnerDefaultName !== donorDefault.getText()) {
+    console.warn(
+      `Warning: conflicting default imports from '${winner.getModuleSpecifierValue()}': ` +
+      `'${winnerDefaultName}' vs '${donorDefault.getText()}'. Skipping merge of this declaration.`
+    );
+    return false;
+  }
+  return true;
+}
+
+function mergeNamedImports(winner: ImportDeclaration, donor: ImportDeclaration): void {
+  const existingNames = new Set(
+    winner.getNamedImports().map(ni => namedImportKey(ni))
+  );
+
+  for (const namedImport of donor.getNamedImports()) {
+    const key = namedImportKey(namedImport);
+    if (existingNames.has(key)) {
+      continue;
+    }
+    const alias = namedImport.getAliasNode();
+    winner.addNamedImport({
+      name: namedImport.getName(),
+      ...(alias ? { alias: alias.getText() } : {}),
+      ...(namedImport.isTypeOnly() ? { isTypeOnly: true } : {}),
+    });
+    existingNames.add(key);
+  }
 }
 
 function isSideEffectImport(importDecl: ImportDeclaration): boolean {

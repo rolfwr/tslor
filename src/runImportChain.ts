@@ -25,28 +25,30 @@ export async function runImportChain(fromPath: string, toPath: string, debugOpti
 
     while (node) {
         console.log(node.id);
-        if (!node.down) {
-            break;
+        node = pickNextNode(node);
+    }
+}
+
+function pickNextNode(node: NodeInfo): NodeInfo | null {
+    if (!node.down) {
+        return null;
+    }
+    const nextNodes: NodeInfo[] = node.down.nodes;
+    let best: NodeInfo | null = null;
+    let score = 0;
+    for (const nextNode of nextNodes) {
+        if (!nextNode.down) {
+            throw new Error('Expected nextNode.down to be set');
         }
-        const nextNodes: NodeInfo[] = node.down.nodes;
-
-        node = null;
-        let score = 0;
-        for (const nextNode of nextNodes) {
-            if (!nextNode.down) {
-                throw new Error('Expected nextNode.down to be set');
-            }
-
-            if (nextNode.down.score === null) {
-                continue;
-            }
-
-            if (!node || nextNode.down.score < score) {
-                node = nextNode;
-                score = nextNode.down.score;
-            }
+        if (nextNode.down.score === null) {
+            continue;
+        }
+        if (!best || nextNode.down.score < score) {
+            best = nextNode;
+            score = nextNode.down.score;
         }
     }
+    return best;
 }
 
 interface Direction {
@@ -85,24 +87,48 @@ function getImportChainDown(db: Storage, cache: Map<string, NodeInfo>, fromPath:
 
 const failOnCycle = false;
 
+function handleCycleDetection(node: NodeInfo): boolean {
+    let cycleNode: NodeInfo | null = node;
+    console.log('Cycle detected:');
+    while (cycleNode) {
+        console.log('  ' + cycleNode.id);
+        const nextNode: NodeInfo | null = cycleNode.scanning;
+        cycleNode.scanning = null;
+        cycleNode = nextNode;
+    }
+    console.log();
+    if (failOnCycle) {
+        throw new Error('Cycle detected');
+    }
+    return false; // don't recurse
+}
+
+function processExporterNode(
+    db: Storage,
+    cache: Map<string, NodeInfo>,
+    node: NodeInfo,
+    exporter: { path: string },
+    toPath: string,
+    down: Direction
+): void {
+    const exporterNode = getNodeInfo(cache, exporter.path);
+    node.scanning = exporterNode;
+    populateDown(db, cache, exporterNode, exporter.path, toPath);
+    node.scanning = null;
+    if (!exporterNode.down) {
+        console.log('Score is incomplete for ' + exporter.path);
+        return;
+    }
+    if (exporterNode.down.score !== null) {
+        down.score = (down.score ?? 0) + exporterNode.down.score;
+        down.nodes.push(exporterNode);
+    }
+}
+
 function populateDown(db: Storage, cache: Map<string, NodeInfo>, node: NodeInfo, fromPath: string, toPath: string): NodeInfo {
     let recurse = true;
     if (node.scanning) {
-        console.log('Cycle detected:');
-
-        let cycleNode: NodeInfo | null = node;
-        while (cycleNode) {
-            console.log('  ' + cycleNode.id);
-            const nextNode: NodeInfo | null = cycleNode.scanning;
-            cycleNode.scanning = null;
-            cycleNode = nextNode;
-        }
-        console.log();
-        if (failOnCycle) {
-            throw new Error('Cycle detected');
-        }
-
-        recurse = false;
+        recurse = handleCycleDetection(node);
     }
 
     if (node.down) {
@@ -110,40 +136,18 @@ function populateDown(db: Storage, cache: Map<string, NodeInfo>, node: NodeInfo,
     }
 
     if (fromPath === toPath) {
-        node.down = {
-            nodes: [],
-            score: 1
-        };
+        node.down = { nodes: [], score: 1 };
         return node;
     }
 
     const exporters = db.getExporterPathsOfImport(fromPath);
     if (recurse) {
-        const down: Direction = {
-            nodes: [],
-            score: null
-        };
+        const down: Direction = { nodes: [], score: null };
         for (const exporter of exporters) {
             if (exporter.path === fromPath) {
                 throw new Error('Expected exporter.path to be different from fromPath');
             }
-
-            const exporterNode = getNodeInfo(cache, exporter.path);
-
-            node.scanning = exporterNode;
-            populateDown(db, cache, exporterNode, exporter.path, toPath);
-            node.scanning = null;
-
-            // exporterNode.down could be null if we encountered a cycle
-            if (!exporterNode.down) {
-                console.log('Score is incomplete for ' + exporter.path);
-            } else {
-                if (exporterNode.down.score !== null) {
-                    down.score = (down.score ?? 0) + exporterNode.down.score;
-                    down.nodes.push(exporterNode);
-                }
-            }
-
+            processExporterNode(db, cache, node, exporter, toPath, down);
         }
         node.down = down;
     }

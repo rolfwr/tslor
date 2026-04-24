@@ -3,6 +3,7 @@
     "rules": {
       "recommended": false,
       "complexity": {
+        "noExcessiveCognitiveComplexity": "error",
         "useMaxParams": {
           "level": "error",
           "options": { "max": 7 }

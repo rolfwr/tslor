@@ -110,6 +110,15 @@ function buildDependencyGraph(
   return { graph, reverseGraph };
 }
 
+function insertSorted(queue: string[], item: string): void {
+  const insertIndex = queue.findIndex(q => q > item);
+  if (insertIndex === -1) {
+    queue.push(item);
+  } else {
+    queue.splice(insertIndex, 0, item);
+  }
+}
+
 /**
  * Perform topological sort using Kahn's algorithm.
  *
@@ -120,14 +129,11 @@ function topologicalSort(
   graph: Map<string, Set<string>>,
   reverseGraph: Map<string, Set<string>>
 ): string[] | null {
-  // Calculate in-degree (number of modules that import each module)
   const inDegree = new Map<string, number>();
   for (const modulePath of moduleSet) {
     inDegree.set(modulePath, reverseGraph.get(modulePath)!.size);
   }
 
-  // Initialize queue with nodes that have no dependents (in-degree 0)
-  // Sort alphabetically for deterministic output
   const queue: string[] = [];
   for (const modulePath of moduleSet) {
     if (inDegree.get(modulePath) === 0) {
@@ -139,35 +145,67 @@ function topologicalSort(
   const result: string[] = [];
 
   while (queue.length > 0) {
-    // Take first element (alphabetically first) for deterministic order
     const current = queue.shift()!;
     result.push(current);
 
-    // For each module that current imports
     for (const dependency of graph.get(current)!) {
-      // Decrement its in-degree (we've processed one of its dependents)
       const newInDegree = inDegree.get(dependency)! - 1;
       inDegree.set(dependency, newInDegree);
-
-      // If it has no more dependents, add to queue
       if (newInDegree === 0) {
-        // Insert in sorted position for deterministic order
-        const insertIndex = queue.findIndex(q => q > dependency);
-        if (insertIndex === -1) {
-          queue.push(dependency);
-        } else {
-          queue.splice(insertIndex, 0, dependency);
-        }
+        insertSorted(queue, dependency);
       }
     }
   }
 
-  // If we didn't process all nodes, there's a cycle
   if (result.length < moduleSet.size) {
     return null;
   }
 
   return result;
+}
+
+function markPathCycleNodes(
+  cycleNodes: Set<string>,
+  path: string[],
+  cycleAnchor: string,
+  extraNode: string,
+  currentNode: string
+): void {
+  const cycleStart = path.indexOf(cycleAnchor);
+  if (cycleStart !== -1) {
+    for (let i = cycleStart; i < path.length; i++) {
+      cycleNodes.add(path[i]!);
+    }
+  }
+  cycleNodes.add(extraNode);
+  cycleNodes.add(currentNode);
+}
+
+function dfsFindCycles(
+  node: string,
+  path: string[],
+  visited: Set<string>,
+  recStack: Set<string>,
+  cycleNodes: Set<string>,
+  graph: Map<string, Set<string>>
+): boolean {
+  visited.add(node);
+  recStack.add(node);
+
+  for (const neighbor of graph.get(node) || []) {
+    if (!visited.has(neighbor)) {
+      if (dfsFindCycles(neighbor, [...path, neighbor], visited, recStack, cycleNodes, graph)) {
+        markPathCycleNodes(cycleNodes, path, neighbor, node, node);
+        return true;
+      }
+    } else if (recStack.has(neighbor)) {
+      markPathCycleNodes(cycleNodes, path, neighbor, neighbor, node);
+      return true;
+    }
+  }
+
+  recStack.delete(node);
+  return false;
 }
 
 /**
@@ -177,49 +215,13 @@ function findCycleNodes(
   moduleSet: Set<string>,
   graph: Map<string, Set<string>>
 ): Set<string> {
-  // Find nodes involved in cycles using DFS
   const visited = new Set<string>();
   const recStack = new Set<string>();
   const cycleNodes = new Set<string>();
 
-  function dfs(node: string, path: string[]): boolean {
-    visited.add(node);
-    recStack.add(node);
-
-    for (const neighbor of graph.get(node) || []) {
-      if (!visited.has(neighbor)) {
-        if (dfs(neighbor, [...path, neighbor])) {
-          // Mark all nodes in the cycle
-          const cycleStart = path.indexOf(neighbor);
-          if (cycleStart !== -1) {
-            for (let i = cycleStart; i < path.length; i++) {
-              cycleNodes.add(path[i]!);
-            }
-          }
-          cycleNodes.add(node);
-          return true;
-        }
-      } else if (recStack.has(neighbor)) {
-        // Found a cycle
-        const cycleStart = path.indexOf(neighbor);
-        if (cycleStart !== -1) {
-          for (let i = cycleStart; i < path.length; i++) {
-            cycleNodes.add(path[i]!);
-          }
-        }
-        cycleNodes.add(neighbor);
-        cycleNodes.add(node);
-        return true;
-      }
-    }
-
-    recStack.delete(node);
-    return false;
-  }
-
   for (const node of moduleSet) {
     if (!visited.has(node)) {
-      dfs(node, [node]);
+      dfsFindCycles(node, [node], visited, recStack, cycleNodes, graph);
     }
   }
 

@@ -97,6 +97,21 @@ async function findModuleCycles(db: any, directory: string, options: CyclesOptio
   }
 }
 
+function getExporterPathIfInScope(
+  importObj: { exporter?: unknown },
+  filePaths: Set<string>
+): string | null {
+  const exporter = importObj.exporter;
+  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+    return null;
+  }
+  const exporterPath = (exporter as Record<string, unknown>)['path'];
+  if (typeof exporterPath !== 'string' || !filePaths.has(exporterPath)) {
+    return null;
+  }
+  return exporterPath;
+}
+
 /**
  * Build dependency graph for a specific set of module files.
  */
@@ -105,19 +120,13 @@ function buildModuleGraph(db: any, filePaths: Set<string>): Map<string, Set<stri
   
   for (const filePath of filePaths) {
     const imports = db.getImportsFromFile(filePath);
-    
     for (const importObj of imports) {
-      const exporter = importObj.exporter;
-      if (exporter && typeof exporter === 'object' && 'path' in exporter) {
-        const exporterPath = exporter.path;
-        
-        // Only track dependencies to files within our scope
-        if (typeof exporterPath === 'string' && filePaths.has(exporterPath)) {
-          if (!graph.has(filePath)) {
-            graph.set(filePath, new Set());
-          }
-          graph.get(filePath)!.add(exporterPath);
+      const exporterPath = getExporterPathIfInScope(importObj, filePaths);
+      if (exporterPath) {
+        if (!graph.has(filePath)) {
+          graph.set(filePath, new Set());
         }
+        graph.get(filePath)!.add(exporterPath);
       }
     }
   }
@@ -277,6 +286,29 @@ function truncatePathForTerminal(path: string, maxWidth: number): string {
   return path.substring(0, prefixLength) + '...' + path.substring(path.length - suffixLength);
 }
 
+function drawCycleArrows(
+  cycle: string[],
+  graph: Map<string, Set<string>>,
+  nodePositions: Map<string, [number, number]>,
+  grid: string[][],
+  drawFn: (grid: string[][], source: [number, number], target: [number, number]) => void
+): void {
+  for (const source of cycle) {
+    const dependencies = graph.get(source);
+    if (!dependencies) {
+      continue;
+    }
+    for (const target of dependencies) {
+      if (!cycle.includes(target)) {
+        continue;
+      }
+      const sourcePos = nodePositions.get(source)!;
+      const targetPos = nodePositions.get(target)!;
+      drawFn(grid, sourcePos, targetPos);
+    }
+  }
+}
+
 /**
  * Render a single cycle as ASCII art.
  */
@@ -306,19 +338,7 @@ function renderCycleAsAscii(cycle: string[], graph: Map<string, Set<string>>, cw
   }
   
   // Draw arrows based on actual dependencies in the graph
-  for (const source of cycle) {
-    const dependencies = graph.get(source);
-    if (dependencies) {
-      for (const target of dependencies) {
-        // Only draw arrows to other nodes in the same cycle
-        if (cycle.includes(target)) {
-          const sourcePos = nodePositions.get(source)!;
-          const targetPos = nodePositions.get(target)!;
-          drawArrow(grid, sourcePos, targetPos);
-        }
-      }
-    }
-  }
+  drawCycleArrows(cycle, graph, nodePositions, grid, drawArrow);
   
   // Convert grid to strings and add path labels
   const lines: string[] = [];
@@ -371,19 +391,7 @@ function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cw
   }
   
   // Draw arrows based on actual dependencies in the graph
-  for (const source of cycle) {
-    const dependencies = graph.get(source);
-    if (dependencies) {
-      for (const target of dependencies) {
-        // Only draw arrows to other nodes in the same cycle
-        if (cycle.includes(target)) {
-          const sourcePos = nodePositions.get(source)!;
-          const targetPos = nodePositions.get(target)!;
-          drawFancyArrow(grid, sourcePos, targetPos);
-        }
-      }
-    }
-  }
+  drawCycleArrows(cycle, graph, nodePositions, grid, drawFancyArrow);
   
   // Convert grid to strings and add colored path labels
   const lines: string[] = [];
@@ -413,55 +421,52 @@ function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cw
 /**
  * Draw a fancy arrow with Unicode characters from source position to target position on the grid.
  */
+function drawFancyDiagonalArrow(
+  grid: string[][],
+  sourceRow: number, sourceCol: number,
+  targetRow: number, targetCol: number,
+  rowDelta: number
+): void {
+  if (rowDelta > 0) {
+    for (let row = sourceRow + 1; row < targetRow; row++) {
+      setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
+    }
+    setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerBottomLeft);
+    for (let col = sourceCol + 1; col < targetCol; col++) {
+      setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
+    }
+    setFancyGridChar(grid, targetRow, targetCol - 1, UNICODE_CHARS.arrowRight);
+  } else {
+    for (let row = sourceRow - 1; row > targetRow; row--) {
+      setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
+    }
+    setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerTopRight);
+    for (let col = sourceCol - 1; col > targetCol + 1; col--) {
+      setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
+    }
+    setFancyGridChar(grid, targetRow, targetCol + 1, UNICODE_CHARS.arrowLeft);
+  }
+}
+
 function drawFancyArrow(grid: string[][], sourcePos: [number, number], targetPos: [number, number]) {
   const [sourceRow, sourceCol] = sourcePos;
   const [targetRow, targetCol] = targetPos;
-  
-  // Determine direction
   const rowDelta = targetRow - sourceRow;
   const colDelta = targetCol - sourceCol;
   
   if (rowDelta === 0) {
-    // Horizontal line only
     const startCol = Math.min(sourceCol, targetCol) + 1;
     const endCol = Math.max(sourceCol, targetCol) - 1;
     for (let col = startCol; col <= endCol; col++) {
       setFancyGridChar(grid, sourceRow, col, UNICODE_CHARS.horizontal);
     }
-    // Add arrowhead
     if (colDelta > 0) {
       setFancyGridChar(grid, targetRow, targetCol - 1, UNICODE_CHARS.arrowRight);
     } else {
       setFancyGridChar(grid, targetRow, targetCol + 1, UNICODE_CHARS.arrowLeft);
     }
   } else {
-    // Vertical then horizontal movement
-    if (rowDelta > 0) {
-      // Moving down
-      for (let row = sourceRow + 1; row < targetRow; row++) {
-        setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
-      }
-      setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerBottomLeft); // Down-right corner
-      
-      // Horizontal part
-      for (let col = sourceCol + 1; col < targetCol; col++) {
-        setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
-      }
-      setFancyGridChar(grid, targetRow, targetCol - 1, UNICODE_CHARS.arrowRight);
-      
-    } else {
-      // Moving up
-      for (let row = sourceRow - 1; row > targetRow; row--) {
-        setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
-      }
-      setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerTopRight); // Up-right corner
-      
-      // Horizontal part - move left from source column toward target column  
-      for (let col = sourceCol - 1; col > targetCol + 1; col--) {
-        setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
-      }
-      setFancyGridChar(grid, targetRow, targetCol + 1, UNICODE_CHARS.arrowLeft);
-    }
+    drawFancyDiagonalArrow(grid, sourceRow, sourceCol, targetRow, targetCol, rowDelta);
   }
 }
 
@@ -553,55 +558,52 @@ function colorizeAsciiArt(line: string): string {
 /**
  * Draw an arrow from source position to target position on the grid.
  */
+function drawDiagonalArrow(
+  grid: string[][],
+  sourceRow: number, sourceCol: number,
+  targetRow: number, targetCol: number,
+  rowDelta: number
+): void {
+  if (rowDelta > 0) {
+    for (let row = sourceRow + 1; row < targetRow; row++) {
+      setGridChar(grid, row, sourceCol, '|');
+    }
+    setGridChar(grid, targetRow, sourceCol, '`');
+    for (let col = sourceCol + 1; col < targetCol; col++) {
+      setGridChar(grid, targetRow, col, '-');
+    }
+    setGridChar(grid, targetRow, targetCol - 1, '>');
+  } else {
+    for (let row = sourceRow - 1; row > targetRow; row--) {
+      setGridChar(grid, row, sourceCol, '|');
+    }
+    setGridChar(grid, targetRow, sourceCol, '.');
+    for (let col = sourceCol - 1; col > targetCol + 1; col--) {
+      setGridChar(grid, targetRow, col, '-');
+    }
+    setGridChar(grid, targetRow, targetCol + 1, '<');
+  }
+}
+
 function drawArrow(grid: string[][], sourcePos: [number, number], targetPos: [number, number]) {
   const [sourceRow, sourceCol] = sourcePos;
   const [targetRow, targetCol] = targetPos;
-  
-  // Determine direction
   const rowDelta = targetRow - sourceRow;
   const colDelta = targetCol - sourceCol;
   
   if (rowDelta === 0) {
-    // Horizontal line only
     const startCol = Math.min(sourceCol, targetCol) + 1;
     const endCol = Math.max(sourceCol, targetCol) - 1;
     for (let col = startCol; col <= endCol; col++) {
       setGridChar(grid, sourceRow, col, '-');
     }
-    // Add arrowhead
     if (colDelta > 0) {
       setGridChar(grid, targetRow, targetCol - 1, '>');
     } else {
       setGridChar(grid, targetRow, targetCol + 1, '<');
     }
   } else {
-    // Vertical then horizontal movement
-    if (rowDelta > 0) {
-      // Moving down
-      for (let row = sourceRow + 1; row < targetRow; row++) {
-        setGridChar(grid, row, sourceCol, '|');
-      }
-      setGridChar(grid, targetRow, sourceCol, '`'); // Down-right corner
-      
-      // Horizontal part
-      for (let col = sourceCol + 1; col < targetCol; col++) {
-        setGridChar(grid, targetRow, col, '-');
-      }
-      setGridChar(grid, targetRow, targetCol - 1, '>');
-      
-    } else {
-      // Moving up
-      for (let row = sourceRow - 1; row > targetRow; row--) {
-        setGridChar(grid, row, sourceCol, '|');
-      }
-      setGridChar(grid, targetRow, sourceCol, '.'); // Up-right corner
-      
-      // Horizontal part - move left from source column toward target column  
-      for (let col = sourceCol - 1; col > targetCol + 1; col--) {
-        setGridChar(grid, targetRow, col, '-');
-      }
-      setGridChar(grid, targetRow, targetCol + 1, '<');
-    }
+    drawDiagonalArrow(grid, sourceRow, sourceCol, targetRow, targetCol, rowDelta);
   }
 }
 
@@ -791,22 +793,18 @@ function buildDirectoryGraph(db: any, filePaths: Set<string>): Map<string, Set<s
     const importerDir = dirname(filePath);
     
     for (const importObj of imports) {
-      const exporter = importObj.exporter;
-      if (exporter && typeof exporter === 'object' && 'path' in exporter) {
-        const exporterPath = exporter.path;
-        
-        if (typeof exporterPath === 'string' && filePaths.has(exporterPath)) {
-          const exporterDir = dirname(exporterPath);
-          
-          // Only track cross-directory dependencies
-          if (importerDir !== exporterDir) {
-            if (!dirGraph.has(importerDir)) {
-              dirGraph.set(importerDir, new Set());
-            }
-            dirGraph.get(importerDir)!.add(exporterDir);
-          }
-        }
+      const exporterPath = getExporterPathIfInScope(importObj, filePaths);
+      if (!exporterPath) {
+        continue;
       }
+      const exporterDir = dirname(exporterPath);
+      if (importerDir === exporterDir) {
+        continue;
+      }
+      if (!dirGraph.has(importerDir)) {
+        dirGraph.set(importerDir, new Set());
+      }
+      dirGraph.get(importerDir)!.add(exporterDir);
     }
   }
   

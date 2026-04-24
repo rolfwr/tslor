@@ -9,6 +9,74 @@ export interface TraceImportsOptions {
   fromProject?: string;
 }
 
+function getExporterPathFromObj(obj: import("./objstore").Obj): string | null {
+  const exporter = obj['exporter'];
+  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+    return null;
+  }
+  const exporterPath = (exporter as Record<string, unknown>)['path'];
+  return typeof exporterPath === 'string' ? exporterPath : null;
+}
+
+function addGroupSymbols(
+  groups: unknown[],
+  exporterPath: string,
+  map: Map<string, Set<string>>
+): void {
+  for (const group of groups) {
+    if (typeof group !== 'string' || !group.startsWith('export|' + exporterPath + '|')) {
+      continue;
+    }
+    const symbolName = group.split('|')[2];
+    if (!symbolName) {
+      continue;
+    }
+    if (!map.has(exporterPath)) {
+      map.set(exporterPath, new Set());
+    }
+    map.get(exporterPath)!.add(symbolName);
+  }
+}
+
+function buildImportsByExporter(
+  importObjects: ReadonlyArray<import("./objstore").Obj>,
+  options: TraceImportsOptions
+): Map<string, Set<string>> {
+  const importsByExporter = new Map<string, Set<string>>();
+
+  for (const obj of importObjects) {
+    const exporterPath = getExporterPathFromObj(obj);
+    if (!exporterPath) {
+      continue;
+    }
+    if (options.fromProject && !isWithinProject(exporterPath, options.fromProject)) {
+      continue;
+    }
+    addGroupSymbols((obj['groups'] as unknown[]) || [], exporterPath, importsByExporter);
+  }
+
+  return importsByExporter;
+}
+
+function displayTraceResults(importsByExporter: Map<string, Set<string>>): void {
+  const exporterPaths = Array.from(importsByExporter.keys()).sort();
+  let totalSymbols = 0;
+  for (const exporterPath of exporterPaths) {
+    const symbols = importsByExporter.get(exporterPath);
+    if (!symbols) {
+      continue;
+    }
+    totalSymbols += symbols.size;
+    console.log(`${exporterPath}:`);
+    const sortedSymbols = Array.from(symbols).sort();
+    for (const symbol of sortedSymbols) {
+      console.log(`  ${symbol}`);
+    }
+    console.log();
+  }
+  console.log(`Total: ${totalSymbols} symbols from ${exporterPaths.length} files`);
+}
+
 export async function runTraceImports(
   entryFile: string,
   options: TraceImportsOptions,
@@ -26,49 +94,13 @@ export async function runTraceImports(
   }
   console.log();
 
-  // Use existing group index to get all imports from the entry file
   const importObjects = db.getImportsFromFile(absoluteEntryFile);
-  
   if (importObjects.length === 0) {
     console.log('No imports found from this file');
     return;
   }
 
-  // Group imports by exporter path and collect symbol information
-  const importsByExporter = new Map<string, Set<string>>();
-  
-  for (const obj of importObjects) {
-    const exporter = obj.exporter;
-    
-    if (exporter && typeof exporter === 'object' && 'path' in exporter) {
-      const exporterPath = exporter.path;
-      
-      if (typeof exporterPath !== 'string') {
-        continue;
-      }
-      
-      // Filter by project if specified
-      if (options.fromProject && !isWithinProject(exporterPath, options.fromProject)) {
-        continue;
-      }
-      
-      // Extract symbol names from export groups
-      const groups = obj.groups || [];
-      for (const group of groups) {
-        if (typeof group === 'string' && group.startsWith('export|' + exporterPath + '|')) {
-          const symbolName = group.split('|')[2];
-          if (symbolName) {
-            let symbols = importsByExporter.get(exporterPath);
-            if (!symbols) {
-              symbols = new Set();
-              importsByExporter.set(exporterPath, symbols);
-            }
-            symbols.add(symbolName);
-          }
-        }
-      }
-    }
-  }
+  const importsByExporter = buildImportsByExporter(importObjects, options);
 
   if (importsByExporter.size === 0) {
     if (options.fromProject) {
@@ -79,31 +111,7 @@ export async function runTraceImports(
     return;
   }
 
-  // Display results grouped by exporter file
-  const exporterPaths = Array.from(importsByExporter.keys());
-  exporterPaths.sort();
-
-  let totalSymbols = 0;
-  for (const exporterPath of exporterPaths) {
-    const symbols = importsByExporter.get(exporterPath);
-    if (!symbols) {
-      continue;
-    }
-    
-    totalSymbols += symbols.size;
-    console.log(`${exporterPath}:`);
-    
-    const sortedSymbols = Array.from(symbols);
-    sortedSymbols.sort();
-    
-    for (const symbol of sortedSymbols) {
-      console.log(`  ${symbol}`);
-    }
-    console.log();
-  }
-
-  console.log(`Total: ${totalSymbols} symbols from ${exporterPaths.length} files`);
-
+  displayTraceResults(importsByExporter);
   db.save();
 }
 

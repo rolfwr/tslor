@@ -240,48 +240,53 @@ async function indexImportFromFilesParallel(
   const workerFile = await workerFilePromise;
   const numWorkers = cpus().length;
 
+  function makeFileProcessingError(filePath: string, error: unknown): Error {
+    const msg = error instanceof Error ? error.message : String(error);
+    return new Error(`Failed to process file ${filePath}: ${msg}`);
+  }
+
+  async function processWorkerMessage(
+    msg: unknown,
+    currentItem: { path: string; mtimeMs: number },
+    nextItem: { path: string; mtimeMs: number } | null,
+    wrapper: WorkerWrapper
+  ): Promise<void> {
+    if (nextItem) {
+      wrapper.send(nextItem.path, repoRoot);
+    }
+    let moduleInfo: ModuleInfo | null;
+    try {
+      moduleInfo = parseWorkerResult(msg as WorkerMessage);
+    } catch (error) {
+      throw makeFileProcessingError(currentItem.path, error);
+    }
+    if (moduleInfo) {
+      try {
+        await storeImportsFromFile(moduleInfo, db, currentItem.mtimeMs, fileSystem);
+      } catch (error) {
+        throw makeFileProcessingError(currentItem.path, error);
+      }
+    }
+    processedCount++;
+    printProgress(false);
+  }
+
   async function runWorker(wrapper: WorkerWrapper): Promise<void> {
     const first = await reader.take();
     if (!first) {
       wrapper.terminate();
       return;
     }
-
     wrapper.send(first.path, repoRoot);
     let currentItem = first;
-
     for await (const [msg] of on(wrapper.worker, 'message')) {
       const nextItem = await reader.take();
-      if (nextItem) {
-        wrapper.send(nextItem.path, repoRoot); // keep worker busy
-      }
-
-      let moduleInfo: ModuleInfo | null;
-      try {
-        moduleInfo = parseWorkerResult(msg as WorkerMessage);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to process file ${currentItem.path}: ${errorMessage}`);
-      }
-
-      if (moduleInfo) {
-        try {
-          await storeImportsFromFile(moduleInfo, db, currentItem.mtimeMs, fileSystem);
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          throw new Error(`Failed to process file ${currentItem.path}: ${errorMessage}`);
-        }
-      }
-
-      processedCount++;
-      printProgress(false);
-
+      await processWorkerMessage(msg, currentItem, nextItem, wrapper);
       if (!nextItem) {
         break;
       }
       currentItem = nextItem;
     }
-
     wrapper.terminate();
   }
 
@@ -480,6 +485,49 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
     return importSpecAliasToModulePath(compilerOptions, dirname(tsconfigPath), spec, fileSystem);
   }
 
+  async function resolveSpecPaths(
+    staticModuleInfo: StaticModuleInfo,
+    repoRoot: string,
+    tsFilePath: string,
+    importerTsConfig: string
+  ): Promise<Map<string, string>> {
+    const importSpecs = new Set<string>();
+    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+      importSpecs.add(unresolved.moduleSpec);
+    }
+    const resolvedPathsBySpec = new Map<string, string>();
+    for (const spec of importSpecs) {
+      const resolvedPath = await resolveSpecCached(repoRoot, tsFilePath, spec, importerTsConfig);
+      if (resolvedPath) {
+        resolvedPathsBySpec.set(spec, resolvedPath);
+      }
+    }
+    return resolvedPathsBySpec;
+  }
+
+  function populateModuleInfoImports(
+    moduleInfo: ModuleInfo,
+    staticModuleInfo: StaticModuleInfo,
+    resolvedPathsBySpec: Map<string, string>
+  ): void {
+    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+      const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
+      if (resolvedPath) {
+        moduleInfo.importOfNamedExports.push({
+          type: 'NamedExport',
+          path: resolvedPath,
+          name: unresolved.name,
+        });
+      } else {
+        moduleInfo.importOfUnresolvedSpec.push({
+          type: 'ExternalImport',
+          moduleSpecifier: unresolved.moduleSpec,
+          name: unresolved.name,
+        });
+      }
+    }
+  }
+
   return async (repoRoot: string, tsFilePath: string): Promise<ModuleInfo> => {
     try {
       const importerTsConfig = await cachedGetTsconfigPath(repoRoot, tsFilePath);
@@ -502,35 +550,8 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
         },
       };
 
-      const importSpecs = new Set<string>();
-      for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-        importSpecs.add(unresolved.moduleSpec);
-      }
-
-      const resolvedPathsBySpec = new Map<string, string>();
-      for (const spec of importSpecs) {
-        const resolvedPath = await resolveSpecCached(repoRoot, tsFilePath, spec, importerTsConfig);
-        if (resolvedPath) {
-          resolvedPathsBySpec.set(spec, resolvedPath);
-        }
-      }
-
-      for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-        const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
-        if (resolvedPath) {
-          moduleInfo.importOfNamedExports.push({
-            type: 'NamedExport',
-            path: resolvedPath,
-            name: unresolved.name,
-          });
-        } else {
-          moduleInfo.importOfUnresolvedSpec.push({
-            type: 'ExternalImport',
-            moduleSpecifier: unresolved.moduleSpec,
-            name: unresolved.name,
-          });
-        }
-      }
+      const resolvedPathsBySpec = await resolveSpecPaths(staticModuleInfo, repoRoot, tsFilePath, importerTsConfig);
+      populateModuleInfoImports(moduleInfo, staticModuleInfo, resolvedPathsBySpec);
 
       return moduleInfo;
     } catch (error) {
@@ -610,264 +631,205 @@ function trackExportedSymbol(
   addIdentifierUses(staticModuleInfo, name, typeUses);
 }
 
+type TypeRefCallback = (name: string) => void;
+
+function traverseTypeArgs(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getTypeArguments && typeof typeNode.getTypeArguments === 'function') {
+    const typeArgs = typeNode.getTypeArguments();
+    if (typeArgs) {
+      for (const typeArg of typeArgs) {
+        traverseTypeNodeWith(typeArg, fn);
+      }
+    }
+  }
+}
+
+function traverseExpressionWithTypeArgsNode(typeNode: any, fn: TypeRefCallback): void {
+  const expression = typeNode.getExpression();
+  if (expression && expression.getKind() === SyntaxKind.Identifier) {
+    fn(expression.getText());
+  }
+  traverseTypeArgs(typeNode, fn);
+}
+
+function traverseIndexedAccessNode(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getObjectTypeNode && typeof typeNode.getObjectTypeNode === 'function') {
+    traverseTypeNodeWith(typeNode.getObjectTypeNode(), fn);
+  }
+  if (typeNode.getIndexTypeNode && typeof typeNode.getIndexTypeNode === 'function') {
+    traverseTypeNodeWith(typeNode.getIndexTypeNode(), fn);
+  }
+}
+
+function traverseMappedTypeNode(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getTypeParameter && typeof typeNode.getTypeParameter === 'function') {
+    const typeParam = typeNode.getTypeParameter();
+    if (typeParam && typeParam.getConstraint && typeof typeParam.getConstraint === 'function') {
+      traverseTypeNodeWith(typeParam.getConstraint(), fn);
+    }
+  }
+  if (typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
+    traverseTypeNodeWith(typeNode.getTypeNode(), fn);
+  }
+}
+
+function traverseFunctionTypeNode(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getParameters && typeof typeNode.getParameters === 'function') {
+    for (const param of typeNode.getParameters()) {
+      traverseTypeNodeWith(param.getTypeNode(), fn);
+    }
+  }
+  if (typeNode.getReturnTypeNode && typeof typeNode.getReturnTypeNode === 'function') {
+    traverseTypeNodeWith(typeNode.getReturnTypeNode(), fn);
+  }
+}
+
+function traverseTypeLiteralNode(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getMembers && typeof typeNode.getMembers === 'function') {
+    for (const member of typeNode.getMembers()) {
+      if (member.getTypeNode && typeof member.getTypeNode === 'function') {
+        traverseTypeNodeWith(member.getTypeNode(), fn);
+      }
+    }
+  }
+}
+
+function traverseTypeQueryNode(typeNode: any, fn: TypeRefCallback): void {
+  if (typeNode.getExprName && typeof typeNode.getExprName === 'function') {
+    const exprName = typeNode.getExprName();
+    if (exprName && exprName.getKind() === SyntaxKind.Identifier) {
+      fn(exprName.getText());
+    }
+  }
+}
+
+function traverseTypeReferenceNode(typeNode: any, fn: TypeRefCallback): void {
+  const typeName = typeNode.getTypeName();
+  if (typeName && typeName.getKind() === SyntaxKind.Identifier) {
+    fn(typeName.getText());
+  }
+  traverseTypeArgs(typeNode, fn);
+}
+
+function traverseTypeNodeWith(typeNode: any, fn: TypeRefCallback): void {
+  if (!typeNode) {
+    return;
+  }
+  const kind = typeNode.getKind();
+  if (kind === SyntaxKind.TypeReference) {
+    traverseTypeReferenceNode(typeNode, fn);
+    return;
+  }
+  if (kind === SyntaxKind.ExpressionWithTypeArguments) {
+    traverseExpressionWithTypeArgsNode(typeNode, fn);
+    return;
+  }
+  if (kind === SyntaxKind.UnionType || kind === SyntaxKind.IntersectionType) {
+    for (const type of typeNode.getTypeNodes()) {
+      traverseTypeNodeWith(type, fn);
+    }
+    return;
+  }
+  if (kind === SyntaxKind.ParenthesizedType && typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
+    traverseTypeNodeWith(typeNode.getTypeNode(), fn);
+    return;
+  }
+  if (kind === SyntaxKind.ArrayType) {
+    traverseTypeNodeWith(typeNode.getElementTypeNode(), fn);
+  }
+  traverseTypeArgs(typeNode, fn);
+  if (kind === SyntaxKind.IndexedAccessType) {
+    traverseIndexedAccessNode(typeNode, fn);
+  }
+  if (kind === SyntaxKind.TypeQuery) {
+    traverseTypeQueryNode(typeNode, fn);
+  }
+  if (kind === SyntaxKind.MappedType) {
+    traverseMappedTypeNode(typeNode, fn);
+  }
+  if (kind === SyntaxKind.FunctionType) {
+    traverseFunctionTypeNode(typeNode, fn);
+  }
+  if (kind === SyntaxKind.TypeLiteral) {
+    traverseTypeLiteralNode(typeNode, fn);
+  }
+}
+
+function traverseParamsAndReturn(node: any, fn: TypeRefCallback): void {
+  for (const param of node.getParameters()) {
+    traverseTypeNodeWith(param.getTypeNode(), fn);
+  }
+  const returnTypeNode = node.getReturnTypeNode();
+  traverseTypeNodeWith(returnTypeNode, fn);
+}
+
+function traverseHeritageClauses(node: any, fn: TypeRefCallback): void {
+  for (const clause of node.getHeritageClauses()) {
+    for (const type of clause.getTypeNodes()) {
+      traverseTypeNodeWith(type, fn);
+    }
+  }
+}
+
+function traverseClassMethods(methods: any[], fn: TypeRefCallback): void {
+  for (const method of methods) {
+    traverseParamsAndReturn(method, fn);
+  }
+}
+
+function extractTypeRefsFromFunctionDecl(node: any, fn: TypeRefCallback): void {
+  traverseParamsAndReturn(node, fn);
+}
+
+function extractTypeRefsFromInterfaceDecl(node: any, fn: TypeRefCallback): void {
+  traverseHeritageClauses(node, fn);
+  for (const prop of node.getProperties()) {
+    traverseTypeNodeWith(prop.getTypeNode(), fn);
+  }
+  traverseClassMethods(node.getMethods(), fn);
+}
+
+function extractTypeRefsFromClassDecl(node: any, fn: TypeRefCallback): void {
+  traverseHeritageClauses(node, fn);
+  for (const prop of node.getProperties()) {
+    const propTypeNode = prop.getTypeNode();
+    if (propTypeNode) {
+      traverseTypeNodeWith(propTypeNode, fn);
+    }
+  }
+  for (const ctor of node.getConstructors()) {
+    for (const param of ctor.getParameters()) {
+      traverseTypeNodeWith(param.getTypeNode(), fn);
+    }
+  }
+  traverseClassMethods(node.getMethods(), fn);
+}
+
 function extractTypeReferences(node: any): string[] {
   const typeReferences: string[] = [];
   const visited = new Set<string>();
-
-  // Helper to add unique type references
-  function addTypeReference(typeName: string) {
+  const addTypeReference = (typeName: string) => {
     if (!visited.has(typeName)) {
       visited.add(typeName);
       typeReferences.push(typeName);
     }
+  };
+  const kind = node.getKind();
+  if (kind === SyntaxKind.FunctionDeclaration) {
+    extractTypeRefsFromFunctionDecl(node, addTypeReference);
   }
-
-  // Traverse type nodes to find type references
-  function traverseTypeNode(typeNode: any) {
-    if (!typeNode) {
-      return;
-    }
-
-    // Handle type references (e.g., User, MyType)
-    if (typeNode.getKind() === SyntaxKind.TypeReference) {
-      const typeName = typeNode.getTypeName();
-      if (typeName && typeName.getKind() === SyntaxKind.Identifier) {
-        addTypeReference(typeName.getText());
-      }
-    }
-
-    // Handle expression with type arguments (used in heritage clauses: extends/implements)
-    // e.g., "interface VirtualClip extends DerivedClip"
-    if (typeNode.getKind() === SyntaxKind.ExpressionWithTypeArguments) {
-      const expression = typeNode.getExpression();
-      if (expression && expression.getKind() === SyntaxKind.Identifier) {
-        addTypeReference(expression.getText());
-      }
-      // Also handle type arguments if present (e.g., extends Base<T>)
-      if (typeNode.getTypeArguments && typeof typeNode.getTypeArguments === 'function') {
-        const typeArgs = typeNode.getTypeArguments();
-        if (typeArgs) {
-          for (const typeArg of typeArgs) {
-            traverseTypeNode(typeArg);
-          }
-        }
-      }
-    }
-
-    // Handle union types (e.g., string | number)
-    if (typeNode.getKind() === SyntaxKind.UnionType) {
-      const types = typeNode.getTypeNodes();
-      for (const type of types) {
-        traverseTypeNode(type);
-      }
-    }
-
-    // Handle intersection types (e.g., A & B)
-    if (typeNode.getKind() === SyntaxKind.IntersectionType) {
-      const types = typeNode.getTypeNodes();
-      for (const type of types) {
-        traverseTypeNode(type);
-      }
-    }
-
-    // Handle parenthesized types (e.g., (A | B)[])
-    if (typeNode.getKind() === SyntaxKind.ParenthesizedType) {
-      if (typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
-        traverseTypeNode(typeNode.getTypeNode());
-      }
-    }
-
-    // Handle array types (e.g., User[])
-    if (typeNode.getKind() === SyntaxKind.ArrayType) {
-      traverseTypeNode(typeNode.getElementTypeNode());
-    }
-
-    // Handle generic type arguments (e.g., Array<User>)
-    if (typeNode.getTypeArguments && typeof typeNode.getTypeArguments === 'function') {
-      const typeArgs = typeNode.getTypeArguments();
-      if (typeArgs) {
-        for (const typeArg of typeArgs) {
-          traverseTypeNode(typeArg);
-        }
-      }
-    }
-
-    // Handle indexed access types (e.g., T[K], typeof myArray[number])
-    if (typeNode.getKind() === SyntaxKind.IndexedAccessType) {
-      // Traverse the object type (e.g., T or typeof myArray)
-      if (typeNode.getObjectTypeNode && typeof typeNode.getObjectTypeNode === 'function') {
-        traverseTypeNode(typeNode.getObjectTypeNode());
-      }
-      // Traverse the index type (e.g., K or number)
-      if (typeNode.getIndexTypeNode && typeof typeNode.getIndexTypeNode === 'function') {
-        traverseTypeNode(typeNode.getIndexTypeNode());
-      }
-    }
-
-    // Handle typeof queries (e.g., typeof myConstant)
-    if (typeNode.getKind() === SyntaxKind.TypeQuery) {
-      // Extract the identifier from the typeof expression
-      if (typeNode.getExprName && typeof typeNode.getExprName === 'function') {
-        const exprName = typeNode.getExprName();
-        if (exprName && exprName.getKind() === SyntaxKind.Identifier) {
-          addTypeReference(exprName.getText());
-        }
-      }
-    }
-
-    // Handle mapped types (e.g., { [K in KeyType]: ValueType })
-    if (typeNode.getKind() === SyntaxKind.MappedType) {
-      // Get the type parameter (e.g., "K in ExternalSlot")
-      if (typeNode.getTypeParameter && typeof typeNode.getTypeParameter === 'function') {
-        const typeParam = typeNode.getTypeParameter();
-        // Get the constraint (e.g., "ExternalSlot" from "K in ExternalSlot")
-        if (typeParam && typeParam.getConstraint && typeof typeParam.getConstraint === 'function') {
-          const constraint = typeParam.getConstraint();
-          traverseTypeNode(constraint);
-        }
-      }
-      // Get the mapped value type (e.g., "LocalIcon | null")
-      if (typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
-        const valueType = typeNode.getTypeNode();
-        traverseTypeNode(valueType);
-      }
-    }
-
-    // Handle function types (e.g., (x: A, y: B) => C)
-    if (typeNode.getKind() === SyntaxKind.FunctionType) {
-      // Parameter types
-      if (typeNode.getParameters && typeof typeNode.getParameters === 'function') {
-        const parameters = typeNode.getParameters();
-        for (const param of parameters) {
-          const paramTypeNode = param.getTypeNode();
-          traverseTypeNode(paramTypeNode);
-        }
-      }
-      // Return type
-      if (typeNode.getReturnTypeNode && typeof typeNode.getReturnTypeNode === 'function') {
-        const returnTypeNode = typeNode.getReturnTypeNode();
-        traverseTypeNode(returnTypeNode);
-      }
-    }
-
-    // Handle type literals (e.g., { customIcons: ItemCustomIconsDto })
-    if (typeNode.getKind() === SyntaxKind.TypeLiteral) {
-      // Traverse property signatures to find type references
-      if (typeNode.getMembers && typeof typeNode.getMembers === 'function') {
-        const members = typeNode.getMembers();
-        for (const member of members) {
-          // Property signatures have type nodes
-          if (member.getTypeNode && typeof member.getTypeNode === 'function') {
-            const memberTypeNode = member.getTypeNode();
-            traverseTypeNode(memberTypeNode);
-          }
-        }
-      }
-    }
+  if (kind === SyntaxKind.VariableDeclaration) {
+    traverseTypeNodeWith(node.getTypeNode(), addTypeReference);
   }
-
-  // Extract type references from different node types
-  // Function parameters and return types
-  if (node.getKind() === SyntaxKind.FunctionDeclaration) {
-    // Parameter types
-    const parameters = node.getParameters();
-    for (const param of parameters) {
-      const paramTypeNode = param.getTypeNode();
-      traverseTypeNode(paramTypeNode);
-    }
-    
-    // Return type
-    const returnTypeNode = node.getReturnTypeNode();
-    traverseTypeNode(returnTypeNode);
+  if (kind === SyntaxKind.InterfaceDeclaration) {
+    extractTypeRefsFromInterfaceDecl(node, addTypeReference);
   }
-
-  // Variable declarations with type annotations
-  if (node.getKind() === SyntaxKind.VariableDeclaration) {
-    const typeNode = node.getTypeNode();
-    traverseTypeNode(typeNode);
+  if (kind === SyntaxKind.ClassDeclaration) {
+    extractTypeRefsFromClassDecl(node, addTypeReference);
   }
-
-  // Interface declarations
-  if (node.getKind() === SyntaxKind.InterfaceDeclaration) {
-    // Heritage clauses (extends/implements)
-    const heritageClauses = node.getHeritageClauses();
-    for (const clause of heritageClauses) {
-      const types = clause.getTypeNodes();
-      for (const type of types) {
-        traverseTypeNode(type);
-      }
-    }
-
-    // Property types
-    const properties = node.getProperties();
-    for (const prop of properties) {
-      const propTypeNode = prop.getTypeNode();
-      traverseTypeNode(propTypeNode);
-    }
-
-    // Method parameter and return types
-    const methods = node.getMethods();
-    for (const method of methods) {
-      const parameters = method.getParameters();
-      for (const param of parameters) {
-        const paramTypeNode = param.getTypeNode();
-        traverseTypeNode(paramTypeNode);
-      }
-      const returnTypeNode = method.getReturnTypeNode();
-      traverseTypeNode(returnTypeNode);
-    }
+  if (kind === SyntaxKind.TypeAliasDeclaration) {
+    traverseTypeNodeWith(node.getTypeNode(), addTypeReference);
   }
-
-  // Class declarations
-  if (node.getKind() === SyntaxKind.ClassDeclaration) {
-    // Heritage clauses (extends/implements)
-    const heritageClauses = node.getHeritageClauses();
-    for (const clause of heritageClauses) {
-      const types = clause.getTypeNodes();
-      for (const type of types) {
-        traverseTypeNode(type);
-      }
-    }
-
-    // Property types
-    const properties = node.getProperties();
-    for (const prop of properties) {
-      const propTypeNode = prop.getTypeNode();
-      if (propTypeNode) {
-        traverseTypeNode(propTypeNode);
-      }
-    }
-
-    // Constructor parameter types
-    const constructors = node.getConstructors();
-    for (const ctor of constructors) {
-      const parameters = ctor.getParameters();
-      for (const param of parameters) {
-        const paramTypeNode = param.getTypeNode();
-        traverseTypeNode(paramTypeNode);
-      }
-    }
-
-    // Method parameter and return types
-    const methods = node.getMethods();
-    for (const method of methods) {
-      const parameters = method.getParameters();
-      for (const param of parameters) {
-        const paramTypeNode = param.getTypeNode();
-        traverseTypeNode(paramTypeNode);
-      }
-      const returnTypeNode = method.getReturnTypeNode();
-      traverseTypeNode(returnTypeNode);
-    }
-  }
-
-  // Type alias declarations
-  if (node.getKind() === SyntaxKind.TypeAliasDeclaration) {
-    const typeNode = node.getTypeNode();
-    traverseTypeNode(typeNode);
-  }
-
-
   return typeReferences;
 }
 
@@ -875,68 +837,70 @@ function extractTypeReferences(node: any): string[] {
  * Derive import usage information from StaticModuleInfo.
  * This provides the same information as analyzeImportUsageBySymbol but works with StaticModuleInfo.
  */
-export function analyzeImportUsageFromStaticInfo(moduleInfo: StaticModuleInfo): ImportUsage[] {
-  const result: ImportUsage[] = [];
-  
-  // Build a map from moduleSpec:importName to isTypeOnly and isDefault
-  const importMetadata = new Map<string, { isTypeOnly: boolean; isDefault: boolean }>();
+type ImportMetadata = { isTypeOnly: boolean; isDefault: boolean };
+
+function buildImportMetadata(moduleInfo: StaticModuleInfo): Map<string, ImportMetadata> {
+  const importMetadata = new Map<string, ImportMetadata>();
   for (const imp of moduleInfo.imports) {
     for (const name of imp.names) {
-      const key = `${imp.moduleSpec}:${name}`;
-      importMetadata.set(key, {
+      importMetadata.set(`${imp.moduleSpec}:${name}`, {
         isTypeOnly: imp.typeOnly,
         isDefault: name === 'default'
       });
     }
   }
+  return importMetadata;
+}
+
+type UseImport = { moduleSpec: string; importedName: string; isDefault: boolean; isTypeOnly: boolean };
+
+function resolveIdentifierImport(
+  usedIdentifier: string,
+  importMetadata: Map<string, ImportMetadata>,
+  moduleInfo: StaticModuleInfo
+): UseImport | null {
+  const importInfo = moduleInfo.unresolvedExportsByImportNames.get(usedIdentifier);
+  if (!importInfo) {
+    return null;
+  }
+  const key = `${importInfo.moduleSpec}:${importInfo.name}`;
+  const metadata = importMetadata.get(key);
+  if (metadata) {
+    return {
+      moduleSpec: importInfo.moduleSpec,
+      importedName: metadata.isDefault ? usedIdentifier : importInfo.name,
+      isDefault: metadata.isDefault,
+      isTypeOnly: metadata.isTypeOnly
+    };
+  }
+  return {
+    moduleSpec: importInfo.moduleSpec,
+    importedName: importInfo.name,
+    isDefault: false,
+    isTypeOnly: false
+  };
+}
+
+export function analyzeImportUsageFromStaticInfo(moduleInfo: StaticModuleInfo): ImportUsage[] {
+  const result: ImportUsage[] = [];
+  const importMetadata = buildImportMetadata(moduleInfo);
   
-  // For each symbol that has identifier uses, map them to imports
   for (const [symbolName, usedIdentifiers] of moduleInfo.identifierUses) {
-    const usesImports: Array<{
-      moduleSpec: string;
-      importedName: string;
-      isDefault: boolean;
-      isTypeOnly: boolean;
-    }> = [];
+    const usesImports: UseImport[] = [];
     
     for (const usedIdentifier of usedIdentifiers) {
-      const importInfo = moduleInfo.unresolvedExportsByImportNames.get(usedIdentifier);
-      if (importInfo) {
-        const key = `${importInfo.moduleSpec}:${importInfo.name}`;
-        const metadata = importMetadata.get(key);
-        
-        if (metadata) {
-          // For default imports, use the local binding name instead of 'default'
-          const importedName = metadata.isDefault ? usedIdentifier : importInfo.name;
-          
-          usesImports.push({
-            moduleSpec: importInfo.moduleSpec,
-            importedName: importedName,
-            isDefault: metadata.isDefault,
-            isTypeOnly: metadata.isTypeOnly
-          });
-        } else {
-          // Fallback for imports without metadata (shouldn't happen in normal cases)
-          usesImports.push({
-            moduleSpec: importInfo.moduleSpec,
-            importedName: importInfo.name,
-            isDefault: false,
-            isTypeOnly: false
-          });
-        }
+      const imp = resolveIdentifierImport(usedIdentifier, importMetadata, moduleInfo);
+      if (imp) {
+        usesImports.push(imp);
       }
     }
     
-    // Remove duplicates
     const uniqueImports = Array.from(new Map(
       usesImports.map(imp => [`${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}:${imp.isTypeOnly}`, imp])
     ).values());
     
-    if (usedIdentifiers.length > 0) { // Include symbols even if they have no imports
-      result.push({
-        symbol: symbolName,
-        usesImports: uniqueImports
-      });
+    if (usedIdentifiers.length > 0) {
+      result.push({ symbol: symbolName, usesImports: uniqueImports });
     }
   }
   
@@ -1008,26 +972,25 @@ function isInTypeContext(node: ts.Node): boolean {
  * Checks if a node is within a conditional block guarded by a typeof check.
  * Example: code inside `if (typeof process !== 'undefined') { ... }`
  */
+function isTypeofGuardCondition(condition: ts.Expression, globalName: string): boolean {
+  if (!ts.isBinaryExpression(condition)) {
+    return false;
+  }
+  const left = condition.left;
+  if (!ts.isTypeOfExpression(left)) {
+    return false;
+  }
+  const operand = left.expression;
+  return ts.isIdentifier(operand) && operand.text === globalName;
+}
+
 function isWithinGuardedBlock(node: ts.Node, globalName: string): boolean {
   let current = node.parent;
 
   while (current) {
-    // Check if we're in an if statement
-    if (ts.isIfStatement(current)) {
-      const condition = current.expression;
-
-      // Check if the condition is a typeof guard for this global
-      if (ts.isBinaryExpression(condition)) {
-        const left = condition.left;
-        if (ts.isTypeOfExpression(left)) {
-          const operand = left.expression;
-          if (ts.isIdentifier(operand) && operand.text === globalName) {
-            return true;
-          }
-        }
-      }
+    if (ts.isIfStatement(current) && isTypeofGuardCondition(current.expression, globalName)) {
+      return true;
     }
-
     current = current.parent;
   }
 
@@ -1049,52 +1012,16 @@ function isBindingName(node: ts.Node): boolean {
   if (!parent) {
     return false;
   }
-
-  // Check if this is a parameter name
-  // e.g., in `function foo(require: any)`, `require` is a parameter binding
-  if (ts.isParameter(parent) && parent.name === node) {
-    return true;
-  }
-
-  // Check if this is a variable declaration name
-  // e.g., in `const process = ...`, `process` is a variable binding
-  if (ts.isVariableDeclaration(parent) && parent.name === node) {
-    return true;
-  }
-
-  // Check if this is a function declaration name
-  // e.g., in `function process() {}`, `process` is a function binding
-  if (ts.isFunctionDeclaration(parent) && parent.name === node) {
-    return true;
-  }
-
-  // Check if this is a method declaration name (including getters/setters)
-  // e.g., in `get process()`, `process` is a method binding
-  if (ts.isMethodDeclaration(parent) && parent.name === node) {
-    return true;
-  }
-
-  if (ts.isGetAccessor(parent) && parent.name === node) {
-    return true;
-  }
-
-  if (ts.isSetAccessor(parent) && parent.name === node) {
-    return true;
-  }
-
-  // Check if this is a method signature in an interface/type
-  // e.g., in `interface Foo { process(): void }`, `process` is a method signature name
-  if (ts.isMethodSignature(parent) && parent.name === node) {
-    return true;
-  }
-
-  // Check if this is the 'global' keyword in a module augmentation
-  // e.g., in `declare global {}`, `global` is a keyword, not a reference
-  if (ts.isModuleDeclaration(parent) && parent.name === node) {
-    return true;
-  }
-
-  return false;
+  return (
+    (ts.isParameter(parent) && parent.name === node) ||
+    (ts.isVariableDeclaration(parent) && parent.name === node) ||
+    (ts.isFunctionDeclaration(parent) && parent.name === node) ||
+    (ts.isMethodDeclaration(parent) && parent.name === node) ||
+    (ts.isGetAccessor(parent) && parent.name === node) ||
+    (ts.isSetAccessor(parent) && parent.name === node) ||
+    (ts.isMethodSignature(parent) && parent.name === node) ||
+    (ts.isModuleDeclaration(parent) && parent.name === node)
+  );
 }
 
 /**
@@ -1147,6 +1074,39 @@ function isPropertyName(node: ts.Node): boolean {
  *
  * Returns both a boolean and details about detected usages for debugging.
  */
+function processNodeForGlobals(
+  node: import('ts-morph').Node,
+  sourceFile: SourceFile,
+  usages: Array<{ identifier: string; line: number; column: number }>
+): void {
+  if (node.getKind() !== SyntaxKind.Identifier) {
+    return;
+  }
+  const identifierText = node.getText();
+  if (!NODEJS_GLOBALS.has(identifierText)) {
+    return;
+  }
+  const compilerNode = node.compilerNode;
+  if (isBindingName(compilerNode)) {
+    return;
+  }
+  if (isPropertyName(compilerNode)) {
+    return;
+  }
+  if (isInTypeContext(compilerNode)) {
+    return;
+  }
+  if (isWithinGuardedBlock(compilerNode, identifierText)) {
+    return;
+  }
+  const pos = sourceFile.compilerNode.getLineAndCharacterOfPosition(compilerNode.getStart());
+  usages.push({
+    identifier: identifierText,
+    line: pos.line + 1,
+    column: pos.character + 1,
+  });
+}
+
 function detectNodejsGlobals(sourceFile: SourceFile): {
   usesNodejsGlobals: boolean;
   usages: Array<{ identifier: string; line: number; column: number }>;
@@ -1154,40 +1114,7 @@ function detectNodejsGlobals(sourceFile: SourceFile): {
   const usages: Array<{ identifier: string; line: number; column: number }> = [];
 
   sourceFile.forEachDescendant((node) => {
-    if (node.getKind() === SyntaxKind.Identifier) {
-      const identifierText = node.getText();
-      if (NODEJS_GLOBALS.has(identifierText)) {
-        const compilerNode = node.compilerNode;
-
-        // Ignore if this is a binding name (parameter, variable)
-        if (isBindingName(compilerNode)) {
-          return;
-        }
-
-        // Ignore if this is a property name in property access
-        if (isPropertyName(compilerNode)) {
-          return;
-        }
-
-        // Ignore if this is in a type-only context
-        if (isInTypeContext(compilerNode)) {
-          return;
-        }
-
-        // Ignore if we're inside a guarded block
-        if (isWithinGuardedBlock(compilerNode, identifierText)) {
-          return;
-        }
-
-        // This is an unguarded use of a Node.js global
-        const pos = sourceFile.compilerNode.getLineAndCharacterOfPosition(compilerNode.getStart());
-        usages.push({
-          identifier: identifierText,
-          line: pos.line + 1, // Convert to 1-based
-          column: pos.character + 1,
-        });
-      }
-    }
+    processNodeForGlobals(node, sourceFile, usages);
   });
 
   return {
@@ -1411,50 +1338,8 @@ function parseFunctionDeclaration(
 
   if (body) {
     const localNames = collectLocalNames(funcDecl);
-    
-    const identifiers = body.getDescendantsOfKind(SyntaxKind.Identifier);
-    const valueUses: string[] = [];
-    
-    for (const id of identifiers) {
-      /*
-        We should not use id.getSymbol() here, since that causes file system
-        access, trying to check if the file specified by the module
-        specifier of the symbol exists on disk in some form.
-
-        We instead need to index the local names of imports ourselves in
-        order to find the unresolved module specifiers.
-      */
-      const usedName = id.getText();
-      
-      // Skip local names (parameters and local variables) - they're not external dependencies
-      if (localNames.has(usedName)) {
-        continue;
-      }
-      
-      // Skip identifiers that are property/method names in property access expressions
-      // For example, in "user.name" or "str.trim()", skip "name" and "trim"
-      const parent = id.getParent();
-      if (parent && parent.getKind() === SyntaxKind.PropertyAccessExpression) {
-        const propertyAccess = parent.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
-        // Skip if this identifier is the property name (right side of the dot)
-        if (propertyAccess.getName() === usedName) {
-          continue;
-        }
-      }
-
-      /*
-        Skip property names in object literal assignments (non-shorthand)
-        e.g., in `{ description: 'value' }`, skip `description`
-      */
-      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
-        if (propAssignment.getNameNode() === id) {
-          continue;
-        }
-      }
-
-      valueUses.push(usedName);
-    }
+    const allRefs = collectIdentifierReferences(body);
+    const valueUses = allRefs.filter(name => !localNames.has(name));
 
     addIdentifierUses(staticModuleInfo, name, valueUses);
 
@@ -1462,7 +1347,6 @@ function parseFunctionDeclaration(
       staticModuleInfo.exportedNames.add(name);
     }
     
-    // Also track type dependencies in function signatures
     const typeUses = extractTypeReferences(funcDecl);
     addIdentifierUses(staticModuleInfo, name, typeUses);
   }
@@ -1837,40 +1721,44 @@ async function resolveSourceFile(spec: string, baseDir: string, fileSystem: File
   return absSpec + '.ts';
 }
 
+async function resolvePathWithBaseUrl(
+  relPath: string,
+  tsconfigDir: string,
+  baseUrl: string | null | undefined,
+  fileSystem: FileSystem
+): Promise<string | null> {
+  const sourcePath = await resolveSourceFile(relPath, tsconfigDir, fileSystem);
+  if (sourcePath) {
+    return sourcePath;
+  }
+  if (baseUrl) {
+    const baseDir = resolve(tsconfigDir, baseUrl);
+    return await resolveSourceFile(relPath, baseDir, fileSystem) ?? null;
+  }
+  return null;
+}
+
 async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsconfigDir: string, importSpec: string, fileSystem: FileSystem) {
   for (const [alias, paths] of Object.entries(compilerOptions.paths)) {
     if (!alias.endsWith('/*')) {
       throw new Error('Unspported alias');
     }
-
     const aliasPrefix = alias.slice(0, -1);
-
     if (!importSpec.startsWith(aliasPrefix)) {
       continue;
     }
-
     if (paths.length !== 1) {
       throw new Error('Unsupported alias path count');
     }
-
     const path = paths[0]!;
     if (!path.endsWith('/*')) {
       throw new Error('Unsupported alias path');
     }
-
     const pathPrefix = path.slice(0, -1);
     const relPath = pathPrefix + importSpec.slice(aliasPrefix.length);
-
-    const sourcePath = await resolveSourceFile(relPath, tsconfigDir, fileSystem);
+    const sourcePath = await resolvePathWithBaseUrl(relPath, tsconfigDir, compilerOptions.baseUrl, fileSystem);
     if (sourcePath) {
       return sourcePath;
-    }
-    if (compilerOptions.baseUrl) {
-      const baseDir = resolve(tsconfigDir, compilerOptions.baseUrl);
-      const sourcePath2 = await resolveSourceFile(relPath, baseDir, fileSystem);
-      if (sourcePath2) {
-        return sourcePath2;
-      }
     }
   }
   return null;

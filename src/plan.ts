@@ -383,46 +383,55 @@ export async function generatePlanDiff(plan: TslorPlan): Promise<string> {
   return diffs.join('\n');
 }
 
+function displayChangedFileNames(plan: TslorPlan): void {
+  console.log('Files to be changed:');
+  for (const change of plan.changes) {
+    const symbol = change.type === 'create-file' ? '+' : change.type === 'delete-file' ? '-' : '~';
+    const relativePath = relative(process.cwd(), change.path);
+    console.log(`  ${symbol} ${relativePath}`);
+  }
+}
+
+async function displayStatForChange(change: TslorPlan['changes'][number]): Promise<void> {
+  const relativePath = relative(process.cwd(), change.path);
+  if (change.type === 'create-file') {
+    const lines = change.content.split('\n').length;
+    console.log(`  ${relativePath} | ${lines} lines (new)`);
+    return;
+  }
+  if (change.type === 'modify-file') {
+    const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
+    const delta = change.content.split('\n').length - oldContent.split('\n').length;
+    const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
+    console.log(`  ${relativePath} | ${deltaStr} lines`);
+    return;
+  }
+  if (change.type === 'delete-file') {
+    const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
+    const lines = oldContent.split('\n').length;
+    console.log(`  ${relativePath} | -${lines} lines (deleted)`);
+  }
+}
+
+async function displayChangeStatistics(plan: TslorPlan): Promise<void> {
+  console.log('Change statistics:');
+  for (const change of plan.changes) {
+    await displayStatForChange(change);
+  }
+}
+
 /**
  * Display unified diff for a plan.
  */
 export async function displayPlanDiff(plan: TslorPlan, options: { stats?: boolean; namesOnly?: boolean }): Promise<void> {
   if (options.namesOnly) {
-    // Just show file names
-    console.log('Files to be changed:');
-    for (const change of plan.changes) {
-      const symbol = change.type === 'create-file' ? '+' : change.type === 'delete-file' ? '-' : '~';
-      const relativePath = relative(process.cwd(), change.path);
-      console.log(`  ${symbol} ${relativePath}`);
-    }
+    displayChangedFileNames(plan);
     return;
   }
-  
   if (options.stats) {
-    // Show statistics
-    console.log('Change statistics:');
-    for (const change of plan.changes) {
-      const relativePath = relative(process.cwd(), change.path);
-      if (change.type === 'create-file') {
-        const lines = change.content.split('\n').length;
-        console.log(`  ${relativePath} | ${lines} lines (new)`);
-      } else if (change.type === 'modify-file') {
-        const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
-        const oldLines = oldContent.split('\n').length;
-        const newLines = change.content.split('\n').length;
-        const delta = newLines - oldLines;
-        const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
-        console.log(`  ${relativePath} | ${deltaStr} lines`);
-      } else if (change.type === 'delete-file') {
-        const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
-        const lines = oldContent.split('\n').length;
-        console.log(`  ${relativePath} | -${lines} lines (deleted)`);
-      }
-    }
+    await displayChangeStatistics(plan);
     return;
   }
-  
-  // Show full unified diff
   const diff = await generatePlanDiff(plan);
   console.log(diff);
 }

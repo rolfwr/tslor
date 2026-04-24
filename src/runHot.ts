@@ -202,56 +202,31 @@ function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, H
   return hotMods;
 }
 
-export async function runHot(directory: string, options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {
-  // Normalize directory path (follows cycles command pattern)
-  const absoluteDir = normalizePath(directory);
-  const repoRoot = findGitRepoRoot(absoluteDir);
-  const cwd = process.cwd();
-
-  // Load or build the index
-  const db = openStorage(debugOptions, false);
-  await updateStorage(repoRoot, db, true, fileSystem, absoluteDir);
-
-  // Get all TypeScript files in the target directory (follows cycles command pattern)
-  const filePaths = await getTypeScriptFilePaths(absoluteDir, false);
-  
-  if (filePaths.length === 0) {
-    console.log('No TypeScript files found in directory.');
-    return;
-  }
-
-  // Build the hot module graph
-  const hotMods = buildHotModuleGraph(db, filePaths);
-
-  // Calculate scores for all modules
+function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
   for (const modulePath in hotMods) {
     const hotModule = hotMods[modulePath]!;
     calcUpwards(hotMods, hotModule, new Set());
     calcDownwards(hotMods, hotModule, new Set());
     hotModule.badness = (hotModule.upward!.weight - 1) * (hotModule.downward!.weight - 1);
   }
+}
 
-  // Sort by badness
-  const hotArray = Object.values(hotMods);
-  hotArray.sort((a, b) => b.badness! - a.badness!);
-
-  // Select module to analyze
-  let selected: HotModuleInfo | null = null;
+function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo {
   if (options.select) {
-    selected = hotMods[options.select] ?? null;
-    if (!selected) {
+    const found = hotMods[options.select] ?? null;
+    if (!found) {
       throw new Error('Module not found in analyzed directory: ' + options.select);
     }
-  } else {
-    selected = hotArray[0] ?? null;
+    return found;
   }
-
-  if (!selected) {
-    console.log('No modules found to analyze.');
-    return;
+  const first = hotArray[0];
+  if (!first) {
+    throw new Error('No modules found to analyze.');
   }
+  return first;
+}
 
-  // Print top 10 hottest modules
+function printTopModules(hotArray: HotModuleInfo[], cwd: string): void {
   console.log();
   console.log('Top 10 hottest modules:');
   for (let i = 0; i < 10 && i < hotArray.length; i++) {
@@ -259,73 +234,64 @@ export async function runHot(directory: string, options: Options, debugOptions: 
     console.log(String(Math.round(hotModule.badness!)).padStart(10), denormalizePath(hotModule.path, cwd));
   }
   console.log();
+}
 
-  // Build the hot chain
-  const importedByChain: HotModuleInfo[] = [];
+function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
+  const chain: HotModuleInfo[] = [];
   const seen = new Set<string>();
-
   let current = selected;
   while (true) {
-    let hottestImporter: HotModuleInfo | null = null;
-    let score = Number.NEGATIVE_INFINITY;
+    let best: HotModuleInfo | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
     for (const importedBy of current.importedBy) {
       const hotImporter = hotMods[importedBy];
       if (!hotImporter) {
         throw new Error('No hot module for ' + importedBy);
       }
-      if (seen.has(importedBy)) {
-        continue;
-      }
-      if (hotImporter.upward!.sum > score) {
-        hottestImporter = hotImporter;
-        score = hotImporter.upward!.sum;
+      if (!seen.has(importedBy) && hotImporter.upward!.sum > bestScore) {
+        best = hotImporter;
+        bestScore = hotImporter.upward!.sum;
       }
     }
-    if (!hottestImporter) {
+    if (!best) {
       break;
     }
-
-    importedByChain.push(hottestImporter);
-    seen.add(hottestImporter.path);
-
-    current = hottestImporter;
+    chain.push(best);
+    seen.add(best.path);
+    current = best;
   }
+  return chain;
+}
 
-  current = selected;
-  const importChain: HotModuleInfo[] = [];
-
-  seen.clear();
+function buildImportChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
+  const chain: HotModuleInfo[] = [];
+  const seen = new Set<string>();
+  let current = selected;
   while (true) {
-    let hottestImport: HotModuleInfo | null = null;
-    let score = Number.NEGATIVE_INFINITY;
+    let best: HotModuleInfo | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
     for (const imported of current.imports) {
       const hotImport = hotMods[imported];
       if (!hotImport) {
         throw new Error('No hot module for ' + imported);
       }
-      if (seen.has(imported)) {
-        continue;
-      }
-
-      if (hotImport.downward!.sum > score) {
-        hottestImport = hotImport;
-        score = hotImport.downward!.sum;
+      if (!seen.has(imported) && hotImport.downward!.sum > bestScore) {
+        best = hotImport;
+        bestScore = hotImport.downward!.sum;
       }
     }
-
-    if (!hottestImport) {
+    if (!best) {
       break;
     }
-
-    importChain.push(hottestImport);
-    seen.add(hottestImport.path);
-
-    current = hottestImport;
+    chain.push(best);
+    seen.add(best.path);
+    current = best;
   }
+  return chain;
+}
 
-  const hotChain = [...importedByChain.reverse(), selected, ...importChain];
-
-  const badnessArr = hotChain.map((hotModule) => hotModule.badness!);
+function printHotChain(hotChain: HotModuleInfo[], selected: HotModuleInfo, cwd: string): void {
+  const badnessArr = hotChain.map((m) => m.badness!);
   badnessArr.sort((a, b) => a - b);
   const leastHot = badnessArr[0]!;
   const medianHot = badnessArr[Math.floor(badnessArr.length / 2)]!;
@@ -339,12 +305,10 @@ export async function runHot(directory: string, options: Options, debugOptions: 
     const reset = '\x1b[0m';
     const up = hotModule.importedBy.length;
     const down = hotModule.imports.length;
-    const arrowUp = up > 0 ? up + '↑' : '';
-    const arrowDown = down > 0 ? down + '↓' : '';
-
+    const arrowUp = up > 0 ? up + '\u2191' : '';
+    const arrowDown = down > 0 ? down + '\u2193' : '';
     const prefix = arrowUp.padStart(6) + arrowDown.padStart(6);
     const rgb = hotnessColor(hotModule.badness!, leastHot, medianHot, mostHot);
-
     console.log(
       dim +
         prefix +
@@ -363,6 +327,40 @@ export async function runHot(directory: string, options: Options, debugOptions: 
     );
   }
   console.log();
-  
+}
+
+export async function runHot(directory: string, options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {
+  const absoluteDir = normalizePath(directory);
+  const repoRoot = findGitRepoRoot(absoluteDir);
+  const cwd = process.cwd();
+
+  const db = openStorage(debugOptions, false);
+  await updateStorage(repoRoot, db, true, fileSystem, absoluteDir);
+
+  const filePaths = await getTypeScriptFilePaths(absoluteDir, false);
+  if (filePaths.length === 0) {
+    console.log('No TypeScript files found in directory.');
+    return;
+  }
+
+  const hotMods = buildHotModuleGraph(db, filePaths);
+  calculateAllScores(hotMods);
+
+  const hotArray = Object.values(hotMods);
+  hotArray.sort((a, b) => b.badness! - a.badness!);
+
+  const selected = selectHotModule(hotMods, hotArray, options);
+  if (!selected) {
+    console.log('No modules found to analyze.');
+    return;
+  }
+
+  printTopModules(hotArray, cwd);
+
+  const importedByChain = buildImportedByChain(hotMods, selected);
+  const importChain = buildImportChain(hotMods, selected);
+  const hotChain = [...importedByChain.reverse(), selected, ...importChain];
+
+  printHotChain(hotChain, selected, cwd);
   db.save();
 }

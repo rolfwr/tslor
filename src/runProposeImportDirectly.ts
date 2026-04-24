@@ -95,6 +95,89 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
 /**
  * Find imports that can be changed to point directly to original exports
  */
+async function buildLiteralSpecMap(
+  importerPath: string,
+  repoRoot: string,
+  fileSystem: FileSystem
+): Promise<Map<string, string>> {
+  const specMap = new Map<string, string>();
+  try {
+    const sf = await loadSourceFile(importerPath, fileSystem);
+    for (const decl of sf.getImportDeclarations()) {
+      const literal = decl.getModuleSpecifierValue();
+      const resolved = await resolveImportSpecFromIndexing(repoRoot, importerPath, literal, fileSystem);
+      if (resolved) {
+        specMap.set(resolved, literal);
+      }
+    }
+  } catch {
+    // If we can't load the file, leave cache empty
+  }
+  return specMap;
+}
+
+async function getLiteralModuleSpec(
+  importerPath: string,
+  exporterPath: string,
+  cache: Map<string, Map<string, string>>,
+  repoRoot: string,
+  fileSystem: FileSystem
+): Promise<string | undefined> {
+  if (!cache.has(importerPath)) {
+    cache.set(importerPath, await buildLiteralSpecMap(importerPath, repoRoot, fileSystem));
+  }
+  return cache.get(importerPath)!.get(exporterPath);
+}
+
+async function resolveNewModuleSpec(
+  currentModuleSpec: string,
+  importerPath: string,
+  originalModulePath: string,
+  repoRoot: string,
+  fileSystem: FileSystem
+): Promise<string | undefined> {
+  if (currentModuleSpec.startsWith('.')) {
+    const { relative, dirname } = await import('path');
+    const relPath = relative(dirname(importerPath), originalModulePath.replace(/\.ts$/, ''));
+    return relPath.startsWith('.') ? relPath : './' + relPath;
+  }
+  return await resolveImportSpecAlias(repoRoot, importerPath, originalModulePath, fileSystem) ?? undefined;
+}
+
+async function buildImportChange(
+  importerPath: string,
+  exporterPath: string,
+  symbolName: string,
+  reExportInfo: { originalModuleSpec: string; isTypeOnly: boolean },
+  literalSpecCache: Map<string, Map<string, string>>,
+  repoRoot: string,
+  fileSystem: FileSystem
+): Promise<ImportChange & { importerPath: string } | null> {
+  const currentModuleSpec = await getLiteralModuleSpec(importerPath, exporterPath, literalSpecCache, repoRoot, fileSystem);
+  if (!currentModuleSpec) {
+    return null;
+  }
+  const originalModulePath = await resolveImportSpecFromIndexing(repoRoot, exporterPath, reExportInfo.originalModuleSpec, fileSystem);
+  if (!originalModulePath) {
+    return null;
+  }
+  const newModuleSpec = await resolveNewModuleSpec(currentModuleSpec, importerPath, originalModulePath, repoRoot, fileSystem);
+  if (!newModuleSpec || currentModuleSpec === newModuleSpec) {
+    return null;
+  }
+  try {
+    const originalSourceFile = await loadSourceFile(originalModulePath, fileSystem);
+    const originalModuleInfo = parseModule(originalSourceFile);
+    if (!originalModuleInfo.exportedNames.has(symbolName)) {
+      return null;
+    }
+  } catch {
+    console.warn(`Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}`);
+    return null;
+  }
+  return { importerPath, symbolName, currentModuleSpec, newModuleSpec, isTypeOnly: reExportInfo.isTypeOnly };
+}
+
 async function findImportChangesForReExports(
   db: Storage,
   reExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
@@ -103,17 +186,14 @@ async function findImportChangesForReExports(
 ): Promise<Array<{ importerPath: string; symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }>> {
   const changes: Array<{ importerPath: string; symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }> = [];
 
-  // Create a map from re-exporter path + symbol to original module spec
   const reExportMap = new Map<string, { originalModuleSpec: string; isTypeOnly: boolean }>();
   for (const reExport of reExports) {
-    const key = `${reExport.reExporterPath}:${reExport.symbolName}`;
-    reExportMap.set(key, {
+    reExportMap.set(`${reExport.reExporterPath}:${reExport.symbolName}`, {
       originalModuleSpec: reExport.originalModuleSpec,
       isTypeOnly: reExport.isTypeOnly
     });
   }
 
-  // Find all imports - we need to get them from the objStore since there's no getAllImports method
   const allImports: Obj[] = [];
   for (const [id, obj] of db['objStore']['objs']) {
     if (id.startsWith('import|')) {
@@ -121,102 +201,28 @@ async function findImportChangesForReExports(
     }
   }
 
-  // Cache: importer path -> map of (resolved absolute exporter path -> literal module specifier)
   const literalSpecCache = new Map<string, Map<string, string>>();
-
-  async function getLiteralModuleSpec(importerPath: string, exporterPath: string): Promise<string | undefined> {
-    if (!literalSpecCache.has(importerPath)) {
-      const specMap = new Map<string, string>();
-      try {
-        const sf = await loadSourceFile(importerPath, fileSystem);
-        for (const decl of sf.getImportDeclarations()) {
-          const literal = decl.getModuleSpecifierValue();
-          const resolved = await resolveImportSpecFromIndexing(repoRoot, importerPath, literal, fileSystem);
-          if (resolved) {
-            specMap.set(resolved, literal);
-          }
-        }
-      } catch {
-        // If we can't load the file, leave cache empty
-      }
-      literalSpecCache.set(importerPath, specMap);
-    }
-    return literalSpecCache.get(importerPath)!.get(exporterPath);
-  }
 
   for (const importObj of allImports) {
     const parts = importObj.id.split('|');
     const importerPath = parts[1]!;
-
-    // Extract symbol name from the export group
     const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
     if (!exportGroup) {
       continue;
     }
-
     const exportParts = exportGroup.split('|');
     if (exportParts.length < 3) {
       continue;
     }
-
     const exporterPath = exportParts[1]!;
     const symbolName = exportParts[2]!;
-
-    // Check if this import is from a re-exporter
-    const key = `${exporterPath}:${symbolName}`;
-    const reExportInfo = reExportMap.get(key);
-
-    if (reExportInfo) {
-      /*
-        Get the literal module specifier from the source file (not the alias-resolved form).
-        applyImportChangesToFile matches against the literal text in the import declaration,
-        so currentModuleSpec must match that exactly.
-      */
-      const currentModuleSpec = await getLiteralModuleSpec(importerPath, exporterPath);
-      if (!currentModuleSpec) {
-        continue;
-      }
-
-      // Resolve the original module spec relative to the re-exporter to get the absolute path
-      const originalModulePath = await resolveImportSpecFromIndexing(repoRoot, exporterPath, reExportInfo.originalModuleSpec, fileSystem);
-      if (!originalModulePath) {
-        continue;
-      }
-
-      /*
-        Compute newModuleSpec in the same form as the source file uses.
-        If the current import is a relative path, produce a relative path.
-        If it's an alias, produce an alias.
-      */
-      let newModuleSpec: string | undefined;
-      if (currentModuleSpec.startsWith('.')) {
-        // Relative path: compute relative from importer to original module
-        const { relative, dirname } = await import('path');
-        const relPath = relative(dirname(importerPath), originalModulePath.replace(/\.ts$/, ''));
-        newModuleSpec = relPath.startsWith('.') ? relPath : './' + relPath;
-      } else {
-        // Alias or bare specifier: use resolveImportSpecAlias
-        newModuleSpec = await resolveImportSpecAlias(repoRoot, importerPath, originalModulePath, fileSystem) ?? undefined;
-      }
-
-      if (newModuleSpec && currentModuleSpec !== newModuleSpec) {
-        // CRITICAL SAFETY CHECK: Verify that the symbol actually exists in the original module.
-        try {
-          const originalSourceFile = await loadSourceFile(originalModulePath, fileSystem);
-          const originalModuleInfo = parseModule(originalSourceFile);
-          if (originalModuleInfo.exportedNames.has(symbolName)) {
-            changes.push({
-              importerPath,
-              symbolName,
-              currentModuleSpec,
-              newModuleSpec,
-              isTypeOnly: reExportInfo.isTypeOnly
-            });
-          }
-        } catch {
-          console.warn(`Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}`);
-        }
-      }
+    const reExportInfo = reExportMap.get(`${exporterPath}:${symbolName}`);
+    if (!reExportInfo) {
+      continue;
+    }
+    const change = await buildImportChange(importerPath, exporterPath, symbolName, reExportInfo, literalSpecCache, repoRoot, fileSystem);
+    if (change) {
+      changes.push(change);
     }
   }
 
@@ -317,105 +323,98 @@ async function createImportDirectlyPlan(
   };
 }
 
+type ImportChange = { symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean };
+
+function splitImportDeclaration(
+  sourceFile: SourceFile,
+  importDecl: ImportDeclaration,
+  namedImports: ReturnType<ImportDeclaration['getNamedImports']>,
+  specChanges: ImportChange[],
+  importedSymbolNames: Set<string>,
+  changedSymbols: Set<string>
+): void {
+  const isDeclarationTypeOnly = importDecl.isTypeOnly();
+  const perSymbolTypeOnly = new Map<string, boolean>();
+  for (const ni of namedImports) {
+    perSymbolTypeOnly.set(ni.getName(), isDeclarationTypeOnly || ni.isTypeOnly());
+  }
+
+  const byNewSpec = new Map<string, ImportChange[]>();
+  for (const change of specChanges) {
+    if (!importedSymbolNames.has(change.symbolName)) {
+      continue;
+    }
+    if (!byNewSpec.has(change.newModuleSpec)) {
+      byNewSpec.set(change.newModuleSpec, []);
+    }
+    byNewSpec.get(change.newModuleSpec)!.push(change);
+  }
+
+  for (const namedImport of namedImports) {
+    if (changedSymbols.has(namedImport.getName())) {
+      namedImport.remove();
+    }
+  }
+
+  for (const [newSpec, newSpecChanges] of byNewSpec) {
+    const newNamedImports = newSpecChanges.map(c => c.symbolName);
+    const allTypeOnly = newNamedImports.every(n => perSymbolTypeOnly.get(n));
+    sourceFile.addImportDeclaration({
+      moduleSpecifier: newSpec,
+      namedImports: newNamedImports,
+      isTypeOnly: allTypeOnly,
+    });
+  }
+}
+
+function processImportDecl(
+  importDecl: ImportDeclaration,
+  changesBySpec: Map<string, ImportChange[]>,
+  sourceFile: SourceFile,
+  filePath: string
+): void {
+  try {
+    const moduleSpec = importDecl.getModuleSpecifierValue();
+    const specChanges = changesBySpec.get(moduleSpec);
+    if (!specChanges) {
+      return;
+    }
+    const namedImports = importDecl.getNamedImports();
+    const importedSymbolNames = new Set(namedImports.map(ni => ni.getName()));
+    const changedSymbols = new Set(specChanges.map(change => change.symbolName));
+    const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every(s => changedSymbols.has(s));
+
+    if (allSymbolsCanBeChanged) {
+      importDecl.setModuleSpecifier(specChanges[0]!.newModuleSpec);
+    } else {
+      splitImportDeclaration(sourceFile, importDecl, namedImports, specChanges, importedSymbolNames, changedSymbols);
+    }
+  } catch (importError) {
+    const importText = importDecl.getText().trim();
+    const errorMessage = importError instanceof Error ? importError.message : String(importError);
+    throw new Error(`Failed to process import statement in ${filePath}: ${errorMessage}\nImport statement: ${importText}`);
+  }
+}
+
 /**
  * Apply import changes to a source file
  */
 export function applyImportChangesToFile(
   sourceFile: SourceFile,
-  changes: Array<{ symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }>,
+  changes: ImportChange[],
   filePath: string
 ): void {
   try {
-    // Group changes by module spec for efficiency
-    const changesBySpec = new Map<string, typeof changes>();
+    const changesBySpec = new Map<string, ImportChange[]>();
     for (const change of changes) {
       if (!changesBySpec.has(change.currentModuleSpec)) {
         changesBySpec.set(change.currentModuleSpec, []);
       }
       changesBySpec.get(change.currentModuleSpec)!.push(change);
     }
-
-    // Find and update import declarations
-    sourceFile.getImportDeclarations().forEach((importDecl: ImportDeclaration) => {
-      try {
-        const moduleSpec = importDecl.getModuleSpecifierValue();
-        const specChanges = changesBySpec.get(moduleSpec);
-
-        if (specChanges) {
-          // CRITICAL SAFETY CHECK: Only change the import declaration if ALL imported symbols
-          // from this module can be safely changed. This prevents partial changes that would
-          // break imports where some symbols exist in the target module but others don't.
-          // Get all named imports from this declaration
-          const namedImports = importDecl.getNamedImports();
-          const importedSymbolNames = new Set(
-            namedImports.map(namedImport => namedImport.getName())
-          );
-
-          // Check if we have changes for all imported symbols
-          const changedSymbols = new Set(specChanges.map(change => change.symbolName));
-          const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every(symbol =>
-            changedSymbols.has(symbol)
-          );
-
-          if (allSymbolsCanBeChanged) {
-            // All symbols can be changed safely, update the module specifier
-            const newSpec = specChanges[0]!.newModuleSpec; // All changes for this spec should have the same new spec
-            importDecl.setModuleSpecifier(newSpec);
-          } else {
-            /*
-              Split the import: keep unchanged symbols in the original import,
-              add a new import for the redirected symbols.
-            */
-            const isDeclarationTypeOnly = importDecl.isTypeOnly();
-
-            /*
-              Build a per-symbol type-only lookup from the original import
-              BEFORE removing any nodes (removed nodes can't be queried).
-              Covers both declaration-level `import type { ... }` and
-              per-specifier `import { type Foo, Bar }`.
-            */
-            const perSymbolTypeOnly = new Map<string, boolean>();
-            for (const ni of namedImports) {
-              perSymbolTypeOnly.set(ni.getName(), isDeclarationTypeOnly || ni.isTypeOnly());
-            }
-
-            // Group changed symbols by their new module spec
-            const byNewSpec = new Map<string, typeof specChanges>();
-            for (const change of specChanges) {
-              if (!importedSymbolNames.has(change.symbolName)) {
-                continue;
-              }
-              if (!byNewSpec.has(change.newModuleSpec)) {
-                byNewSpec.set(change.newModuleSpec, []);
-              }
-              byNewSpec.get(change.newModuleSpec)!.push(change);
-            }
-
-            // Remove redirected symbols from the original import
-            for (const namedImport of namedImports) {
-              if (changedSymbols.has(namedImport.getName())) {
-                namedImport.remove();
-              }
-            }
-
-            // Add new import declarations for each target module
-            for (const [newSpec, newSpecChanges] of byNewSpec) {
-              const newNamedImports = newSpecChanges.map(c => c.symbolName);
-              const allTypeOnly = newNamedImports.every(n => perSymbolTypeOnly.get(n));
-              sourceFile.addImportDeclaration({
-                moduleSpecifier: newSpec,
-                namedImports: newNamedImports,
-                isTypeOnly: allTypeOnly,
-              });
-            }
-          }
-        }
-      } catch (importError) {
-        const importText = importDecl.getText().trim();
-        const errorMessage = importError instanceof Error ? importError.message : String(importError);
-        throw new Error(`Failed to process import statement in ${filePath}: ${errorMessage}\nImport statement: ${importText}`);
-      }
-    });
+    for (const importDecl of sourceFile.getImportDeclarations()) {
+      processImportDecl(importDecl, changesBySpec, sourceFile, filePath);
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to apply import changes to ${filePath}: ${errorMessage}`);

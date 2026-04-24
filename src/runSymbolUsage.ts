@@ -5,6 +5,27 @@ import { DebugOptions } from "./objstore";
 import { normalizePath } from "./pathUtils";
 import { FileSystem } from "./filesystem";
 
+function collectExporterPaths(
+  symbolImports: ReadonlyArray<import('./objstore').Obj>,
+  absoluteProjectPath: string
+): string[] {
+  const paths: string[] = [];
+  for (const obj of symbolImports) {
+    const exporter = obj['exporter'];
+    if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+      continue;
+    }
+    const exporterPath = (exporter as Record<string, unknown>)['path'];
+    if (typeof exporterPath !== 'string') {
+      continue;
+    }
+    if (isWithinProject(exporterPath, absoluteProjectPath) && !paths.includes(exporterPath)) {
+      paths.push(exporterPath);
+    }
+  }
+  return paths;
+}
+
 export async function runSymbolUsage(
   projectPath: string,
   symbolName: string,
@@ -22,23 +43,8 @@ export async function runSymbolUsage(
   console.log('   For refactoring, use fully qualified symbol analysis instead.');
   console.log();
 
-  // Find all files that export the given symbol within the project
-  // Use efficient group index to find all imports of this symbol name
-  // NOTE: This is a LOOSE search - same symbol names from different modules will match!
   const symbolImports = db.getSymbolImports(symbolName);
-  const allExporterPaths: string[] = [];
-  
-  for (const obj of symbolImports) {
-    const exporter = obj.exporter;
-    if (exporter && typeof exporter === 'object' && 'path' in exporter) {
-      const exporterPath = exporter.path;
-      if (typeof exporterPath === 'string' && isWithinProject(exporterPath, absoluteProjectPath)) {
-        if (!allExporterPaths.includes(exporterPath)) {
-          allExporterPaths.push(exporterPath);
-        }
-      }
-    }
-  }
+  const allExporterPaths = collectExporterPaths(symbolImports, absoluteProjectPath);
 
   if (allExporterPaths.length === 0) {
     console.log(`Symbol '${symbolName}' not found in project ${absoluteProjectPath}`);
@@ -52,10 +58,8 @@ export async function runSymbolUsage(
   }
   console.log();
 
-  // For each exporter, find all importers
   for (const exporterPath of allExporterPaths) {
     const importers = db.getImportersOfExport(exporterPath, symbolName);
-    
     if (importers.length > 0) {
       console.log(`${exporterPath}:${symbolName} used by:`);
       importers.sort();

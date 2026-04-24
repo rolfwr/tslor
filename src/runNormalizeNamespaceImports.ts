@@ -78,6 +78,54 @@ export function normalizeNamespaceImportsInFile(sourceFile: SourceFile): Namespa
  * Scans all TypeScript files, converts `import * as X` to explicit named imports,
  * and produces a tslor plan.
  */
+function countSkippedNamespaceImports(sourceFile: SourceFile): number {
+  let count = 0;
+  for (const decl of sourceFile.getImportDeclarations()) {
+    if (decl.getNamespaceImport()) {
+      count++;
+    }
+  }
+  return count;
+}
+
+interface FileNamespaceResult {
+  normalizedCount: number;
+  skippedCount: number;
+  change: ModifyFileChange | null;
+  undoChange: ModifyFileChange | null;
+  sourceFilePath: string | null;
+  checksum: string | null;
+}
+
+async function processOneNamespaceFile(
+  filePath: string,
+  fileSystem: FileSystem
+): Promise<FileNamespaceResult> {
+  const originalContent = await fsp.readFile(filePath, 'utf-8');
+  if (isGeneratedFile(originalContent)) {
+    return { normalizedCount: -1, skippedCount: 0, change: null, undoChange: null, sourceFilePath: null, checksum: null };
+  }
+  const sourceFile = await loadSourceFile(filePath, fileSystem);
+  const fileChanges = normalizeNamespaceImportsInFile(sourceFile);
+  if (fileChanges.length === 0) {
+    return { normalizedCount: 0, skippedCount: countSkippedNamespaceImports(sourceFile), change: null, undoChange: null, sourceFilePath: null, checksum: null };
+  }
+  const modifiedScriptContent = sourceFile.getFullText();
+  const finalContent = filePath.endsWith('.vue') ? reinsertScript(originalContent, modifiedScriptContent) : modifiedScriptContent;
+  if (finalContent === originalContent) {
+    return { normalizedCount: 0, skippedCount: 0, change: null, undoChange: null, sourceFilePath: null, checksum: null };
+  }
+  const fileChecksum = await computeFileChecksum(filePath);
+  return {
+    normalizedCount: fileChanges.length,
+    skippedCount: 0,
+    change: { type: 'modify-file', path: filePath, content: finalContent, originalChecksum: fileChecksum },
+    undoChange: { type: 'modify-file', path: filePath, content: originalContent, originalChecksum: computeStringChecksum(finalContent) },
+    sourceFilePath: filePath,
+    checksum: fileChecksum,
+  };
+}
+
 export async function runNormalizeNamespaceImports(
   directoryArg: string,
   debugOptions: DebugOptions,
@@ -88,11 +136,6 @@ export async function runNormalizeNamespaceImports(
   const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-
-  /*
-    Use the index to find only files that have namespace imports,
-    rather than loading every TypeScript file through ts-morph.
-  */
   const db = openStorage(debugOptions, true);
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
 
@@ -100,11 +143,9 @@ export async function runNormalizeNamespaceImports(
   await indexImportFromFiles(allPaths, db, repoRoot, true, fileSystem);
   db.save();
 
-  // Query the index for all namespace imports (symbolName|*)
   const namespaceImportObjs = db.getSymbolImports('*');
   const filesWithNamespaceImports = new Set<string>();
   for (const obj of namespaceImportObjs) {
-    // id format: import|{importerPath}|{index}
     const importerPath = obj.id.slice('import|'.length, obj.id.lastIndexOf('|'));
     if (importerPath.startsWith(directory)) {
       filesWithNamespaceImports.add(importerPath);
@@ -124,57 +165,23 @@ export async function runNormalizeNamespaceImports(
   const checksums: { [filePath: string]: string } = {};
   let totalNormalized = 0;
   let totalSkipped = 0;
-
   let skippedGenerated = 0;
-  for (const filePath of filesWithNamespaceImports) {
-    const originalContent = await fsp.readFile(filePath, 'utf-8');
 
-    // Skip files marked as @generated
-    if (isGeneratedFile(originalContent)) {
+  for (const filePath of filesWithNamespaceImports) {
+    const result = await processOneNamespaceFile(filePath, fileSystem);
+    if (result.normalizedCount === -1) {
       skippedGenerated++;
       continue;
     }
-
-    const sourceFile = await loadSourceFile(filePath, fileSystem);
-
-    const fileChanges = normalizeNamespaceImportsInFile(sourceFile);
-    if (fileChanges.length === 0) {
-      // Check if there were namespace imports that were skipped
-      const importDecls = sourceFile.getImportDeclarations();
-      for (const decl of importDecls) {
-        if (decl.getNamespaceImport()) {
-          totalSkipped++;
-        };
-      }
+    totalSkipped += result.skippedCount;
+    if (!result.change || !result.undoChange || !result.sourceFilePath || !result.checksum) {
       continue;
     }
-
-    const modifiedScriptContent = sourceFile.getFullText();
-    let finalContent: string;
-    if (filePath.endsWith('.vue')) {
-      finalContent = reinsertScript(originalContent, modifiedScriptContent);
-    } else {
-      finalContent = modifiedScriptContent;
-    }
-
-    if (finalContent !== originalContent) {
-      const fileChecksum = await computeFileChecksum(filePath);
-      changes.push({
-        type: 'modify-file',
-        path: filePath,
-        content: finalContent,
-        originalChecksum: fileChecksum,
-      });
-      undo.push({
-        type: 'modify-file',
-        path: filePath,
-        content: originalContent,
-        originalChecksum: computeStringChecksum(finalContent),
-      });
-      sourceFiles.push(filePath);
-      checksums[filePath] = fileChecksum;
-      totalNormalized += fileChanges.length;
-    }
+    changes.push(result.change);
+    undo.push(result.undoChange);
+    sourceFiles.push(result.sourceFilePath);
+    checksums[result.sourceFilePath] = result.checksum;
+    totalNormalized += result.normalizedCount;
   }
 
   if (totalNormalized === 0) {
@@ -223,31 +230,44 @@ function createEmptyPlan(): TslorPlan {
   };
 }
 
+function addNamed<T extends { getName(): string | undefined }>(bindings: Set<string>, nodes: T[]): void {
+  for (const node of nodes) {
+    const name = node.getName();
+    if (name) {
+      bindings.add(name);
+    }
+  }
+}
+
+function addImportBindings(
+  bindings: Set<string>,
+  importDecl: ImportDeclaration,
+  namespaceNames: Set<string>
+): void {
+  const nsImport = importDecl.getNamespaceImport();
+  if (nsImport && namespaceNames.has(nsImport.getText())) {
+    return;
+  }
+  const defaultImport = importDecl.getDefaultImport();
+  if (defaultImport) {
+    bindings.add(defaultImport.getText());
+  }
+  for (const named of importDecl.getNamedImports()) {
+    bindings.add(named.getName());
+  }
+}
+
 function collectExistingBindings(sourceFile: SourceFile, namespaceNames: Set<string>): Set<string> {
   const bindings = new Set<string>();
 
-  /*
-    Collect ALL variable declarations at every nesting level (not just top-level)
-    to detect conflicts like `const x = ns.x` inside function bodies
-  */
   for (const decl of sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
     bindings.add(decl.getName());
   }
   for (const param of sourceFile.getDescendantsOfKind(SyntaxKind.Parameter)) {
     bindings.add(param.getName());
   }
-  for (const fn of sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
-    const name = fn.getName();
-    if (name) {
-      bindings.add(name);
-    }
-  }
-  for (const cls of sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration)) {
-    const name = cls.getName();
-    if (name) {
-      bindings.add(name);
-    }
-  }
+  addNamed(bindings, sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration));
+  addNamed(bindings, sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration));
   for (const iface of sourceFile.getDescendantsOfKind(SyntaxKind.InterfaceDeclaration)) {
     bindings.add(iface.getName());
   }
@@ -258,29 +278,104 @@ function collectExistingBindings(sourceFile: SourceFile, namespaceNames: Set<str
     bindings.add(enumDecl.getName());
   }
 
-  // Add Node.js globals that namespace member names must not shadow
   for (const name of NODEJS_GLOBALS) {
     bindings.add(name);
   }
 
-  // Collect named imports from other import declarations (not namespace ones we're processing)
   for (const importDecl of sourceFile.getImportDeclarations()) {
-    const nsImport = importDecl.getNamespaceImport();
-    if (nsImport && namespaceNames.has(nsImport.getText())) {
-      continue;
-    }
-
-    const defaultImport = importDecl.getDefaultImport();
-    if (defaultImport) {
-      bindings.add(defaultImport.getText());
-    }
-
-    for (const named of importDecl.getNamedImports()) {
-      bindings.add(named.getName());
-    }
+    addImportBindings(bindings, importDecl, namespaceNames);
   }
 
   return bindings;
+}
+
+interface NamespaceUsageResult {
+  memberAccessNodes: Array<{ node: Node; memberName: string; isTypePosition: boolean }>;
+  namespaceUsedAsValue: boolean;
+}
+
+function tryGetPropertyAccessMember(
+  id: ReturnType<SourceFile['getDescendantsOfKind']>[number],
+  parent: Node | undefined
+): { node: Node; memberName: string; isTypePosition: false } | null {
+  if (!parent || parent.getKind() !== SyntaxKind.PropertyAccessExpression) {
+    return null;
+  }
+  const propAccess = parent as PropertyAccessExpression;
+  if (propAccess.getExpression() !== id) {
+    return null;
+  }
+  return { node: propAccess, memberName: propAccess.getName(), isTypePosition: false };
+}
+
+function tryGetQualifiedNameMember(
+  id: ReturnType<SourceFile['getDescendantsOfKind']>[number],
+  parent: Node | undefined
+): { node: Node; memberName: string; isTypePosition: true } | null {
+  if (!parent || parent.getKind() !== SyntaxKind.QualifiedName) {
+    return null;
+  }
+  const qualifiedName = parent as QualifiedName;
+  if (qualifiedName.getLeft() !== id) {
+    return null;
+  }
+  return { node: qualifiedName, memberName: qualifiedName.getRight().getText(), isTypePosition: true };
+}
+
+function collectNamespaceUsages(
+  sourceFile: SourceFile,
+  importDecl: ImportDeclaration,
+  nsName: string
+): NamespaceUsageResult {
+  const memberAccessNodes: Array<{ node: Node; memberName: string; isTypePosition: boolean }> = [];
+  let namespaceUsedAsValue = false;
+
+  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (id.getText() !== nsName) {
+      continue;
+    }
+    if (id.getFirstAncestorByKind(SyntaxKind.ImportDeclaration) === importDecl) {
+      continue;
+    }
+    const parent = id.getParent();
+    const propAccess = tryGetPropertyAccessMember(id, parent);
+    if (propAccess) {
+      memberAccessNodes.push(propAccess);
+      continue;
+    }
+    const qualifiedName = tryGetQualifiedNameMember(id, parent);
+    if (qualifiedName) {
+      memberAccessNodes.push(qualifiedName);
+      continue;
+    }
+    namespaceUsedAsValue = true;
+  }
+
+  return { memberAccessNodes, namespaceUsedAsValue };
+}
+
+function applyNamespaceTransformation(
+  importDecl: ImportDeclaration,
+  memberAccessNodes: Array<{ node: Node; memberName: string; isTypePosition: boolean }>,
+  accessedMembers: Set<string>,
+  memberHasValueUse: Set<string>,
+  moduleSpec: string,
+  isTypeOnly: boolean
+): NamespaceNormalizationChange {
+  const sortedAccesses = [...memberAccessNodes].sort((a, b) => b.node.getStart() - a.node.getStart());
+  for (const access of sortedAccesses) {
+    access.node.replaceWithText(access.memberName);
+  }
+  const sortedMembers = [...accessedMembers].sort();
+  if (isTypeOnly) {
+    importDecl.replaceWithText(`import type { ${sortedMembers.join(', ')} } from '${moduleSpec}';`);
+  } else {
+    const membersStr = sortedMembers
+      .map(m => memberHasValueUse.has(m) ? m : `type ${m}`)
+      .join(', ');
+    importDecl.replaceWithText(`import { ${membersStr} } from '${moduleSpec}';`);
+  }
+  return { moduleSpec, accessedMembers: sortedMembers };
 }
 
 function processNamespaceImport(
@@ -291,53 +386,12 @@ function processNamespaceImport(
   isTypeOnly: boolean,
   existingBindings: Set<string>,
 ): NamespaceNormalizationChange | null {
-  /*
-    Find all PropertyAccessExpression and QualifiedName nodes where the
-    left side is the namespace identifier
-  */
-  const memberAccessNodes: Array<{ node: Node; memberName: string; isTypePosition: boolean }> = [];
-  let namespaceUsedAsValue = false;
-
-  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
-    if (id.getText() !== nsName) {
-      continue;
-    }
-
-    // Skip the identifier in the import declaration itself
-    const ancestor = id.getFirstAncestorByKind(SyntaxKind.ImportDeclaration);
-    if (ancestor === importDecl) {
-      continue;
-    }
-
-    const parent = id.getParent();
-
-    // Value position: X.member as PropertyAccessExpression
-    if (parent && parent.getKind() === SyntaxKind.PropertyAccessExpression) {
-      const propAccess = parent as PropertyAccessExpression;
-      if (propAccess.getExpression() === id) {
-        memberAccessNodes.push({ node: propAccess, memberName: propAccess.getName(), isTypePosition: false });
-        continue;
-      }
-    }
-
-    // Type position: X.Member as QualifiedName
-    if (parent && parent.getKind() === SyntaxKind.QualifiedName) {
-      const qualifiedName = parent as QualifiedName;
-      if (qualifiedName.getLeft() === id) {
-        memberAccessNodes.push({ node: qualifiedName, memberName: qualifiedName.getRight().getText(), isTypePosition: true });
-        continue;
-      }
-    }
-
-    // Namespace is used in a non-member-access context (e.g., passed as argument)
-    namespaceUsedAsValue = true;
-  }
+  const { memberAccessNodes, namespaceUsedAsValue } = collectNamespaceUsages(sourceFile, importDecl, nsName);
 
   if (namespaceUsedAsValue || memberAccessNodes.length === 0) {
     return null;
   }
 
-  // Collect accessed member names and track whether each is type-only
   const accessedMembers = new Set<string>();
   const memberHasValueUse = new Set<string>();
   for (const access of memberAccessNodes) {
@@ -347,37 +401,11 @@ function processNamespaceImport(
     }
   }
 
-  // Check for name conflicts
   for (const member of accessedMembers) {
     if (existingBindings.has(member)) {
       return null;
     }
   }
 
-  // All checks passed — apply the transformation
-
-  // Replace all X.member with just member (process in reverse order to preserve positions)
-  const sortedAccesses = [...memberAccessNodes].sort((a, b) => b.node.getStart() - a.node.getStart());
-  for (const access of sortedAccesses) {
-    access.node.replaceWithText(access.memberName);
-  }
-
-  // Replace the import declaration
-  const sortedMembers = [...accessedMembers].sort();
-  if (isTypeOnly) {
-    // Original was `import type * as X` — all members are type-only
-    const membersStr = sortedMembers.join(', ');
-    importDecl.replaceWithText(`import type { ${membersStr} } from '${moduleSpec}';`);
-  } else {
-    // Use inline `type` keyword for members only used in type positions
-    const membersStr = sortedMembers
-      .map(m => memberHasValueUse.has(m) ? m : `type ${m}`)
-      .join(', ');
-    importDecl.replaceWithText(`import { ${membersStr} } from '${moduleSpec}';`);
-  }
-
-  return {
-    moduleSpec,
-    accessedMembers: sortedMembers,
-  };
+  return applyNamespaceTransformation(importDecl, memberAccessNodes, accessedMembers, memberHasValueUse, moduleSpec, isTypeOnly);
 }

@@ -10,6 +10,82 @@ export interface GrepOptions {
   verbose?: boolean;
 }
 
+interface ExporterIndexes {
+  exportersByPath: Map<string, Set<string>>;
+  importersByExporter: Map<string, Set<string>>;
+}
+
+function extractExporterPath(obj: { exporter?: unknown }): string | null {
+  const exporter = obj.exporter;
+  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+    return null;
+  }
+  const path = (exporter as Record<string, unknown>)['path'];
+  return typeof path === 'string' ? path : null;
+}
+
+function extractImporterPath(id: unknown): string | null {
+  if (typeof id !== 'string' || !id.startsWith('import|')) {
+    return null;
+  }
+  return id.slice('import|'.length, id.lastIndexOf('|'));
+}
+
+function buildExporterIndexes(
+  symbolImports: { exporter?: unknown; id?: unknown }[],
+  symbolName: string,
+  absoluteDirectory: string,
+  options: GrepOptions
+): ExporterIndexes {
+  const exportersByPath = new Map<string, Set<string>>();
+  const importersByExporter = new Map<string, Set<string>>();
+
+  for (const obj of symbolImports) {
+    const exporterPath = extractExporterPath(obj as { exporter?: unknown });
+    if (!exporterPath || !isWithinDirectory(exporterPath, absoluteDirectory)) {
+      continue;
+    }
+    if (!exportersByPath.has(exporterPath)) {
+      exportersByPath.set(exporterPath, new Set());
+    }
+    exportersByPath.get(exporterPath)!.add(symbolName);
+
+    if (options.uses) {
+      const importerPath = extractImporterPath(obj.id);
+      if (importerPath) {
+        if (!importersByExporter.has(exporterPath)) {
+          importersByExporter.set(exporterPath, new Set());
+        }
+        importersByExporter.get(exporterPath)!.add(importerPath);
+      }
+    }
+  }
+
+  return { exportersByPath, importersByExporter };
+}
+
+function displayExporterResults(
+  exportersByPath: Map<string, Set<string>>,
+  importersByExporter: Map<string, Set<string>>,
+  options: GrepOptions
+): void {
+  const exporterPaths = Array.from(exportersByPath.keys()).sort();
+  for (const exporterPath of exporterPaths) {
+    console.log(exporterPath);
+    if (!options.uses) {
+      continue;
+    }
+    const importers = importersByExporter.get(exporterPath);
+    if (!importers || importers.size === 0) {
+      continue;
+    }
+    const importerPaths = Array.from(importers).sort();
+    for (const importerPath of importerPaths) {
+      console.log(`  ${importerPath}`);
+    }
+  }
+}
+
 export async function runGrep(
   directory: string,
   symbolName: string,
@@ -22,67 +98,23 @@ export async function runGrep(
   const db = openStorage(debugOptions, options.verbose || false);
   await updateStorage(repoRoot, db, options.verbose || false, fileSystem);
 
-  // Use efficient symbolName group index for discovery
   const symbolImports = db.getSymbolImports(symbolName);
-  
   if (symbolImports.length === 0) {
     return;
   }
 
-  // Group by exporter (where symbol is defined)
-  const exportersByPath = new Map<string, Set<string>>();
-  const importersByExporter = new Map<string, Set<string>>();
-  
-  for (const obj of symbolImports) {
-    const exporter = obj.exporter;
-    
-    if (exporter && typeof exporter === 'object' && 'path' in exporter) {
-      const exporterPath = exporter.path;
-      
-      if (typeof exporterPath === 'string' && isWithinDirectory(exporterPath, absoluteDirectory)) {
-        // Track this exporter
-        if (!exportersByPath.has(exporterPath)) {
-          exportersByPath.set(exporterPath, new Set());
-        }
-        exportersByPath.get(exporterPath)!.add(symbolName);
-        
-        // Track importer if we need to show usage
-        if (options.uses) {
-          const id = obj.id;
-          if (typeof id === 'string' && id.startsWith('import|')) {
-            const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
-            if (!importersByExporter.has(exporterPath)) {
-              importersByExporter.set(exporterPath, new Set());
-            }
-            importersByExporter.get(exporterPath)!.add(importerPath);
-          }
-        }
-      }
-    }
-  }
+  const { exportersByPath, importersByExporter } = buildExporterIndexes(
+    symbolImports as { exporter?: unknown; id?: unknown }[],
+    symbolName,
+    absoluteDirectory,
+    options
+  );
 
   if (exportersByPath.size === 0) {
     return;
   }
 
-  // Display results
-  const exporterPaths = Array.from(exportersByPath.keys());
-  exporterPaths.sort();
-
-  for (const exporterPath of exporterPaths) {
-    console.log(exporterPath);
-    
-    if (options.uses) {
-      const importers = importersByExporter.get(exporterPath);
-      if (importers && importers.size > 0) {
-        const importerPaths = Array.from(importers);
-        importerPaths.sort();
-        for (const importerPath of importerPaths) {
-          console.log(`  ${importerPath}`);
-        }
-      }
-    }
-  }
+  displayExporterResults(exportersByPath, importersByExporter, options);
 
   db.save();
 }
