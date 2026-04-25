@@ -1,0 +1,6 @@
+id: no-split-index-assertion
+language: TypeScript
+severity: error
+message: "Do not assert on split() results. Write a validated parser function that returns null on malformed input."
+rule:
+  pattern: '$CALL.split($SEP)[$INDEX]!'
