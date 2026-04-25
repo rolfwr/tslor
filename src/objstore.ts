@@ -205,6 +205,7 @@ export function findDifference(what: string, a: unknown, b: unknown): string | n
     if (Array.isArray(a)) {
       return findDifferenceInArrays(what, a, b);
     }
+    // ast-grep-ignore — recursive comparator for arbitrary object shapes
     return findDifferenceInObjects(what, a as Record<string, unknown>, b as Record<string, unknown>);
   }
 

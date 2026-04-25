@@ -1,0 +1,6 @@
+id: no-as-record-unknown
+language: TypeScript
+severity: error
+message: "Do not cast to Record<string, unknown> to access properties. Define a proper type for the shape you expect."
+rule:
+  pattern: '$EXPR as Record<string, unknown>'
