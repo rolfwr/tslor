@@ -459,8 +459,10 @@ const CONSTANT_VALUE = 42;
   
   // Verify we have the actual AST node, not just text
   assert.isDefined(formatDate.node);
-  invariant(formatDate.node.getKind() === SyntaxKind.FunctionDeclaration, 
+  invariant(formatDate.node.getKind() === SyntaxKind.FunctionDeclaration,
     'formatDate node should be a FunctionDeclaration');
+  // RATIONALE: test scaffolding
+  // ast-grep-ignore: no-type-assertion
   assert.equal((formatDate.node as FunctionDeclaration).getName(), 'formatDate');
   
   // Check formatISODate (internal function)
@@ -470,8 +472,10 @@ const CONSTANT_VALUE = 42;
   assert.equal(formatISODate.kind, 'function');
   assert.isFalse(formatISODate.isExported);
   assert.isDefined(formatISODate.node);
-  invariant(formatISODate.node.getKind() === SyntaxKind.FunctionDeclaration, 
+  invariant(formatISODate.node.getKind() === SyntaxKind.FunctionDeclaration,
     'formatISODate node should be a FunctionDeclaration');
+  // RATIONALE: test scaffolding
+  // ast-grep-ignore: no-type-assertion
   assert.equal((formatISODate.node as FunctionDeclaration).getName(), 'formatISODate');
   
   // Check CONSTANT_VALUE
@@ -481,8 +485,10 @@ const CONSTANT_VALUE = 42;
   assert.equal(constant.kind, 'const');
   assert.isDefined(constant.node);
   // Verify it's a variable statement node
-  invariant(constant.node.getKind() === SyntaxKind.VariableStatement, 
+  invariant(constant.node.getKind() === SyntaxKind.VariableStatement,
     'CONSTANT_VALUE node should be a VariableStatement');
+  // RATIONALE: test scaffolding
+  // ast-grep-ignore: no-type-assertion
   assert.isTrue((constant.node as VariableStatement).getDeclarations().some((decl: VariableDeclaration) => decl.getName() === 'CONSTANT_VALUE'));
 });
 

@@ -91,6 +91,8 @@ function parseWorkerResult(msg: WorkerMessage): ModuleInfo | null {
   }
   const parsed: unknown = JSON.parse(msg.moduleInfo);
   invariant(typeof parsed === 'object' && parsed !== null && 'path' in parsed, 'Worker returned invalid ModuleInfo');
+  // RATIONALE: JSON parsing boundary with invariant check
+  // ast-grep-ignore: no-type-assertion
   return parsed as ModuleInfo;
 }
 
@@ -173,6 +175,8 @@ function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueu
   const reader: AsyncQueueReader<T> = {
     take(): Promise<T | null> {
       if (items.length > 0) {
+        // RATIONALE: queue invariant (length > 0)
+        // ast-grep-ignore: no-type-assertion
         return Promise.resolve(items.shift() as T);
       }
       if (closed) {
@@ -259,6 +263,8 @@ async function indexImportFromFilesParallel(
     }
     let moduleInfo: ModuleInfo | null;
     try {
+      // RATIONALE: IPC message from worker
+      // ast-grep-ignore: no-type-assertion
       moduleInfo = parseWorkerResult(msg as WorkerMessage);
     } catch (error) {
       throw makeFileProcessingError(currentItem.path, error);

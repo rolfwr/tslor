@@ -301,6 +301,8 @@ function tryGetPropertyAccessMember(
   if (!parent || parent.getKind() !== SyntaxKind.PropertyAccessExpression) {
     return null;
   }
+  // RATIONALE: type narrowing after runtime kind check
+  // ast-grep-ignore: no-type-assertion
   const propAccess = parent as PropertyAccessExpression;
   if (propAccess.getExpression() !== id) {
     return null;
@@ -315,6 +317,8 @@ function tryGetQualifiedNameMember(
   if (!parent || parent.getKind() !== SyntaxKind.QualifiedName) {
     return null;
   }
+  // RATIONALE: type narrowing after runtime kind check
+  // ast-grep-ignore: no-type-assertion
   const qualifiedName = parent as QualifiedName;
   if (qualifiedName.getLeft() !== id) {
     return null;

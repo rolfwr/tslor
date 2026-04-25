@@ -95,6 +95,8 @@ export async function readPlan(planFile: string): Promise<TslorPlan> {
   }
   
   const planJson = await fsp.readFile(planFile, 'utf-8');
+  // RATIONALE: JSON parsing boundary
+  // ast-grep-ignore: no-type-assertion
   const plan = JSON.parse(planJson) as TslorPlan;
   
   validatePlanFormat(plan);
@@ -188,8 +190,14 @@ export async function displayPlan(plan: TslorPlan, options: { noDiff?: boolean }
   console.log('');
   
   // Group changes by type
+  // RATIONALE: filter narrows type
+  // ast-grep-ignore: no-type-assertion
   const creates = plan.changes.filter(c => c.type === 'create-file') as CreateFileChange[];
+  // RATIONALE: filter narrows type
+  // ast-grep-ignore: no-type-assertion
   const modifies = plan.changes.filter(c => c.type === 'modify-file') as ModifyFileChange[];
+  // RATIONALE: filter narrows type
+  // ast-grep-ignore: no-type-assertion
   const deletes = plan.changes.filter(c => c.type === 'delete-file') as DeleteFileChange[];
   
   if (creates.length > 0) {

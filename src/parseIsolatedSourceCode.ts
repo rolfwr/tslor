@@ -37,6 +37,8 @@ class StubFileSystemHost implements Partial<FileSystemHost> {
 }
 
 export function makeStub<T>(what: string, obj: Partial<T>): T {
+  // RATIONALE: intentional type-erasure at stub boundary
+  // ast-grep-ignore: no-type-assertion
   return new Proxy<Partial<T>>(obj, new StubProxy(what, obj)) as T;
 }
 

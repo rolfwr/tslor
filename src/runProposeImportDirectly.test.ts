@@ -179,6 +179,8 @@ import { realFunction, fakeFunction } from './vueCompat';
 
   if (consumerChanges.length > 0) {
     // If there are changes to consumer.ts, the fakeFunction import should still be from vueCompat
+    // RATIONALE: test scaffolding
+    // ast-grep-ignore: no-type-assertion
     const modifyChange = consumerChanges[0] as ModifyFileChange;
     const modifiedContent = modifyChange.content;
     assert(modifiedContent.includes("fakeFunction } from './vueCompat'"),
@@ -383,6 +385,8 @@ test('runProposeImportDirectly produces changes for mixed imports (relative path
     'consumer.ts should be modified to split the mixed import');
 
   // Verify the modified content splits the import correctly
+  // RATIONALE: test scaffolding
+  // ast-grep-ignore: no-type-assertion
   const content = (consumerChange as ModifyFileChange).content;
   assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
     'getItemRequestSchema must remain imported from getItem');
@@ -439,6 +443,8 @@ test('runProposeImportDirectly produces changes when consumer uses path-mapped i
   assert.isDefined(consumerChange,
     'consumer.ts should be modified even when tsconfig has path aliases');
 
+  // RATIONALE: test scaffolding
+  // ast-grep-ignore: no-type-assertion
   const content = (consumerChange as ModifyFileChange).content;
   assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
     'getItemRequestSchema must remain imported from getItem');

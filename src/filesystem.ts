@@ -54,6 +54,8 @@ export class RealFileSystem implements FileSystem {
 
   async readFile(filePath: string, encoding?: string): Promise<string> {
     const { readFile } = await import('fs/promises');
+    // RATIONALE: Node.js API requires BufferEncoding type
+    // ast-grep-ignore: no-type-assertion
     return readFile(filePath, { encoding: encoding as BufferEncoding || 'utf-8' });
   }
 }

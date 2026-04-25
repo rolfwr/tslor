@@ -1,7 +1,7 @@
 id: no-type-assertion
 language: TypeScript
-severity: warning
-message: "Type assertions ('as') are a code smell. Every use must have a documented rationale. Prefer proper types, type guards, or runtime validation over casting."
+severity: error
+message: "Type assertions ('as') are a code smell. Every use must have '// ast-grep-ignore: no-type-assertion' on the preceding line with a rationale comment nearby. Prefer proper types, type guards, or runtime validation over casting."
 rule:
   pattern: '$EXPR as $TYPE'
   any:

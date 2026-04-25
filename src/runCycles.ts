@@ -969,6 +969,8 @@ function findStronglyConnectedComponents<T>(graph: Map<T, Set<T>>): T[][] {
   function popComponent(v: T): void {
     const component: T[] = [];
     do {
+      // RATIONALE: Tarjan's algorithm invariant (v guaranteed on stack)
+      // ast-grep-ignore: no-type-assertion
       const w = stack.pop() as T;
       onStack.delete(w);
       component.push(w);

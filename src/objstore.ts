@@ -244,6 +244,8 @@ export function saveObjStoreAsJsonl(filename: string, store: ObjStore, debugOpti
 }
 
 export function loadObjStoreFromJsonl(filename: string, debugOptions: DebugOptions): ObjStore {
+  // RATIONALE: JSON parsing boundary
+  // ast-grep-ignore: no-type-assertion
   const data = readFileSync(filename, 'utf8').split('\n').map(line => JSON.parse(line)) as Obj[];
   const store = new ObjStore(debugOptions);
   for (const obj of data) {

@@ -214,6 +214,8 @@ export function calculateAllScores(
     const downward = calcDownwards(hotMods, hotModule, new Set());
     hotModule.badness = (upward.weight - 1) * (downward.weight - 1);
   }
+  // RATIONALE: intentional type narrowing after scoring
+  // ast-grep-ignore: no-type-assertion
   return hotMods as Record<string, ScoredHotModuleInfo>;
 }
 

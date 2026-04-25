@@ -341,6 +341,8 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
       const byType = members.reduce((acc, member) => {
         acc[member.type] = (acc[member.type] || 0) + 1;
         return acc;
+      // RATIONALE: empty object as reduce accumulator
+      // ast-grep-ignore: no-type-assertion
       }, {} as Record<string, number>);
       
       console.log(`# ${filePath}`);
