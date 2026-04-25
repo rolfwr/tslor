@@ -5,7 +5,11 @@
     "rules": {
       "recommended": false,
       "suspicious": {
-        "noImportCycles": { "level": "error" }
+        "noImportCycles": { "level": "error" },
+        "noExtraNonNullAssertion": { "level": "error" }
+      },
+      "style": {
+        "noNonNullAssertion": { "level": "warn" }
       },
       "complexity": {
         "noExcessiveCognitiveComplexity": {
