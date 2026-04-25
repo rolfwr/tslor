@@ -252,7 +252,7 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         name,
         kind: 'function',
         node: func,
-        jsDocs: func.getJsDocs().length > 0 ? func.getJsDocs() : undefined,
+        jsDocs: func.getJsDocs(),
         isExported: func.isExported(),
         startPos: func.getStart(),
         endPos: func.getEnd()
@@ -269,7 +269,7 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
           name,
           kind: stmt.getDeclarationKind() === 'const' ? 'const' : 'variable',
           node: stmt,
-          jsDocs: stmt.getJsDocs().length > 0 ? stmt.getJsDocs() : undefined,
+          jsDocs: stmt.getJsDocs(),
           isExported: stmt.isExported(),
           startPos: stmt.getStart(),
           endPos: stmt.getEnd()
@@ -286,7 +286,7 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         name,
         kind: 'type',
         node: type,
-        jsDocs: type.getJsDocs().length > 0 ? type.getJsDocs() : undefined,
+        jsDocs: type.getJsDocs(),
         isExported: type.isExported(),
         startPos: type.getStart(),
         endPos: type.getEnd()
@@ -302,7 +302,7 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         name,
         kind: 'interface',
         node: iface,
-        jsDocs: iface.getJsDocs().length > 0 ? iface.getJsDocs() : undefined,
+        jsDocs: iface.getJsDocs(),
         isExported: iface.isExported(),
         startPos: iface.getStart(),
         endPos: iface.getEnd()
@@ -318,7 +318,7 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         name,
         kind: 'class',
         node: cls,
-        jsDocs: cls.getJsDocs().length > 0 ? cls.getJsDocs() : undefined,
+        jsDocs: cls.getJsDocs(),
         isExported: cls.isExported(),
         startPos: cls.getStart(),
         endPos: cls.getEnd()
@@ -566,7 +566,7 @@ export function computeRequiredImports(
       moduleSpec: adjustedModuleSpec,
       importedNames: Array.from(info.namedImports).sort(),
       isTypeOnly: info.isTypeOnly,
-      defaultImport: info.defaultImport
+      ...(info.defaultImport !== undefined && { defaultImport: info.defaultImport })
     };
   });
 }
@@ -685,8 +685,8 @@ export function removeSymbolsFromSource(
       // Create new variable statement with only the kept declarations
       const newDeclarations = declarationsToKeep.map(decl => ({
         name: decl.getName(),
-        type: decl.getTypeNode()?.getText(),
-        initializer: decl.getInitializer()?.getText()
+        ...(decl.getTypeNode() && { type: decl.getTypeNode()!.getText() }),
+        ...(decl.getInitializer() && { initializer: decl.getInitializer()!.getText() })
       }));
 
       // Replace the statement using ts-morph methods

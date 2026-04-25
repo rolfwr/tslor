@@ -418,4 +418,5 @@ if (require.main === module) {
   });
 }
 
-export { outline, analyzeSourceFile, MemberInfo };
+export { outline, analyzeSourceFile };
+export type { MemberInfo };
