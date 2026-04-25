@@ -70,24 +70,29 @@ export async function runProjectUse(
     const usesWithSymbols = db.getProjectUsesWithSymbols(absoluteFromTsconfig, absoluteToTsconfig);
     const exportersBySymbol = new Map<string, Map<string, Set<string>>>();
     for (const use of usesWithSymbols) {
-      if (!exportersBySymbol.has(use.exporterPath)) {
-        exportersBySymbol.set(use.exporterPath, new Map());
+      let symbolMap = exportersBySymbol.get(use.exporterPath);
+      if (!symbolMap) {
+        symbolMap = new Map();
+        exportersBySymbol.set(use.exporterPath, symbolMap);
       }
-      const symbolMap = exportersBySymbol.get(use.exporterPath)!;
-      if (!symbolMap.has(use.symbolName)) {
-        symbolMap.set(use.symbolName, new Set());
+      let importers = symbolMap.get(use.symbolName);
+      if (!importers) {
+        importers = new Set();
+        symbolMap.set(use.symbolName, importers);
       }
-      symbolMap.get(use.symbolName)!.add(use.importerPath);
+      importers.add(use.importerPath);
     }
     displaySymbolsByExporter(exportersBySymbol);
   } else {
     const uses = db.getProjectUses(absoluteFromTsconfig, absoluteToTsconfig);
     const importersByExporter = new Map<string, Set<string>>();
     for (const use of uses) {
-      if (!importersByExporter.has(use.exporterPath)) {
-        importersByExporter.set(use.exporterPath, new Set());
+      let importers = importersByExporter.get(use.exporterPath);
+      if (!importers) {
+        importers = new Set();
+        importersByExporter.set(use.exporterPath, importers);
       }
-      importersByExporter.get(use.exporterPath)!.add(use.importerPath);
+      importers.add(use.importerPath);
     }
     displayFilesByExporter(importersByExporter);
   }

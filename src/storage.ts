@@ -113,7 +113,7 @@ export class Storage {
 
   getImportersOfExport(exporterPath: string, exportedName: string): string[] {
     const importers = this.objStore.getGroup('export|' + exporterPath + '|' + exportedName);
-    return importers.map(obj => obj.id.slice('export|'.length).split('|')[0]!);
+    return importers.map(obj => obj.id.slice('export|'.length).split('|').at(0)).filter((p): p is string => p !== undefined);
   }
 
   getImportersOfExportPath(exporterPath: string): Set<string> {

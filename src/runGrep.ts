@@ -43,18 +43,22 @@ function buildExporterIndexes(
     if (!exporterPath || !isWithinDirectory(exporterPath, absoluteDirectory)) {
       continue;
     }
-    if (!exportersByPath.has(exporterPath)) {
-      exportersByPath.set(exporterPath, new Set());
+    let exporters = exportersByPath.get(exporterPath);
+    if (!exporters) {
+      exporters = new Set();
+      exportersByPath.set(exporterPath, exporters);
     }
-    exportersByPath.get(exporterPath)!.add(symbolName);
+    exporters.add(symbolName);
 
     if (options.uses) {
       const importerPath = extractImporterPath(obj.id);
       if (importerPath) {
-        if (!importersByExporter.has(exporterPath)) {
-          importersByExporter.set(exporterPath, new Set());
+        let importers = importersByExporter.get(exporterPath);
+        if (!importers) {
+          importers = new Set();
+          importersByExporter.set(exporterPath, importers);
         }
-        importersByExporter.get(exporterPath)!.add(importerPath);
+        importers.add(importerPath);
       }
     }
   }

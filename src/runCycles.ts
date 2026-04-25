@@ -121,10 +121,12 @@ function buildModuleGraph(db: any, filePaths: Set<string>): Map<string, Set<stri
     for (const importObj of imports) {
       const exporterPath = getExporterPathIfInScope(importObj, filePaths);
       if (exporterPath) {
-        if (!graph.has(filePath)) {
-          graph.set(filePath, new Set());
+        let deps = graph.get(filePath);
+        if (!deps) {
+          deps = new Set();
+          graph.set(filePath, deps);
         }
-        graph.get(filePath)!.add(exporterPath);
+        deps.add(exporterPath);
       }
     }
   }
@@ -146,7 +148,10 @@ function reportModuleCycles(cycles: string[][]) {
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     console.log(`Cycle ${i + 1}:`);
     for (const module of cycle) {
       console.log(`  ${denormalizePath(module, cwd)}`);
@@ -300,8 +305,11 @@ function drawCycleArrows(
       if (!cycle.includes(target)) {
         continue;
       }
-      const sourcePos = nodePositions.get(source)!;
-      const targetPos = nodePositions.get(target)!;
+      const sourcePos = nodePositions.get(source);
+      const targetPos = nodePositions.get(target);
+      if (sourcePos === undefined || targetPos === undefined) {
+        continue;
+      }
       drawFn(grid, sourcePos, targetPos);
     }
   }
@@ -325,38 +333,59 @@ function renderCycleAsAscii(cycle: string[], graph: Map<string, Set<string>>, cw
   for (let row = 0; row < gridHeight; row++) {
     grid[row] = Array.from({ length: gridWidth }, () => ' ');
   }
-  
+
   // Place nodes at diagonal positions
   const nodePositions = new Map<string, [number, number]>();
-  for (let i = 0; i < cycle.length; i++) {
+  for (const [i, cycleNode] of cycle.entries()) {
     const col = i * 3;
     const row = i * 2;
-    grid[row]![col] = 'o';
-    nodePositions.set(cycle[i]!, [row, col]);
+    const rowCells = grid.at(row);
+    if (rowCells === undefined) {
+      throw new Error('Grid row out of bounds');
+    }
+    rowCells[col] = 'o';
+    nodePositions.set(cycleNode, [row, col]);
   }
-  
+
   // Draw arrows based on actual dependencies in the graph
   drawCycleArrows(cycle, graph, nodePositions, grid, drawArrow);
-  
+
   // Convert grid to strings and add path labels
+  return gridToLines(grid, gridHeight, cycle, cwd);
+}
+
+function gridToLines(
+  grid: string[][],
+  gridHeight: number,
+  cycle: string[],
+  cwd: string
+): string[] {
   const lines: string[] = [];
   const terminalWidth = process.stdout.columns || Infinity;
-  
+
   for (let row = 0; row < gridHeight; row++) {
-    let line = grid[row]!.join('');
-    
+    const gridRow = grid.at(row);
+    if (gridRow === undefined) {
+      continue;
+    }
+    let line = gridRow.join('');
+
     // Add path label for nodes
     const nodeIndex = Math.floor(row / 2);
     if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const path = denormalizePath(cycle[nodeIndex]!, cwd);
+      const cycleNode = cycle.at(nodeIndex);
+      if (cycleNode === undefined) {
+        continue;
+      }
+      const path = denormalizePath(cycleNode, cwd);
       const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
       const truncatedPath = truncatePathForTerminal(path, availableWidth);
       line += '  ' + truncatedPath;
     }
-    
+
     lines.push(line.trimEnd()); // Remove trailing spaces
   }
-  
+
   return lines;
 }
 
@@ -378,41 +407,62 @@ function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cw
   for (let row = 0; row < gridHeight; row++) {
     grid[row] = Array.from({ length: gridWidth }, () => ' ');
   }
-  
+
   // Place nodes at diagonal positions
   const nodePositions = new Map<string, [number, number]>();
-  for (let i = 0; i < cycle.length; i++) {
+  for (const [i, cycleNode] of cycle.entries()) {
     const col = i * 3;
     const row = i * 2;
-    grid[row]![col] = UNICODE_CHARS.node;
-    nodePositions.set(cycle[i]!, [row, col]);
+    const rowCells = grid.at(row);
+    if (rowCells === undefined) {
+      throw new Error('Grid row out of bounds');
+    }
+    rowCells[col] = UNICODE_CHARS.node;
+    nodePositions.set(cycleNode, [row, col]);
   }
-  
+
   // Draw arrows based on actual dependencies in the graph
   drawCycleArrows(cycle, graph, nodePositions, grid, drawFancyArrow);
-  
+
   // Convert grid to strings and add colored path labels
+  return fancyGridToLines(grid, gridHeight, cycle, cwd);
+}
+
+function fancyGridToLines(
+  grid: string[][],
+  gridHeight: number,
+  cycle: string[],
+  cwd: string
+): string[] {
   const lines: string[] = [];
   const terminalWidth = process.stdout.columns || Infinity;
-  
+
   for (let row = 0; row < gridHeight; row++) {
-    let line = grid[row]!.join('');
-    
+    const gridRow = grid.at(row);
+    if (gridRow === undefined) {
+      continue;
+    }
+    let line = gridRow.join('');
+
     // Add path label for nodes
     const nodeIndex = Math.floor(row / 2);
     if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const path = denormalizePath(cycle[nodeIndex]!, cwd);
+      const cycleNode = cycle.at(nodeIndex);
+      if (cycleNode === undefined) {
+        continue;
+      }
+      const path = denormalizePath(cycleNode, cwd);
       const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
       const truncatedPath = truncatePathForTerminal(path, availableWidth);
       const colorizedPath = colorizeFilePath(truncatedPath);
       line += '  ' + colorizedPath;
     }
-    
+
     // Apply colors to the ASCII art part
     line = colorizeAsciiArt(line);
     lines.push(line.trimEnd()); // Remove trailing spaces
   }
-  
+
   return lines;
 }
 
@@ -472,22 +522,26 @@ function drawFancyArrow(grid: string[][], sourcePos: [number, number], targetPos
  * Set a Unicode character on the grid, handling crossing rules.
  */
 function setFancyGridChar(grid: string[][], row: number, col: number, char: string) {
-  const current = grid[row]![col];
-  
+  const gridRow = grid.at(row);
+  if (gridRow === undefined) {
+    return;
+  }
+  const current = gridRow[col];
+
   // Cannot overwrite these characters
-  if (current === UNICODE_CHARS.node || current === UNICODE_CHARS.arrowLeft || 
-      current === UNICODE_CHARS.arrowRight || current === UNICODE_CHARS.cornerTopLeft || 
-      current === UNICODE_CHARS.cornerTopRight || current === UNICODE_CHARS.cornerBottomLeft || 
+  if (current === UNICODE_CHARS.node || current === UNICODE_CHARS.arrowLeft ||
+      current === UNICODE_CHARS.arrowRight || current === UNICODE_CHARS.cornerTopLeft ||
+      current === UNICODE_CHARS.cornerTopRight || current === UNICODE_CHARS.cornerBottomLeft ||
       current === UNICODE_CHARS.cornerBottomRight) {
     return;
   }
   
   // Handle crossing rules
-  if ((current === UNICODE_CHARS.vertical && char === UNICODE_CHARS.horizontal) || 
+  if ((current === UNICODE_CHARS.vertical && char === UNICODE_CHARS.horizontal) ||
       (current === UNICODE_CHARS.horizontal && char === UNICODE_CHARS.vertical)) {
-    grid[row]![col] = UNICODE_CHARS.cross;
+    gridRow[col] = UNICODE_CHARS.cross;
   } else {
-    grid[row]![col] = char;
+    gridRow[col] = char;
   }
 }
 
@@ -609,18 +663,22 @@ function drawArrow(grid: string[][], sourcePos: [number, number], targetPos: [nu
  * Set a character on the grid, handling crossing rules.
  */
 function setGridChar(grid: string[][], row: number, col: number, char: string) {
-  const current = grid[row]![col];
-  
+  const gridRow = grid.at(row);
+  if (gridRow === undefined) {
+    return;
+  }
+  const current = gridRow[col];
+
   // Cannot overwrite these characters
   if (current === 'o' || current === '<' || current === '>' || current === '`' || current === '.') {
     return;
   }
-  
+
   // Handle crossing rules
   if ((current === '|' && char === '-') || (current === '-' && char === '|')) {
-    grid[row]![col] = '+';
+    gridRow[col] = '+';
   } else {
-    grid[row]![col] = char;
+    gridRow[col] = char;
   }
 }
 
@@ -638,13 +696,16 @@ function reportModuleCyclesAscii(cycles: string[][], graph: Map<string, Set<stri
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
-    
+
     for (const line of asciiLines) {
       console.log(line);
     }
-    
+
     // Add empty line between cycles (except after the last one)
     if (i < cycles.length - 1) {
       console.log();
@@ -675,13 +736,16 @@ function reportModuleCyclesFancy(cycles: string[][], graph: Map<string, Set<stri
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
-    
+
     for (const line of fancyLines) {
       console.log(line);
     }
-    
+
     // Add empty line between cycles (except after the last one)
     if (i < cycles.length - 1) {
       console.log();
@@ -703,13 +767,16 @@ function reportDirectoryCyclesAscii(cycles: string[][], graph: Map<string, Set<s
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
-    
+
     for (const line of asciiLines) {
       console.log(line);
     }
-    
+
     // Add empty line between cycles (except after the last one)
     if (i < cycles.length - 1) {
       console.log();
@@ -740,13 +807,16 @@ function reportDirectoryCyclesFancy(cycles: string[][], graph: Map<string, Set<s
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
-    
+
     for (const line of fancyLines) {
       console.log(line);
     }
-    
+
     // Add empty line between cycles (except after the last one)
     if (i < cycles.length - 1) {
       console.log();
@@ -799,10 +869,12 @@ function buildDirectoryGraph(db: any, filePaths: Set<string>): Map<string, Set<s
       if (importerDir === exporterDir) {
         continue;
       }
-      if (!dirGraph.has(importerDir)) {
-        dirGraph.set(importerDir, new Set());
+      let deps = dirGraph.get(importerDir);
+      if (!deps) {
+        deps = new Set();
+        dirGraph.set(importerDir, deps);
       }
-      dirGraph.get(importerDir)!.add(exporterDir);
+      deps.add(exporterDir);
     }
   }
   
@@ -823,7 +895,10 @@ function reportDirectoryCycles(cycles: string[][]) {
 
   const cwd = process.cwd();
   for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles[i]!;
+    const cycle = cycles.at(i);
+    if (cycle === undefined) {
+      continue;
+    }
     console.log(`Cycle ${i + 1}:`);
     for (const dir of cycle) {
       console.log(`  ${denormalizePath(dir, cwd)}`);
@@ -852,24 +927,53 @@ function findStronglyConnectedComponents<T>(graph: Map<T, Set<T>>): T[][] {
 
     const neighbors = graph.get(v) || new Set();
     for (const w of neighbors) {
-      if (!index.has(w)) {
-        strongConnect(w);
-        lowlink.set(v, Math.min(lowlink.get(v)!, lowlink.get(w)!));
-      } else if (onStack.has(w)) {
-        lowlink.set(v, Math.min(lowlink.get(v)!, index.get(w)!));
-      }
+      updateLowlink(v, w);
     }
 
-    if (lowlink.get(v) === index.get(v)) {
-      const component: T[] = [];
-      let w: T;
-      do {
-        w = stack.pop()!;
-        onStack.delete(w);
-        component.push(w);
-      } while (w !== v);
-      components.push(component);
+    if (isRootOfComponent(v)) {
+      popComponent(v);
     }
+  }
+
+  function updateLowlink(v: T, w: T): void {
+    if (!index.has(w)) {
+      strongConnect(w);
+      updateLowlinkFromChild(v, w);
+    } else if (onStack.has(w)) {
+      updateLowlinkFromStack(v, w);
+    }
+  }
+
+  function updateLowlinkFromChild(v: T, w: T): void {
+    const lowlinkV = lowlink.get(v);
+    const lowlinkW = lowlink.get(w);
+    if (lowlinkV !== undefined && lowlinkW !== undefined) {
+      lowlink.set(v, Math.min(lowlinkV, lowlinkW));
+    }
+  }
+
+  function updateLowlinkFromStack(v: T, w: T): void {
+    const lowlinkV = lowlink.get(v);
+    const indexW = index.get(w);
+    if (lowlinkV !== undefined && indexW !== undefined) {
+      lowlink.set(v, Math.min(lowlinkV, indexW));
+    }
+  }
+
+  function isRootOfComponent(v: T): boolean {
+    const lowlinkV = lowlink.get(v);
+    const indexV = index.get(v);
+    return lowlinkV !== undefined && indexV !== undefined && lowlinkV === indexV;
+  }
+
+  function popComponent(v: T): void {
+    const component: T[] = [];
+    do {
+      const w = stack.pop() as T;
+      onStack.delete(w);
+      component.push(w);
+    } while (component[component.length - 1] !== v);
+    components.push(component);
   }
 
   for (const v of graph.keys()) {

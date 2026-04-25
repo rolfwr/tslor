@@ -104,7 +104,10 @@ import { A, C } from './mod';
   assert.isTrue(changed);
   assert.equal(result.match(/from '\.\/mod'/g)?.length, 1);
   // A should appear only once in the import
-  const importLine = result.split('\n').find(l => l.includes("from './mod'"))!;
+  const importLine = result.split('\n').find(l => l.includes("from './mod'"));
+  if (importLine === undefined) {
+    throw new Error('Expected to find import line');
+  }
   assert.equal(importLine.match(/\bA\b/g)?.length, 1);
   assert.include(importLine, 'B');
   assert.include(importLine, 'C');

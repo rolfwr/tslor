@@ -103,9 +103,16 @@ function findAllReExports(db: Storage): ReExportItem[] {
     // Extract symbol name from groups
     const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
     if (symbolNameGroup) {
-      const symbolName = symbolNameGroup.split('|')[1]!;
+      const [_prefix, symbolName] = symbolNameGroup.split('|');
+      if (symbolName === undefined) {
+        continue;
+      }
+      const [reExporterPath] = reExportObj.id.split('|').slice(1);
+      if (reExporterPath === undefined) {
+        continue;
+      }
       reExports.push({
-        reExporterPath: reExportObj.id.split('|')[1]!,
+        reExporterPath,
         symbolName,
         originalModuleSpec: reExportObj.reExport.moduleSpec,
         isTypeOnly: reExportObj.reExport.isTypeOnly
@@ -180,10 +187,12 @@ async function filterPublicExports(
 ): Promise<ReExportItem[]> {
   const byFile = new Map<string, ReExportItem[]>();
   for (const reExport of allReExports) {
-    if (!byFile.has(reExport.reExporterPath)) {
-      byFile.set(reExport.reExporterPath, []);
+    let group = byFile.get(reExport.reExporterPath);
+    if (!group) {
+      group = [];
+      byFile.set(reExport.reExporterPath, group);
     }
-    byFile.get(reExport.reExporterPath)!.push(reExport);
+    group.push(reExport);
   }
 
   const kept: ReExportItem[] = [];
@@ -263,10 +272,12 @@ async function createPurgeReexportPlan(
   // Group changes by file
   const changesByFile = new Map<string, typeof unusedReExports>();
   for (const reExport of unusedReExports) {
-    if (!changesByFile.has(reExport.reExporterPath)) {
-      changesByFile.set(reExport.reExporterPath, []);
+    let group = changesByFile.get(reExport.reExporterPath);
+    if (!group) {
+      group = [];
+      changesByFile.set(reExport.reExporterPath, group);
     }
-    changesByFile.get(reExport.reExporterPath)!.push(reExport);
+    group.push(reExport);
   }
 
   // Process each file
@@ -350,10 +361,12 @@ export function applyReexportRemovalsToFile(
     // Group re-exports by module spec for efficiency
     const reExportsBySpec = new Map<string, typeof reExportsToRemove>();
     for (const reExport of reExportsToRemove) {
-      if (!reExportsBySpec.has(reExport.originalModuleSpec)) {
-        reExportsBySpec.set(reExport.originalModuleSpec, []);
+      let group = reExportsBySpec.get(reExport.originalModuleSpec);
+      if (!group) {
+        group = [];
+        reExportsBySpec.set(reExport.originalModuleSpec, group);
       }
-      reExportsBySpec.get(reExport.originalModuleSpec)!.push(reExport);
+      group.push(reExport);
     }
 
     // Find and update export declarations

@@ -310,21 +310,29 @@ function processData(data: unknown): unknown {
   const sortedNew = [...newImportUsages].sort((a, b) => a.symbol.localeCompare(b.symbol));
   
   for (let i = 0; i < sortedOld.length; i++) {
-    const oldUsage = sortedOld[i]!;
-    const newUsage = sortedNew[i]!;
-    
+    const oldUsage = sortedOld.at(i);
+    const newUsage = sortedNew.at(i);
+    if (oldUsage === undefined || newUsage === undefined) {
+      continue;
+    }
+
     assert.equal(oldUsage.symbol, newUsage.symbol, `Symbol names should match at index ${i}`);
-    assert.equal(oldUsage.usesImports.length, newUsage.usesImports.length, 
+    assert.equal(oldUsage.usesImports.length, newUsage.usesImports.length,
       `Import count should match for symbol ${oldUsage.symbol}`);
-    
+
     // Sort imports within each symbol for comparison
     const sortedOldImports = [...oldUsage.usesImports].sort((a, b) => `${a.moduleSpec}:${a.importedName}`.localeCompare(`${b.moduleSpec}:${b.importedName}`));
     const sortedNewImports = [...newUsage.usesImports].sort((a, b) => `${a.moduleSpec}:${a.importedName}`.localeCompare(`${b.moduleSpec}:${b.importedName}`));
-    
+
     for (let j = 0; j < sortedOldImports.length; j++) {
-      assert.equal(sortedOldImports[j]!.moduleSpec, sortedNewImports[j]!.moduleSpec, 
+      const oldImport = sortedOldImports.at(j);
+      const newImport = sortedNewImports.at(j);
+      if (oldImport === undefined || newImport === undefined) {
+        continue;
+      }
+      assert.equal(oldImport.moduleSpec, newImport.moduleSpec,
         `Module spec should match for ${oldUsage.symbol} import ${j}`);
-      assert.equal(sortedOldImports[j]!.importedName, sortedNewImports[j]!.importedName, 
+      assert.equal(oldImport.importedName, newImport.importedName,
         `Import name should match for ${oldUsage.symbol} import ${j}`);
     }
   }
@@ -371,10 +379,13 @@ export function simpleFormat(date: Date): string {
   // Verify processFile has correct import dependencies
   const processFileUsage = newImportUsages.find(u => u.symbol === 'processFile');
   assert.isDefined(processFileUsage, 'processFile should be analyzed');
-  
+  if (processFileUsage === undefined) {
+    throw new Error('Expected processFileUsage');
+  }
+
   // Should detect usage of multiple imports from different modules
   const expectedModules = new Set(['date-fns', 'fs', 'path', './utils']);
-  const usedModules = new Set(processFileUsage!.usesImports.map(imp => imp.moduleSpec));
+  const usedModules = new Set(processFileUsage.usesImports.map(imp => imp.moduleSpec));
   assert.deepEqual(usedModules, expectedModules, 'Should detect imports from all used modules');
   
   // Test that we can successfully analyze symbols that use multiple imports
@@ -440,7 +451,11 @@ const CONSTANT_VALUE = 42;
   assert.isDefined(formatDate.jsDocs);
   assertDefined(formatDate.jsDocs, 'formatDate should have JSDoc');
   assert.isTrue(formatDate.jsDocs.length > 0);
-  assert.include(formatDate.jsDocs[0]!.getInnerText(), 'Formats a date to ISO string');
+  const firstDoc = formatDate.jsDocs.at(0);
+  if (firstDoc === undefined) {
+    throw new Error('Expected first JSDoc comment');
+  }
+  assert.include(firstDoc.getInnerText(), 'Formats a date to ISO string');
   
   // Verify we have the actual AST node, not just text
   assert.isDefined(formatDate.node);
@@ -504,8 +519,12 @@ function processData(data: unknown): unknown {
   assert.isDefined(formatDateUsage);
   assertDefined(formatDateUsage, 'formatDate usage should be found');
   assert.equal(formatDateUsage.usesImports.length, 1);
-  assert.equal(formatDateUsage.usesImports[0]!.moduleSpec, 'date-fns');
-  assert.equal(formatDateUsage.usesImports[0]!.importedName, 'format');
+  const firstImport = formatDateUsage.usesImports.at(0);
+  if (firstImport === undefined) {
+    throw new Error('Expected first import');
+  }
+  assert.equal(firstImport.moduleSpec, 'date-fns');
+  assert.equal(firstImport.importedName, 'format');
   
   // validateEmail should use both 'validator' and 'helper' from './utils'
   const validateEmailUsage = importUsages.find(u => u.symbol === 'validateEmail');

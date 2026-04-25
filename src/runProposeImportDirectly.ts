@@ -79,9 +79,16 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
     // Extract symbol name from groups
     const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
     if (symbolNameGroup) {
-      const symbolName = symbolNameGroup.split('|')[1]!;
+      const [_prefix, symbolName] = symbolNameGroup.split('|');
+      if (symbolName === undefined) {
+        continue;
+      }
+      const [reExporterPath] = reExportObj.id.split('|').slice(1);
+      if (reExporterPath === undefined) {
+        continue;
+      }
       reExports.push({
-        reExporterPath: reExportObj.id.split('|')[1]!,
+        reExporterPath,
         symbolName,
         originalModuleSpec: reExportObj.reExport.moduleSpec,
         isTypeOnly: reExportObj.reExport.isTypeOnly
@@ -123,10 +130,12 @@ async function getLiteralModuleSpec(
   repoRoot: string,
   fileSystem: FileSystem
 ): Promise<string | undefined> {
-  if (!cache.has(importerPath)) {
-    cache.set(importerPath, await buildLiteralSpecMap(importerPath, repoRoot, fileSystem));
+  let specMap = cache.get(importerPath);
+  if (specMap === undefined) {
+    specMap = await buildLiteralSpecMap(importerPath, repoRoot, fileSystem);
+    cache.set(importerPath, specMap);
   }
-  return cache.get(importerPath)!.get(exporterPath);
+  return specMap.get(exporterPath);
 }
 
 async function resolveNewModuleSpec(
@@ -204,29 +213,54 @@ async function findImportChangesForReExports(
   const literalSpecCache = new Map<string, Map<string, string>>();
 
   for (const importObj of allImports) {
-    const parts = importObj.id.split('|');
-    const importerPath = parts[1]!;
-    const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
-    if (!exportGroup) {
+    const parsed = parseImportObj(importObj, reExportMap);
+    if (parsed === null) {
       continue;
     }
-    const exportParts = exportGroup.split('|');
-    if (exportParts.length < 3) {
-      continue;
-    }
-    const exporterPath = exportParts[1]!;
-    const symbolName = exportParts[2]!;
-    const reExportInfo = reExportMap.get(`${exporterPath}:${symbolName}`);
-    if (!reExportInfo) {
-      continue;
-    }
-    const change = await buildImportChange(importerPath, exporterPath, symbolName, reExportInfo, literalSpecCache, repoRoot, fileSystem);
+    const change = await buildImportChange(
+      parsed.importerPath, parsed.exporterPath, parsed.symbolName,
+      parsed.reExportInfo, literalSpecCache, repoRoot, fileSystem
+    );
     if (change) {
       changes.push(change);
     }
   }
 
   return changes;
+}
+
+function parseImportObj(
+  importObj: Obj,
+  reExportMap: Map<string, { originalModuleSpec: string; isTypeOnly: boolean }>
+): {
+  importerPath: string;
+  exporterPath: string;
+  symbolName: string;
+  reExportInfo: { originalModuleSpec: string; isTypeOnly: boolean };
+} | null {
+  const parts = importObj.id.split('|');
+  const importerPath = parts.at(1);
+  if (importerPath === undefined) {
+    return null;
+  }
+  const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
+  if (!exportGroup) {
+    return null;
+  }
+  const exportParts = exportGroup.split('|');
+  if (exportParts.length < 3) {
+    return null;
+  }
+  const exporterPath = exportParts.at(1);
+  const symbolName = exportParts.at(2);
+  if (exporterPath === undefined || symbolName === undefined) {
+    return null;
+  }
+  const reExportInfo = reExportMap.get(`${exporterPath}:${symbolName}`);
+  if (!reExportInfo) {
+    return null;
+  }
+  return { importerPath, exporterPath, symbolName, reExportInfo };
 }
 
 
@@ -247,10 +281,12 @@ async function createImportDirectlyPlan(
   // Group changes by file
   const changesByFile = new Map<string, typeof importChanges>();
   for (const change of importChanges) {
-    if (!changesByFile.has(change.importerPath)) {
-      changesByFile.set(change.importerPath, []);
+    let group = changesByFile.get(change.importerPath);
+    if (!group) {
+      group = [];
+      changesByFile.set(change.importerPath, group);
     }
-    changesByFile.get(change.importerPath)!.push(change);
+    group.push(change);
   }
 
   // Process each file
@@ -344,10 +380,12 @@ function splitImportDeclaration(
     if (!importedSymbolNames.has(change.symbolName)) {
       continue;
     }
-    if (!byNewSpec.has(change.newModuleSpec)) {
-      byNewSpec.set(change.newModuleSpec, []);
+    let group = byNewSpec.get(change.newModuleSpec);
+    if (!group) {
+      group = [];
+      byNewSpec.set(change.newModuleSpec, group);
     }
-    byNewSpec.get(change.newModuleSpec)!.push(change);
+    group.push(change);
   }
 
   for (const namedImport of namedImports) {
@@ -385,7 +423,11 @@ function processImportDecl(
     const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every(s => changedSymbols.has(s));
 
     if (allSymbolsCanBeChanged) {
-      importDecl.setModuleSpecifier(specChanges[0]!.newModuleSpec);
+      const firstChange = specChanges.at(0);
+      if (firstChange === undefined) {
+        return;
+      }
+      importDecl.setModuleSpecifier(firstChange.newModuleSpec);
     } else {
       splitImportDeclaration(sourceFile, importDecl, namedImports, specChanges, importedSymbolNames, changedSymbols);
     }
@@ -407,10 +449,12 @@ export function applyImportChangesToFile(
   try {
     const changesBySpec = new Map<string, ImportChange[]>();
     for (const change of changes) {
-      if (!changesBySpec.has(change.currentModuleSpec)) {
-        changesBySpec.set(change.currentModuleSpec, []);
+      let group = changesBySpec.get(change.currentModuleSpec);
+      if (!group) {
+        group = [];
+        changesBySpec.set(change.currentModuleSpec, group);
       }
-      changesBySpec.get(change.currentModuleSpec)!.push(change);
+      group.push(change);
     }
     for (const importDecl of sourceFile.getImportDeclarations()) {
       processImportDecl(importDecl, changesBySpec, sourceFile, filePath);

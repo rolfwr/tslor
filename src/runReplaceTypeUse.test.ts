@@ -6,24 +6,31 @@ function replace(body: string): string | null {
   return replaceTypeInFile('/test.ts', content, 'Item', 'NewItem', './source', './target');
 }
 
+function must<T>(value: T | null | undefined, msg?: string): T {
+  if (value === null || value === undefined) {
+    throw new Error(msg ?? 'Expected value');
+  }
+  return value;
+}
+
 test('type reference on export line should be replaced', () => {
   const result = replace('export const x: Item = {};');
   assert.isNotNull(result);
-  assert.include(result!, 'export const x: NewItem = {};');
+  assert.include(must(result), 'export const x: NewItem = {};');
 });
 
 test('type name inside string literal should not be replaced', () => {
   const result = replace('const x: Item = {};\nlogger.info("Item not found");');
   assert.isNotNull(result);
-  assert.include(result!, 'const x: NewItem = {};');
-  assert.include(result!, '"Item not found"');
+  assert.include(must(result), 'const x: NewItem = {};');
+  assert.include(must(result), '"Item not found"');
 });
 
 test('type name inside comment should not be replaced', () => {
   const result = replace('const x: Item = {};\n// Before a Item is processed');
   assert.isNotNull(result);
-  assert.include(result!, 'const x: NewItem = {};');
-  assert.include(result!, '// Before a Item is processed');
+  assert.include(must(result), 'const x: NewItem = {};');
+  assert.include(must(result), '// Before a Item is processed');
 });
 
 test('sole import preserves deeper relative path when target module equals source module', () => {
@@ -34,8 +41,8 @@ test('sole import preserves deeper relative path when target module equals sourc
     './entity/item', './entity/item'
   );
   assert.isNotNull(result);
-  assert.include(result!, "from '../entity/item'");
-  assert.notInclude(result!, "from './entity/item'");
+  assert.include(must(result), "from '../entity/item'");
+  assert.notInclude(must(result), "from './entity/item'");
 });
 
 test('shared import preserves deeper relative path on both lines', () => {
@@ -46,9 +53,9 @@ test('shared import preserves deeper relative path on both lines', () => {
     './entity/item', './entity/item'
   );
   assert.isNotNull(result);
-  assert.include(result!, "{ PendingArchiveRequest } from '../../entity/item'");
-  assert.include(result!, "{ ItemEntity } from '../../entity/item'");
-  assert.notInclude(result!, "from './entity/item'");
+  assert.include(must(result), "{ PendingArchiveRequest } from '../../entity/item'");
+  assert.include(must(result), "{ ItemEntity } from '../../entity/item'");
+  assert.notInclude(must(result), "from './entity/item'");
 });
 
 test('different target module computes correct relative path', () => {
@@ -59,7 +66,7 @@ test('different target module computes correct relative path', () => {
     './entity/item', './entity/newItem'
   );
   assert.isNotNull(result);
-  assert.include(result!, "from '../entity/newItem'");
+  assert.include(must(result), "from '../entity/newItem'");
 });
 
 test('relative import matches when source-module is a package specifier (same target module)', () => {
@@ -74,10 +81,10 @@ test('relative import matches when source-module is a package specifier (same ta
     '/repo/packages/server-common/src/entity/item.ts'
   );
   assert.isNotNull(result);
-  assert.include(result!, 'ItemEntity');
+  assert.include(must(result), 'ItemEntity');
   // Relative path must be preserved, not replaced with the package specifier
-  assert.include(result!, "from './item'");
-  assert.notInclude(result!, '@pkg');
+  assert.include(must(result), "from './item'");
+  assert.notInclude(must(result), '@pkg');
 });
 
 test('relative import matches when source and target are different package modules', () => {
@@ -89,9 +96,9 @@ test('relative import matches when source and target are different package modul
     '/repo/packages/server-common/src/entity/item.ts'
   );
   assert.isNotNull(result);
-  assert.include(result!, 'NewItem');
+  assert.include(must(result), 'NewItem');
   // When target is a different package module, use the package specifier
-  assert.include(result!, "from '@pkg/entity/newItem'");
+  assert.include(must(result), "from '@pkg/entity/newItem'");
 });
 
 test('does not match same-named symbol from a different module', () => {
@@ -115,5 +122,5 @@ test('package specifier is preserved as-is', () => {
     '@pkg/entity/item', '@pkg/entity/item'
   );
   assert.isNotNull(result);
-  assert.include(result!, "from '@pkg/entity/item'");
+  assert.include(must(result), "from '@pkg/entity/item'");
 });

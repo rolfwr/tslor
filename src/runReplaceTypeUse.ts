@@ -265,7 +265,10 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
+    const line = lines.at(i);
+    if (line === undefined) {
+      continue;
+    }
     if (line.match(new RegExp(`export\\s+.*\\b${escapeRegex(sourceType)}\\b.*from\\s`))) {
       result.hasReExport = true;
     }
@@ -273,21 +276,29 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
     if (!importMatch) {
       continue;
     }
-    const isTypeOnly = Boolean(importMatch[1]);
-    const namesStr = importMatch[2]!;
-    const moduleSpec = importMatch[3]!;
+    const [, typeOnlyMatch, namesStr, moduleSpec] = importMatch;
+    if (namesStr === undefined || moduleSpec === undefined) {
+      continue;
+    }
+    const isTypeOnly = Boolean(typeOnlyMatch);
     if (!checkModuleSpecMatch(moduleSpec, sourceModule, importerPath, resolvedExporterPath)) {
       continue;
     }
     const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
-    const hasSourceType = names.some(n => n.split(/\s+as\s+/)[0]!.trim() === sourceType);
+    const hasSourceType = names.some(n => {
+      const [original] = n.split(/\s+as\s+/);
+      return original === sourceType;
+    });
     if (hasSourceType) {
       result.hasImport = true;
       result.isTypeOnly = isTypeOnly;
       result.importLine = line;
       result.lineIndex = i;
       result.actualModuleSpec = moduleSpec;
-      result.otherNames = names.filter(n => n.split(/\s+as\s+/)[0]!.trim() !== sourceType);
+      result.otherNames = names.filter(n => {
+        const [original] = n.split(/\s+as\s+/);
+        return original !== sourceType;
+      });
       break;
     }
   }
@@ -326,7 +337,11 @@ function exporterMatchesSourceModule(exporterPath: string, sourceModule: string)
     return true;
   }
   const parts = sourceModule.split('/');
-  const pathPortion = parts[0]!.startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
+  const firstPart = parts.at(0);
+  if (firstPart === undefined) {
+    return false;
+  }
+  const pathPortion = firstPart.startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
   if (!pathPortion) {
     return true;
   }

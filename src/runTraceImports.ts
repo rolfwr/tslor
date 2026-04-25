@@ -29,10 +29,12 @@ function addGroupSymbols(
     if (!symbolName) {
       continue;
     }
-    if (!map.has(exporterPath)) {
-      map.set(exporterPath, new Set());
+    let symbols = map.get(exporterPath);
+    if (!symbols) {
+      symbols = new Set();
+      map.set(exporterPath, symbols);
     }
-    map.get(exporterPath)!.add(symbolName);
+    symbols.add(symbolName);
   }
 }
 

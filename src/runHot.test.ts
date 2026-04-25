@@ -13,6 +13,14 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function mustGet<K extends string, V>(record: Record<K, V>, key: K): V {
+  const v = record[key];
+  if (v === undefined) {
+    throw new Error(`Expected ${key} to exist in record`);
+  }
+  return v;
+}
+
 function makeStorage(edges: Array<{ from: string; to: string }>): Storage {
   const objStore = new ObjStore({ traceId: null });
   const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
@@ -43,16 +51,16 @@ describe('buildHotModuleGraph', () => {
     const hotMods = buildHotModuleGraph(db, filePaths);
 
     // A imports B
-    assert.deepEqual(hotMods['/a.ts']!.imports, ['/b.ts']);
-    assert.deepEqual(hotMods['/a.ts']!.importedBy, []);
+    assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts']);
+    assert.deepEqual(mustGet(hotMods, '/a.ts').importedBy, []);
 
     // B imports C, is imported by A
-    assert.deepEqual(hotMods['/b.ts']!.imports, ['/c.ts']);
-    assert.deepEqual(hotMods['/b.ts']!.importedBy, ['/a.ts']);
+    assert.deepEqual(mustGet(hotMods, '/b.ts').imports, ['/c.ts']);
+    assert.deepEqual(mustGet(hotMods, '/b.ts').importedBy, ['/a.ts']);
 
     // C is imported by B
-    assert.deepEqual(hotMods['/c.ts']!.imports, []);
-    assert.deepEqual(hotMods['/c.ts']!.importedBy, ['/b.ts']);
+    assert.deepEqual(mustGet(hotMods, '/c.ts').imports, []);
+    assert.deepEqual(mustGet(hotMods, '/c.ts').importedBy, ['/b.ts']);
   });
 
   test('ignores imports to files outside the provided filePaths set', () => {
@@ -63,7 +71,7 @@ describe('buildHotModuleGraph', () => {
 
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts']);
 
-    assert.deepEqual(hotMods['/a.ts']!.imports, ['/b.ts']);
+    assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts']);
     assert.isUndefined(hotMods['/external.ts']);
   });
 });
@@ -79,12 +87,11 @@ describe('calculateAllScores', () => {
       { from: '/b.ts', to: '/c.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts', '/c.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
     for (const path of ['/a.ts', '/b.ts', '/c.ts']) {
-      const m = hotMods[path]!;
-      assert.isNotNull(m.badness, `${path} should have a badness score`);
-      assert.isFinite(m.badness!);
+      const m = mustGet(scored, path);
+      assert.isFinite(m.badness);
     }
   });
 
@@ -95,10 +102,10 @@ describe('calculateAllScores', () => {
       { from: '/b.ts', to: '/c.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts', '/c.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    assert.isAbove(hotMods['/b.ts']!.badness!, hotMods['/a.ts']!.badness!);
-    assert.isAbove(hotMods['/b.ts']!.badness!, hotMods['/c.ts']!.badness!);
+    assert.isAbove(mustGet(scored, '/b.ts').badness, mustGet(scored, '/a.ts').badness);
+    assert.isAbove(mustGet(scored, '/b.ts').badness, mustGet(scored, '/c.ts').badness);
   });
 });
 
@@ -107,28 +114,30 @@ describe('calculateAllScores', () => {
 // ---------------------------------------------------------------------------
 
 describe('selectHotModule', () => {
-  test('returns null (not throws) when hotArray is empty', () => {
-    const result = selectHotModule({}, [], { select: null });
-    assert.isNull(result);
+  test('throws when hotArray is empty', () => {
+    assert.throws(
+      () => selectHotModule({}, [], { select: null }),
+      /No modules in hot array/
+    );
   });
 
   test('returns the first element of hotArray when no select option', () => {
     const db = makeStorage([{ from: '/a.ts', to: '/b.ts' }]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
-    const hotArray = Object.values(hotMods).sort((a, b) => b.badness! - a.badness!);
+    const scored = calculateAllScores(hotMods);
+    const hotArray = Object.values(scored).sort((a, b) => b.badness - a.badness);
 
-    const result = selectHotModule(hotMods, hotArray, { select: null });
-    assert.strictEqual(result, hotArray[0]);
+    const result = selectHotModule(scored, hotArray, { select: null });
+    assert.strictEqual(result, hotArray.at(0));
   });
 
   test('returns the named module when options.select is set', () => {
     const db = makeStorage([{ from: '/a.ts', to: '/b.ts' }]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const result = selectHotModule(hotMods, [], { select: '/b.ts' });
-    assert.strictEqual(result!.path, '/b.ts');
+    const result = selectHotModule(scored, [], { select: '/b.ts' });
+    assert.strictEqual(result.path, '/b.ts');
   });
 
   test('throws when options.select names a module not in the graph', () => {
@@ -152,10 +161,10 @@ describe('buildImportedByChain', () => {
       { from: '/a.ts', to: '/b.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/x.ts', '/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const selected = hotMods['/a.ts']!;
-    const chain = buildImportedByChain(hotMods, selected);
+    const selected = mustGet(scored, '/a.ts');
+    const chain = buildImportedByChain(scored, selected);
 
     assert.deepEqual(
       chain.map((m) => m.path),
@@ -171,10 +180,10 @@ describe('buildImportedByChain', () => {
       { from: '/b.ts', to: '/a.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const selected = hotMods['/a.ts']!;
-    const chain = buildImportedByChain(hotMods, selected);
+    const selected = mustGet(scored, '/a.ts');
+    const chain = buildImportedByChain(scored, selected);
 
     assert.notInclude(
       chain.map((m) => m.path),
@@ -192,10 +201,10 @@ describe('buildImportChain', () => {
       { from: '/a.ts', to: '/b.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/x.ts', '/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const selected = hotMods['/a.ts']!;
-    const chain = buildImportChain(hotMods, selected);
+    const selected = mustGet(scored, '/a.ts');
+    const chain = buildImportChain(scored, selected);
 
     assert.deepEqual(
       chain.map((m) => m.path),
@@ -209,10 +218,10 @@ describe('buildImportChain', () => {
       { from: '/b.ts', to: '/a.ts' },
     ]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts']);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const selected = hotMods['/a.ts']!;
-    const chain = buildImportChain(hotMods, selected);
+    const selected = mustGet(scored, '/a.ts');
+    const chain = buildImportChain(scored, selected);
 
     assert.notInclude(
       chain.map((m) => m.path),
@@ -236,11 +245,11 @@ describe('hotChain composition', () => {
     ]);
     const filePaths = ['/x.ts', '/a.ts', '/b.ts', '/c.ts'];
     const hotMods = buildHotModuleGraph(db, filePaths);
-    calculateAllScores(hotMods);
+    const scored = calculateAllScores(hotMods);
 
-    const selected = hotMods['/a.ts']!;
-    const importedByChain = buildImportedByChain(hotMods, selected);
-    const importChain = buildImportChain(hotMods, selected);
+    const selected = mustGet(scored, '/a.ts');
+    const importedByChain = buildImportedByChain(scored, selected);
+    const importChain = buildImportChain(scored, selected);
     const hotChain = [...importedByChain.reverse(), selected, ...importChain];
 
     const paths = hotChain.map((m) => m.path);

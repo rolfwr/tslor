@@ -33,13 +33,17 @@ export async function runTsort(
   const moduleSet = new Set(absoluteModulePaths);
 
   // Find git repo root and open storage
-  const repoRoot = findGitRepoRoot(absoluteModulePaths[0]!);
+  const tsPath = absoluteModulePaths.at(0);
+  if (tsPath === undefined) {
+    throw new Error('No module paths provided');
+  }
+  const repoRoot = findGitRepoRoot(tsPath);
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
 
   // Get tsconfig path for project scope filtering if needed
   const tsconfigPath = options.projectScope
-    ? await getTsconfigPathForFile(repoRoot, absoluteModulePaths[0]!, fileSystem)
+    ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
     : null;
 
   // Build the dependency graph considering only the input modules
@@ -89,25 +93,57 @@ function buildDependencyGraph(
 
   // Build edges
   for (const modulePath of moduleSet) {
-    const exporters = db.getExporterPathsOfImport(modulePath);
-
-    for (const exporter of exporters) {
-      // Apply project scope filter if specified
-      if (tsconfigPath && tsconfigPath !== exporter.tsconfig) {
-        continue;
-      }
-
-      // Only include edges where both endpoints are in the input set
-      if (moduleSet.has(exporter.path)) {
-        // modulePath imports exporter.path
-        graph.get(modulePath)!.add(exporter.path);
-        // exporter.path is imported by modulePath
-        reverseGraph.get(exporter.path)!.add(modulePath);
-      }
-    }
+    buildEdgesForModule(modulePath, db, moduleSet, tsconfigPath, graph, reverseGraph);
   }
 
   return { graph, reverseGraph };
+}
+
+function buildEdgesForModule(
+  modulePath: string,
+  db: Storage,
+  moduleSet: Set<string>,
+  tsconfigPath: string | null,
+  graph: Map<string, Set<string>>,
+  reverseGraph: Map<string, Set<string>>
+): void {
+  const exporters = db.getExporterPathsOfImport(modulePath);
+
+  for (const exporter of exporters) {
+    if (shouldSkipExporter(exporter, tsconfigPath)) {
+      continue;
+    }
+    addEdgeIfInScope(modulePath, exporter.path, moduleSet, graph, reverseGraph);
+  }
+}
+
+function shouldSkipExporter(
+  exporter: { path: string; tsconfig: string },
+  tsconfigPath: string | null
+): boolean {
+  return tsconfigPath !== null && tsconfigPath !== exporter.tsconfig;
+}
+
+function addEdgeIfInScope(
+  modulePath: string,
+  exporterPath: string,
+  moduleSet: Set<string>,
+  graph: Map<string, Set<string>>,
+  reverseGraph: Map<string, Set<string>>
+): void {
+  if (!moduleSet.has(exporterPath)) {
+    return;
+  }
+  const deps = graph.get(modulePath);
+  if (deps === undefined) {
+    return;
+  }
+  deps.add(exporterPath);
+  const reverseDeps = reverseGraph.get(exporterPath);
+  if (reverseDeps === undefined) {
+    return;
+  }
+  reverseDeps.add(modulePath);
 }
 
 function insertSorted(queue: string[], item: string): void {
@@ -129,39 +165,86 @@ function topologicalSort(
   graph: Map<string, Set<string>>,
   reverseGraph: Map<string, Set<string>>
 ): string[] | null {
-  const inDegree = new Map<string, number>();
-  for (const modulePath of moduleSet) {
-    inDegree.set(modulePath, reverseGraph.get(modulePath)!.size);
-  }
-
-  const queue: string[] = [];
-  for (const modulePath of moduleSet) {
-    if (inDegree.get(modulePath) === 0) {
-      queue.push(modulePath);
-    }
-  }
+  const inDegree = computeInDegree(moduleSet, reverseGraph);
+  const queue = initializeQueue(moduleSet, inDegree);
   queue.sort();
-
-  const result: string[] = [];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    result.push(current);
-
-    for (const dependency of graph.get(current)!) {
-      const newInDegree = inDegree.get(dependency)! - 1;
-      inDegree.set(dependency, newInDegree);
-      if (newInDegree === 0) {
-        insertSorted(queue, dependency);
-      }
-    }
-  }
+  const result = processQueue(queue, graph, inDegree);
 
   if (result.length < moduleSet.size) {
     return null;
   }
 
   return result;
+}
+
+function computeInDegree(
+  moduleSet: Set<string>,
+  reverseGraph: Map<string, Set<string>>
+): Map<string, number> {
+  const inDegree = new Map<string, number>();
+  for (const modulePath of moduleSet) {
+    const rev = reverseGraph.get(modulePath);
+    if (rev === undefined) {
+      continue;
+    }
+    inDegree.set(modulePath, rev.size);
+  }
+  return inDegree;
+}
+
+function initializeQueue(
+  moduleSet: Set<string>,
+  inDegree: Map<string, number>
+): string[] {
+  const queue: string[] = [];
+  for (const modulePath of moduleSet) {
+    if (inDegree.get(modulePath) === 0) {
+      queue.push(modulePath);
+    }
+  }
+  return queue;
+}
+
+function processQueue(
+  queue: string[],
+  graph: Map<string, Set<string>>,
+  inDegree: Map<string, number>
+): string[] {
+  const result: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === undefined) {
+      break;
+    }
+    result.push(current);
+    processDependencies(current, graph, inDegree, queue);
+  }
+
+  return result;
+}
+
+function processDependencies(
+  current: string,
+  graph: Map<string, Set<string>>,
+  inDegree: Map<string, number>,
+  queue: string[]
+): void {
+  const deps = graph.get(current);
+  if (deps === undefined) {
+    return;
+  }
+  for (const dependency of deps) {
+    const depInDegree = inDegree.get(dependency);
+    if (depInDegree === undefined) {
+      continue;
+    }
+    const newInDegree = depInDegree - 1;
+    inDegree.set(dependency, newInDegree);
+    if (newInDegree === 0) {
+      insertSorted(queue, dependency);
+    }
+  }
 }
 
 function markPathCycleNodes(
@@ -174,7 +257,11 @@ function markPathCycleNodes(
   const cycleStart = path.indexOf(cycleAnchor);
   if (cycleStart !== -1) {
     for (let i = cycleStart; i < path.length; i++) {
-      cycleNodes.add(path[i]!);
+      const node = path.at(i);
+      if (node === undefined) {
+        continue;
+      }
+      cycleNodes.add(node);
     }
   }
   cycleNodes.add(extraNode);

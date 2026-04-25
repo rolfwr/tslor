@@ -20,7 +20,10 @@ export function modulePathToImportSpecAlias(compilerOptions: CompilerOptions, ts
     if (paths.length !== 1) {
       throw new Error('Unsupported alias path count');
     }
-    const path = paths[0]!;
+    const path = paths.at(0);
+    if (path === undefined) {
+      throw new Error('Path is undefined');
+    }
     if (!path.endsWith('/*')) {
       throw new Error('Unsupported alias path');
     }
@@ -28,7 +31,7 @@ export function modulePathToImportSpecAlias(compilerOptions: CompilerOptions, ts
     const pathPrefix = path.slice(0, -1);
     let absPathPrefix = resolve(tsconfigDir, pathPrefix) + '/';
     if (!pathWithoutExt.startsWith(absPathPrefix)) {
-      absPathPrefix = resolve(tsconfigDir, compilerOptions.baseUrl ?? '.', pathPrefix) + '/';  
+      absPathPrefix = resolve(tsconfigDir, compilerOptions.baseUrl ?? '.', pathPrefix) + '/';
       if (!pathWithoutExt.startsWith(absPathPrefix)) {
         continue;
       }

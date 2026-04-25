@@ -135,8 +135,15 @@ export { unusedHelper } from './helpers';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]!), 'First export should be detected as @public');
-  assert.isFalse(hasPublicTag(exportDecls[1]!), 'Second export should not be detected as @public');
+  const [first, second] = exportDecls;
+  if (first === undefined) {
+    throw new Error('Expected first export declaration');
+  }
+  if (second === undefined) {
+    throw new Error('Expected second export declaration');
+  }
+  assert.isTrue(hasPublicTag(first), 'First export should be detected as @public');
+  assert.isFalse(hasPublicTag(second), 'Second export should not be detected as @public');
 });
 
 test('hasPublicTag returns false when no JSDoc is present', () => {
@@ -147,8 +154,15 @@ export { bar } from './bar';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isFalse(hasPublicTag(exportDecls[0]!));
-  assert.isFalse(hasPublicTag(exportDecls[1]!));
+  const [first, second] = exportDecls;
+  if (first === undefined) {
+    throw new Error('Expected first export declaration');
+  }
+  if (second === undefined) {
+    throw new Error('Expected second export declaration');
+  }
+  assert.isFalse(hasPublicTag(first));
+  assert.isFalse(hasPublicTag(second));
 });
 
 test('hasPublicTag detects @public among other tags', () => {
@@ -161,7 +175,11 @@ export { oldAuth } from './auth';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]!));
+  const [first] = exportDecls;
+  if (first === undefined) {
+    throw new Error('Expected first export declaration');
+  }
+  assert.isTrue(hasPublicTag(first));
 });
 
 test('hasPublicTag detects @public in single-line comment', () => {
@@ -172,7 +190,11 @@ export { handler } from './handler';
   const sourceFile = createTestSourceFile(source);
   const exportDecls = sourceFile.getExportDeclarations();
 
-  assert.isTrue(hasPublicTag(exportDecls[0]!));
+  const [first] = exportDecls;
+  if (first === undefined) {
+    throw new Error('Expected first export declaration');
+  }
+  assert.isTrue(hasPublicTag(first));
 });
 
 test('parseModule tracks namespace imports (import * as X) in unresolvedExportsByImportNames', () => {
@@ -190,13 +212,19 @@ export function init() {
   // The namespace import should be tracked with a '*' sentinel name
   const nsEntry = moduleInfo.unresolvedExportsByImportNames.get('initialValues');
   assert.isDefined(nsEntry, 'Namespace import "initialValues" should be in unresolvedExportsByImportNames');
-  assert.equal(nsEntry!.name, '*', 'Namespace import should use "*" as the export name');
-  assert.equal(nsEntry!.moduleSpec, './initialValues', 'Should record the correct module specifier');
+  if (nsEntry === undefined) {
+    throw new Error('Expected nsEntry');
+  }
+  assert.equal(nsEntry.name, '*', 'Namespace import should use "*" as the export name');
+  assert.equal(nsEntry.moduleSpec, './initialValues', 'Should record the correct module specifier');
 
   // The imports array should also contain an entry
   const nsImport = moduleInfo.imports.find(imp => imp.moduleSpec === './initialValues');
   assert.isDefined(nsImport, 'Should have an import entry for the namespace import');
-  assert.include(nsImport!.names, '*', 'Import names should include "*"');
+  if (nsImport === undefined) {
+    throw new Error('Expected nsImport');
+  }
+  assert.include(nsImport.names, '*', 'Import names should include "*"');
 });
 
 test('computeIndexingPaths must include files outside the scanned directory', () => {

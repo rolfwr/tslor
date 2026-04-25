@@ -40,8 +40,12 @@ export function useOperations(ops: MyOperations): void {
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
   
   assert.equal(symbolDefinitions.length, 1, 'Should extract one symbol');
-  assert.equal(symbolDefinitions[0]!.name, 'MyOperations');
-  assert.equal(symbolDefinitions[0]!.kind, 'interface');
+  const [def] = symbolDefinitions;
+  if (def === undefined) {
+    throw new Error('Expected symbol definition');
+  }
+  assert.equal(def.name, 'MyOperations');
+  assert.equal(def.kind, 'interface');
   
   // Generate new module with the interface
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
@@ -83,10 +87,13 @@ export interface Operations {
   // Check what the original interface contains
   const originalInterface = sourceFile.getInterface('Operations');
   assert.isDefined(originalInterface, 'Interface should exist');
-  
-  const properties = originalInterface!.getProperties();
-  const methods = originalInterface!.getMethods();
-  const allMembers = originalInterface!.getMembers();
+  if (!originalInterface) {
+    throw new Error('Expected originalInterface');
+  }
+
+  const properties = originalInterface.getProperties();
+  const methods = originalInterface.getMethods();
+  const allMembers = originalInterface.getMembers();
   
   console.log('Original interface analysis:');
   console.log('  Properties:', properties.length, properties.map(p => p.getName()));
@@ -115,10 +122,13 @@ export interface Operations {
   const generatedInterface = newFile.getInterface('Operations');
   
   assert.isDefined(generatedInterface, 'Generated interface should exist');
-  
-  const genProperties = generatedInterface!.getProperties();
-  const genMethods = generatedInterface!.getMethods();
-  const genMembers = generatedInterface!.getMembers();
+  if (!generatedInterface) {
+    throw new Error('Expected generatedInterface');
+  }
+
+  const genProperties = generatedInterface.getProperties();
+  const genMethods = generatedInterface.getMethods();
+  const genMembers = generatedInterface.getMembers();
   
   console.log('Generated interface analysis:');
   console.log('  Properties:', genProperties.length, genProperties.map(p => p.getName()));

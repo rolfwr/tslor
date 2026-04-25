@@ -14,6 +14,11 @@ interface HotModuleInfo {
   badness: number | null;
 }
 
+/* After calculateAllScores, badness is guaranteed to be a number. */
+interface ScoredHotModuleInfo extends HotModuleInfo {
+  badness: number;
+}
+
 interface Score {
   weight: number;
   sum: number;
@@ -68,21 +73,23 @@ function calcDirection(
   hotModule: HotModuleInfo,
   seen: Set<string>,
   direction: Direction
-): void {
+): Score {
   const existing = direction.getScore(hotModule);
   if (existing !== null) {
-    return;
+    return existing;
   }
 
   const relations = direction.getRelations(hotModule);
   if (relations.length === 0) {
-    direction.setScore(hotModule, { weight: 1, sum: 1 });
-    return;
+    const score: Score = { weight: 1, sum: 1 };
+    direction.setScore(hotModule, score);
+    return score;
   }
 
   if (seen.has(hotModule.path)) {
-    direction.setScore(hotModule, { weight: cycleCost, sum: cycleCost });
-    return;
+    const score: Score = { weight: cycleCost, sum: cycleCost };
+    direction.setScore(hotModule, score);
+    return score;
   }
 
   seen.add(hotModule.path);
@@ -93,33 +100,30 @@ function calcDirection(
     if (!hotRelation) {
       throw new Error('No hot module for ' + relation);
     }
-    calcDirection(hotMods, hotRelation, seen, direction);
-    const hotRelationScore = direction.getScore(hotRelation);
-    if (!hotRelationScore) {
-      throw new Error('No score for ' + relation);
-    }
+    const hotRelationScore = calcDirection(hotMods, hotRelation, seen, direction);
     const inverseRelations = direction.getInverseRelations(hotRelation);
     score.weight += hotRelationScore.weight / inverseRelations.length + internalWeight;
     score.sum += hotRelationScore.sum + internalWeight;
   }
 
   direction.setScore(hotModule, score);
+  return score;
 }
 
 function calcUpwards(
   hotMods: Record<string, HotModuleInfo>,
   hotModule: HotModuleInfo,
   seen: Set<string>
-): void {
-  calcDirection(hotMods, hotModule, seen, upwardsDir);
+): Score {
+  return calcDirection(hotMods, hotModule, seen, upwardsDir);
 }
 
 function calcDownwards(
   hotMods: Record<string, HotModuleInfo>,
   hotModule: HotModuleInfo,
   seen: Set<string>
-): void {
-  calcDirection(hotMods, hotModule, seen, downwardsDir);
+): Score {
+  return calcDirection(hotMods, hotModule, seen, downwardsDir);
 }
 
 interface Color {
@@ -202,51 +206,71 @@ export function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<st
   return hotMods;
 }
 
-export function calculateAllScores(hotMods: Record<string, HotModuleInfo>): void {
-  for (const modulePath in hotMods) {
-    const hotModule = hotMods[modulePath]!;
-    calcUpwards(hotMods, hotModule, new Set());
-    calcDownwards(hotMods, hotModule, new Set());
-    hotModule.badness = (hotModule.upward!.weight - 1) * (hotModule.downward!.weight - 1);
+export function calculateAllScores(
+  hotMods: Record<string, HotModuleInfo>
+): Record<string, ScoredHotModuleInfo> {
+  for (const hotModule of Object.values(hotMods)) {
+    const upward = calcUpwards(hotMods, hotModule, new Set());
+    const downward = calcDownwards(hotMods, hotModule, new Set());
+    hotModule.badness = (upward.weight - 1) * (downward.weight - 1);
   }
+  return hotMods as Record<string, ScoredHotModuleInfo>;
 }
 
-export function selectHotModule(hotMods: Record<string, HotModuleInfo>, hotArray: HotModuleInfo[], options: Options): HotModuleInfo | null {
+export function selectHotModule(
+  hotMods: Record<string, ScoredHotModuleInfo>,
+  hotArray: ScoredHotModuleInfo[],
+  options: Options
+): ScoredHotModuleInfo {
   if (options.select) {
-    const found = hotMods[options.select] ?? null;
+    const found = hotMods[options.select];
     if (!found) {
       throw new Error('Module not found in analyzed directory: ' + options.select);
     }
     return found;
   }
-  return hotArray[0] ?? null;
+  const first = hotArray.at(0);
+  if (first === undefined) {
+    throw new Error('No modules in hot array');
+  }
+  return first;
 }
 
-function printTopModules(hotArray: HotModuleInfo[], cwd: string): void {
+function printTopModules(hotArray: ScoredHotModuleInfo[], cwd: string): void {
   console.log();
   console.log('Top 10 hottest modules:');
   for (let i = 0; i < 10 && i < hotArray.length; i++) {
-    const hotModule = hotArray[i]!;
-    console.log(String(Math.round(hotModule.badness!)).padStart(10), denormalizePath(hotModule.path, cwd));
+    const hotModule = hotArray.at(i);
+    if (hotModule === undefined) {
+      continue;
+    }
+    console.log(String(Math.round(hotModule.badness)).padStart(10), denormalizePath(hotModule.path, cwd));
   }
   console.log();
 }
 
-export function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
-  const chain: HotModuleInfo[] = [];
+export function buildImportedByChain(
+  hotMods: Record<string, ScoredHotModuleInfo>,
+  selected: HotModuleInfo
+): ScoredHotModuleInfo[] {
+  const chain: ScoredHotModuleInfo[] = [];
   const seen = new Set<string>([selected.path]);
   let current = selected;
   while (true) {
-    let best: HotModuleInfo | null = null;
+    let best: ScoredHotModuleInfo | null = null;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const importedBy of current.importedBy) {
       const hotImporter = hotMods[importedBy];
       if (!hotImporter) {
         throw new Error('No hot module for ' + importedBy);
       }
-      if (!seen.has(importedBy) && hotImporter.upward!.sum > bestScore) {
+      const upward = hotImporter.upward;
+      if (upward === null) {
+        continue;
+      }
+      if (!seen.has(importedBy) && upward.sum > bestScore) {
         best = hotImporter;
-        bestScore = hotImporter.upward!.sum;
+        bestScore = upward.sum;
       }
     }
     if (!best) {
@@ -259,21 +283,28 @@ export function buildImportedByChain(hotMods: Record<string, HotModuleInfo>, sel
   return chain;
 }
 
-export function buildImportChain(hotMods: Record<string, HotModuleInfo>, selected: HotModuleInfo): HotModuleInfo[] {
-  const chain: HotModuleInfo[] = [];
+export function buildImportChain(
+  hotMods: Record<string, ScoredHotModuleInfo>,
+  selected: HotModuleInfo
+): ScoredHotModuleInfo[] {
+  const chain: ScoredHotModuleInfo[] = [];
   const seen = new Set<string>([selected.path]);
   let current = selected;
   while (true) {
-    let best: HotModuleInfo | null = null;
+    let best: ScoredHotModuleInfo | null = null;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const imported of current.imports) {
       const hotImport = hotMods[imported];
       if (!hotImport) {
         throw new Error('No hot module for ' + imported);
       }
-      if (!seen.has(imported) && hotImport.downward!.sum > bestScore) {
+      const downward = hotImport.downward;
+      if (downward === null) {
+        continue;
+      }
+      if (!seen.has(imported) && downward.sum > bestScore) {
         best = hotImport;
-        bestScore = hotImport.downward!.sum;
+        bestScore = downward.sum;
       }
     }
     if (!best) {
@@ -286,12 +317,18 @@ export function buildImportChain(hotMods: Record<string, HotModuleInfo>, selecte
   return chain;
 }
 
-function printHotChain(hotChain: HotModuleInfo[], selected: HotModuleInfo, cwd: string): void {
-  const badnessArr = hotChain.map((m) => m.badness!);
-  badnessArr.sort((a, b) => a - b);
-  const leastHot = badnessArr[0]!;
-  const medianHot = badnessArr[Math.floor(badnessArr.length / 2)]!;
-  const mostHot = badnessArr[badnessArr.length - 1]!;
+function printHotChain(hotChain: ScoredHotModuleInfo[], selected: HotModuleInfo, cwd: string): void {
+  const badnessArr = hotChain.map((m) => m.badness).sort((a, b) => a - b);
+  const len = badnessArr.length;
+  if (len === 0) {
+    return;
+  }
+  const leastHot = badnessArr.at(0);
+  const medianHot = badnessArr.at(Math.floor(len / 2));
+  const mostHot = badnessArr.at(-1);
+  if (leastHot === undefined || medianHot === undefined || mostHot === undefined) {
+    return;
+  }
 
   console.log('Hot import chain:');
   for (const hotModule of hotChain) {
@@ -304,7 +341,7 @@ function printHotChain(hotChain: HotModuleInfo[], selected: HotModuleInfo, cwd: 
     const arrowUp = up > 0 ? up + '\u2191' : '';
     const arrowDown = down > 0 ? down + '\u2193' : '';
     const prefix = arrowUp.padStart(6) + arrowDown.padStart(6);
-    const rgb = hotnessColor(hotModule.badness!, leastHot, medianHot, mostHot);
+    const rgb = hotnessColor(hotModule.badness, leastHot, medianHot, mostHot);
     console.log(
       dim +
         prefix +
@@ -340,21 +377,17 @@ export async function runHot(directory: string, options: Options, debugOptions: 
   }
 
   const hotMods = buildHotModuleGraph(db, filePaths);
-  calculateAllScores(hotMods);
+  const scoredMods = calculateAllScores(hotMods);
 
-  const hotArray = Object.values(hotMods);
-  hotArray.sort((a, b) => b.badness! - a.badness!);
+  const hotArray = Object.values(scoredMods);
+  hotArray.sort((a, b) => b.badness - a.badness);
 
-  const selected = selectHotModule(hotMods, hotArray, options);
-  if (!selected) {
-    console.log('No modules found to analyze.');
-    return;
-  }
+  const selected = selectHotModule(scoredMods, hotArray, options);
 
   printTopModules(hotArray, cwd);
 
-  const importedByChain = buildImportedByChain(hotMods, selected);
-  const importChain = buildImportChain(hotMods, selected);
+  const importedByChain = buildImportedByChain(scoredMods, selected);
+  const importChain = buildImportChain(scoredMods, selected);
   const hotChain = [...importedByChain.reverse(), selected, ...importChain];
 
   printHotChain(hotChain, selected, cwd);

@@ -143,19 +143,25 @@ export function processFile(filename: string, content: string): string {
   // identifierUses should use the local aliased names
   const processFileUses = info.identifierUses.get('processFile');
   assert.isDefined(processFileUses);
-  assert.include(processFileUses!, 'parseDate');
-  assert.include(processFileUses!, 'formatDate');
-  assert.include(processFileUses!, 'pathJoin');
-  
+  if (!processFileUses) {
+    throw new Error('Expected processFileUses');
+  }
+  assert.include(processFileUses, 'parseDate');
+  assert.include(processFileUses, 'formatDate');
+  assert.include(processFileUses, 'pathJoin');
+
   // Export should show transitive dependency on the original export names
   const processFileExport = info.exports.get('processFile');
   assert.isDefined(processFileExport);
+  if (!processFileExport) {
+    throw new Error('Expected processFileExport');
+  }
   const expectedUses = [
     { name: 'format', moduleSpec: 'date-fns' },
     { name: 'parse', moduleSpec: 'date-fns' },
     { name: 'join', moduleSpec: 'path' }
   ];
-  assert.sameDeepMembers(processFileExport!.uses, expectedUses);
+  assert.sameDeepMembers(processFileExport.uses, expectedUses);
 });
 
 test.skip('Parse re-exports correctly (normalize-first strategy)', () => {
@@ -212,8 +218,11 @@ export function readConfig(filename: string): string {
   // Should track namespace usage
   const readConfigUses = info.identifierUses.get('readConfig');
   assert.isDefined(readConfigUses);
-  assert.include(readConfigUses!, 'path');
-  assert.include(readConfigUses!, 'fs');
+  if (!readConfigUses) {
+    throw new Error('Expected readConfigUses');
+  }
+  assert.include(readConfigUses, 'path');
+  assert.include(readConfigUses, 'fs');
 });
 
 test('Parse type-only imports correctly', () => {

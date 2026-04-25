@@ -145,13 +145,19 @@ export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
 }
 
 function mergeImportGroup(group: ImportDeclaration[]): boolean {
-  const winner = group[0]!;
+  const winner = group.at(0);
+  if (winner === undefined) {
+    return false;
+  }
   const winnerDefaultName = winner.getDefaultImport()?.getText();
   const winnerComments = leadingCommentTexts(winner);
   let changed = false;
 
   for (let i = 1; i < group.length; i++) {
-    const donor = group[i]!;
+    const donor = group.at(i);
+    if (donor === undefined) {
+      continue;
+    }
     if (tryMergeDonorIntoWinner(winner, donor, winnerDefaultName, winnerComments)) {
       changed = true;
     }

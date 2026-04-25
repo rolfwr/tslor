@@ -120,7 +120,11 @@ export function functionToExtract(): string {
   assert.equal(requiredImports.length, 1, 'Should have one required import');
   
   // This assertion should NOW PASS after the fix
-  assert.equal(requiredImports[0]!.moduleSpec, '../package.json',
+  const firstImport = requiredImports.at(0);
+  if (firstImport === undefined) {
+    throw new Error('Expected first import');
+  }
+  assert.equal(firstImport.moduleSpec, '../package.json',
     'moduleSpec should be adjusted for new file location');
 });
 

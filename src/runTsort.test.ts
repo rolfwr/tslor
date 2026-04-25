@@ -43,15 +43,34 @@ describe('tsort', () => {
       reverseGraph.set(modulePath, new Set());
     }
     for (const modulePath of moduleSet) {
-      const exporters = storage.getExporterPathsOfImport(modulePath);
-      for (const exporter of exporters) {
-        if (moduleSet.has(exporter.path)) {
-          graph.get(modulePath)!.add(exporter.path);
-          reverseGraph.get(exporter.path)!.add(modulePath);
-        }
-      }
+      addEdgesForModule(modulePath, storage, moduleSet, graph, reverseGraph);
     }
     return { graph, reverseGraph };
+  }
+
+  function addEdgesForModule(
+    modulePath: string,
+    storage: Storage,
+    moduleSet: Set<string>,
+    graph: Map<string, Set<string>>,
+    reverseGraph: Map<string, Set<string>>
+  ): void {
+    const exporters = storage.getExporterPathsOfImport(modulePath);
+    for (const exporter of exporters) {
+      if (!moduleSet.has(exporter.path)) {
+        continue;
+      }
+      const deps = graph.get(modulePath);
+      if (deps === undefined) {
+        throw new Error('Graph entry missing');
+      }
+      deps.add(exporter.path);
+      const revDeps = reverseGraph.get(exporter.path);
+      if (revDeps === undefined) {
+        throw new Error('Reverse graph entry missing');
+      }
+      revDeps.add(modulePath);
+    }
   }
 
   function insertSorted(queue: string[], item: string): void {
@@ -70,14 +89,34 @@ describe('tsort', () => {
     result: string[]
   ): void {
     while (queue.length > 0) {
-      const current = queue.shift()!;
+      const current = queue.shift();
+      if (current === undefined) {
+        break;
+      }
       result.push(current);
-      for (const dep of graph.get(current)!) {
-        const newInDegree = inDegree.get(dep)! - 1;
-        inDegree.set(dep, newInDegree);
-        if (newInDegree === 0) {
-          insertSorted(queue, dep);
-        }
+      processNodeDependencies(current, graph, inDegree, queue);
+    }
+  }
+
+  function processNodeDependencies(
+    current: string,
+    graph: Map<string, Set<string>>,
+    inDegree: Map<string, number>,
+    queue: string[]
+  ): void {
+    const deps = graph.get(current);
+    if (deps === undefined) {
+      return;
+    }
+    for (const dep of deps) {
+      const depInDegree = inDegree.get(dep);
+      if (depInDegree === undefined) {
+        continue;
+      }
+      const newInDegree = depInDegree - 1;
+      inDegree.set(dep, newInDegree);
+      if (newInDegree === 0) {
+        insertSorted(queue, dep);
       }
     }
   }
@@ -89,7 +128,11 @@ describe('tsort', () => {
   ): string[] | null {
     const inDegree = new Map<string, number>();
     for (const modulePath of moduleSet) {
-      inDegree.set(modulePath, reverseGraph.get(modulePath)!.size);
+      const rev = reverseGraph.get(modulePath);
+      if (rev === undefined) {
+        throw new Error('Reverse graph entry missing');
+      }
+      inDegree.set(modulePath, rev.size);
     }
     const queue: string[] = [];
     for (const modulePath of moduleSet) {
@@ -123,9 +166,12 @@ describe('tsort', () => {
     assert.deepEqual(result, ['/a.ts', '/b.ts', '/c.ts']);
 
     // Verify dependency order: C should appear before B, B before A
-    const aIndex = result!.indexOf('/a.ts');
-    const bIndex = result!.indexOf('/b.ts');
-    const cIndex = result!.indexOf('/c.ts');
+    if (result === null) {
+      throw new Error('Expected result');
+    }
+    const aIndex = result.indexOf('/a.ts');
+    const bIndex = result.indexOf('/b.ts');
+    const cIndex = result.indexOf('/c.ts');
 
     assert.isTrue(aIndex < bIndex, 'A (which imports B) should come before B');
     assert.isTrue(bIndex < cIndex, 'B (which imports C) should come before C');
@@ -145,10 +191,13 @@ describe('tsort', () => {
     assert.isNotNull(result);
 
     // Verify dependency order
-    const aIndex = result!.indexOf('/a.ts');
-    const bIndex = result!.indexOf('/b.ts');
-    const cIndex = result!.indexOf('/c.ts');
-    const dIndex = result!.indexOf('/d.ts');
+    if (result === null) {
+      throw new Error('Expected result');
+    }
+    const aIndex = result.indexOf('/a.ts');
+    const bIndex = result.indexOf('/b.ts');
+    const cIndex = result.indexOf('/c.ts');
+    const dIndex = result.indexOf('/d.ts');
 
     assert.isTrue(aIndex < bIndex, 'A should come before B');
     assert.isTrue(aIndex < cIndex, 'A should come before C');
@@ -203,8 +252,11 @@ describe('tsort', () => {
     assert.isNotNull(result);
     assert.deepEqual(result, ['/a.ts', '/b.ts']);
 
-    const aIndex = result!.indexOf('/a.ts');
-    const bIndex = result!.indexOf('/b.ts');
+    if (result === null) {
+      throw new Error('Expected result');
+    }
+    const aIndex = result.indexOf('/a.ts');
+    const bIndex = result.indexOf('/b.ts');
     assert.isTrue(aIndex < bIndex, 'A should come before B');
   });
 

@@ -9,7 +9,10 @@ export async function runDependencies(modulePaths: string[], commandOptions: { p
   // Resolve all paths to absolute paths early
   const absoluteModulePaths = normalizePaths(modulePaths);
 
-  const tsPath = absoluteModulePaths[0]!;
+  const tsPath = absoluteModulePaths.at(0);
+  if (tsPath === undefined) {
+    throw new Error('No module paths provided');
+  }
   const repoRoot = findGitRepoRoot(tsPath);
   const db = openStorage(debugOptions, true);
   await updateStorage(repoRoot, db, true, fileSystem);

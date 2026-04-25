@@ -92,8 +92,11 @@ export function useCustomIcons(): ItemCustomIconsDto {
 
   // Check that undo operations are the reverse of changes
   for (let i = 0; i < plan.changes.length; i++) {
-    const change = plan.changes[i]!;
-    const undo = plan.undo[i]!;
+    const change = plan.changes.at(i);
+    const undo = plan.undo.at(i);
+    if (change === undefined || undo === undefined) {
+      continue;
+    }
 
     assert.equal(change.type, undo.type, `Change and undo types should match for index ${i}`);
 
@@ -231,7 +234,10 @@ import type { getItemRequestSchema, getItemResponseSchema } from '../../api/sche
     d.getModuleSpecifierValue() === '../../api/schemas/item/getItem'
   );
   assert.isDefined(originalImport, 'Original import declaration should still exist');
-  const originalNames = originalImport!.getNamedImports().map(n => n.getName());
+  if (originalImport === undefined) {
+    throw new Error('Expected originalImport');
+  }
+  const originalNames = originalImport.getNamedImports().map(n => n.getName());
   assert.notInclude(originalNames, 'getItemResponseSchema',
     'getItemResponseSchema must be removed from the original import');
 });
@@ -271,7 +277,10 @@ import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } fro
     d.getModuleSpecifierValue() === '../../api/schemas/item/getItem'
   );
   assert.isDefined(originalImport, 'Original import should still exist');
-  const originalNames = originalImport!.getNamedImports().map(n => n.getName());
+  if (originalImport === undefined) {
+    throw new Error('Expected originalImport');
+  }
+  const originalNames = originalImport.getNamedImports().map(n => n.getName());
   assert.deepEqual(originalNames, ['getItemRequestSchema'],
     'Only getItemRequestSchema should remain in the original import');
 
@@ -280,12 +289,15 @@ import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } fro
     d.getModuleSpecifierValue() === '../../api/schemas/item/getItemResponse'
   );
   assert.isDefined(newImport, 'New import pointing at getItemResponse should exist');
-  const newNames = newImport!.getNamedImports().map(n => n.getName()).sort();
+  if (newImport === undefined) {
+    throw new Error('Expected newImport');
+  }
+  const newNames = newImport.getNamedImports().map(n => n.getName()).sort();
   assert.deepEqual(newNames, ['GetItemResponse', 'getItemResponseSchema'],
     'Both re-exported symbols should be in the new import');
 
   // New import should be type-only since all moved symbols are type-only
-  assert.isTrue(newImport!.isTypeOnly(),
+  assert.isTrue(newImport.isTypeOnly(),
     'New import should be type-only');
 });
 

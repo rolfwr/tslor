@@ -522,10 +522,11 @@ function addImportToMap(
   requiredImportsMap: Map<string, ImportMapEntry>,
   imp: { moduleSpec: string; importedName: string; isTypeOnly: boolean; isDefault: boolean }
 ): void {
-  if (!requiredImportsMap.has(imp.moduleSpec)) {
-    requiredImportsMap.set(imp.moduleSpec, { namedImports: new Set(), isTypeOnly: imp.isTypeOnly });
+  let entry = requiredImportsMap.get(imp.moduleSpec);
+  if (!entry) {
+    entry = { namedImports: new Set(), isTypeOnly: imp.isTypeOnly };
+    requiredImportsMap.set(imp.moduleSpec, entry);
   }
-  const entry = requiredImportsMap.get(imp.moduleSpec)!;
   if (imp.isDefault) {
     entry.defaultImport = imp.importedName;
   } else {
@@ -683,11 +684,16 @@ export function removeSymbolsFromSource(
       const isExported = stmt.isExported();
 
       // Create new variable statement with only the kept declarations
-      const newDeclarations = declarationsToKeep.map(decl => ({
-        name: decl.getName(),
-        ...(decl.getTypeNode() && { type: decl.getTypeNode()!.getText() }),
-        ...(decl.getInitializer() && { initializer: decl.getInitializer()!.getText() })
-      }));
+      const newDeclarations = declarationsToKeep.map(decl => {
+        const name = decl.getName();
+        const typeNode = decl.getTypeNode();
+        const initializer = decl.getInitializer();
+        return {
+          name,
+          ...(typeNode && { type: typeNode.getText() }),
+          ...(initializer && { initializer: initializer.getText() })
+        };
+      });
 
       // Replace the statement using ts-morph methods
       stmt.replaceWithText(

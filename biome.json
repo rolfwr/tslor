@@ -9,7 +9,7 @@
         "noExtraNonNullAssertion": { "level": "error" }
       },
       "style": {
-        "noNonNullAssertion": { "level": "warn" }
+        "noNonNullAssertion": { "level": "error" }
       },
       "complexity": {
         "noExcessiveCognitiveComplexity": {

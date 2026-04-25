@@ -207,8 +207,9 @@ function analyzeSourceFile(sourceFile: SourceFile): MemberInfo[] {
   // Variable statements (const, let, var)
   sourceFile.getVariableStatements().forEach(stmt => {
     const declarations = stmt.getDeclarations();
-    const name = declarations.length === 1 ? declarations[0]!.getName() : 
-                 declarations.map(d => d.getName()).join(', ');
+    const name = declarations.length === 1
+      ? declarations.at(0)?.getName() ?? ''
+      : declarations.map(d => d.getName()).join(', ');
     
     members.push({
       line: getLineNumber(sourceFile, stmt.getStart()),
@@ -376,7 +377,10 @@ if (require.main === module) {
   
   // Parse command line arguments
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = args.at(i);
+    if (arg === undefined) {
+      continue;
+    }
     if (arg === '-v' || arg === '--verbose') {
       verbose = true;
     } else if (arg === '-q' || arg === '--quiet') {
