@@ -59,6 +59,31 @@ export function isObjWithExporterPath(obj: unknown): obj is ObjWithExporterPath 
  * - symbolName|{symbolName} - All imports of a specific symbol name (for efficient symbol lookup)
  * - filetime|{filePath} - File modification timestamps
  */
+
+function isModuleNeeds(value: unknown): value is { nodejs: boolean } {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  if (!('nodejs' in value)) {
+    return false;
+  }
+  return typeof value.nodejs === 'boolean';
+}
+
+function isReExportObj(obj: Obj): obj is Obj & { reExport: ReExportInfo } {
+  const reExport = obj.reExport;
+  if (reExport === null || typeof reExport !== 'object') {
+    return false;
+  }
+  if (!('moduleSpec' in reExport) || typeof reExport.moduleSpec !== 'string') {
+    return false;
+  }
+  if (!('isTypeOnly' in reExport) || typeof reExport.isTypeOnly !== 'boolean') {
+    return false;
+  }
+  return true;
+}
+
 export class Storage {
   constructor(private objStore: ObjStore, private jsonlPath: string, private readonly debugOptions: DebugOptions, private verbose: boolean) {
   }
@@ -219,8 +244,8 @@ export class Storage {
   getModuleNeeds(filePath: string): { nodejs: boolean } | undefined {
     const obj = this.objStore.get('needs|' + filePath);
     const needs = obj?.needs;
-    if (needs && typeof needs === 'object' && 'nodejs' in needs && typeof needs.nodejs === 'boolean') {
-      return needs as { nodejs: boolean };
+    if (isModuleNeeds(needs)) {
+      return needs;
     }
     return undefined;
   }
@@ -275,8 +300,8 @@ export class Storage {
   getAllReExports(): ReadonlyArray<Obj & { reExport: ReExportInfo }> {
     const allReExports: Array<Obj & { reExport: ReExportInfo }> = [];
     for (const [id, obj] of this.objStore.objs) {
-      if (id.startsWith('reexport|') && obj.reExport) {
-        allReExports.push({ ...obj, reExport: obj.reExport as ReExportInfo });
+      if (id.startsWith('reexport|') && isReExportObj(obj)) {
+        allReExports.push(obj);
       }
     }
     return allReExports;
