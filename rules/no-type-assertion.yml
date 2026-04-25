@@ -1,0 +1,9 @@
+id: no-type-assertion
+language: TypeScript
+severity: warning
+message: "Type assertions ('as') are a code smell. Every use must have a documented rationale. Prefer proper types, type guards, or runtime validation over casting."
+rule:
+  pattern: '$EXPR as $TYPE'
+  any:
+    - not:
+        pattern: '$EXPR as unknown'
