@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     silent: true,
     reporters: ['dot'],
+    pool: 'threads',
   },
 });
