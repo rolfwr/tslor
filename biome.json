@@ -1,16 +1,21 @@
 {
+  "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
   "linter": {
+    "enabled": true,
     "rules": {
       "recommended": false,
+      "suspicious": {
+        "noImportCycles": { "level": "error" }
+      },
       "complexity": {
-        "noExcessiveCognitiveComplexity": "error",
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": { "maxAllowedComplexity": 15 }
+        },
         "useMaxParams": {
           "level": "error",
           "options": { "max": 7 }
         }
-      },
-      "suspicious": {
-        "noImportCycles": "error"
       }
     }
   }
