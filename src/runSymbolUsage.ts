@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
-import { openStorage } from "./storage";
+import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizePath } from "./pathUtils";
 import { FileSystem } from "./filesystem";
@@ -11,16 +11,11 @@ function collectExporterPaths(
 ): string[] {
   const paths: string[] = [];
   for (const obj of symbolImports) {
-    const exporter = obj['exporter'];
-    if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+    if (!isObjWithExporterPath(obj)) {
       continue;
     }
-    const exporterPath = (exporter as Record<string, unknown>)['path'];
-    if (typeof exporterPath !== 'string') {
-      continue;
-    }
-    if (isWithinProject(exporterPath, absoluteProjectPath) && !paths.includes(exporterPath)) {
-      paths.push(exporterPath);
+    if (isWithinProject(obj.exporter.path, absoluteProjectPath) && !paths.includes(obj.exporter.path)) {
+      paths.push(obj.exporter.path);
     }
   }
   return paths;

@@ -5,7 +5,7 @@
  * Does not verify compilation — a separate tool can handle that concern.
  */
 
-import { openStorage } from "./storage";
+import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
 import { promises as fsp } from "fs";
@@ -90,13 +90,13 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
       continue;
     }
 
-    const exporter = obj.exporter as { path?: string; spec?: string } | undefined;
-    if (exporter && 'path' in exporter && typeof exporter.path === 'string') {
-      if (!exporterMatchesSourceModule(exporter.path, sourceModule)) {
-        continue;
-      }
-      files.set(importerPath, exporter.path);
+    if (!isObjWithExporterPath(obj)) {
+      continue;
     }
+    if (!exporterMatchesSourceModule(obj.exporter.path, sourceModule)) {
+      continue;
+    }
+    files.set(importerPath, obj.exporter.path);
   }
 
   return files;

@@ -5,30 +5,41 @@ import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj
  * Reference to a module that exports something.
  * Can be either a resolved file path or an unresolved import specifier.
  */
-interface ExporterPath {
+export interface ExporterPath {
   path: string;
   tsconfig: string;
 }
 
-interface ExporterSpec {
+export interface ExporterSpec {
   spec: string;
 }
 
-interface ReExportInfo {
+export interface ReExportInfo {
   moduleSpec: string;
   isTypeOnly: boolean;
 }
 
-type Exporter = ExporterPath | ExporterSpec;
+export type Exporter = ExporterPath | ExporterSpec;
 
-function isExporterPath(obj: unknown): obj is ExporterPath {
-  if (typeof obj !== 'object') {
+export interface ObjWithExporterPath extends Obj {
+  exporter: ExporterPath;
+}
+
+/**
+ * Type guard for Obj instances with a resolved exporter (has path + tsconfig).
+ */
+export function isObjWithExporterPath(obj: unknown): obj is ObjWithExporterPath {
+  if (typeof obj !== 'object' || obj === null) {
     return false;
   }
-  if (obj === null) {
+  if (!('exporter' in obj)) {
     return false;
   }
-  return 'path' in obj && 'tsconfig' in obj;
+  const exporter = obj['exporter'];
+  if (typeof exporter !== 'object' || exporter === null) {
+    return false;
+  }
+  return 'path' in exporter && typeof exporter.path === 'string' && 'tsconfig' in exporter && typeof exporter.tsconfig === 'string';
 } 
 
 /**
@@ -93,9 +104,8 @@ export class Storage {
     const exporters = this.objStore.getGroup('importPath|' + importerPath);
     const result: ExporterPath[] = [];
     for (const obj of exporters) {
-      const exporter = obj.exporter;
-      if (isExporterPath(exporter)) {
-        result.push(exporter);
+      if (isObjWithExporterPath(obj)) {
+        result.push(obj.exporter);
       }
     }
     return result;
@@ -159,12 +169,10 @@ export class Storage {
   }
 
   private extractExporterPath(obj: Readonly<Obj>): string | null {
-    const exporter = obj.exporter;
-    if (exporter === null || typeof exporter !== 'object' || !('path' in exporter)) {
+    if (!isObjWithExporterPath(obj)) {
       return null;
     }
-    const path = (exporter as Record<string, unknown>)['path'];
-    return typeof path === 'string' ? path : null;
+    return obj.exporter.path;
   }
 
   private extractSymbolNamesFromGroups(groups: unknown, exporterPath: string): string[] {

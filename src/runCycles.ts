@@ -1,7 +1,7 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot, getTypeScriptFilePaths } from "./project";
-import { openStorage } from "./storage";
-import { DebugOptions } from "./objstore";
+import { openStorage, isObjWithExporterPath } from "./storage";
+import { DebugOptions, Obj } from "./objstore";
 import { normalizePath, denormalizePath } from "./pathUtils";
 import { dirname } from "path";
 import chalk from "chalk";
@@ -98,18 +98,16 @@ async function findModuleCycles(db: any, directory: string, options: CyclesOptio
 }
 
 function getExporterPathIfInScope(
-  importObj: { exporter?: unknown },
+  importObj: Obj,
   filePaths: Set<string>
 ): string | null {
-  const exporter = importObj.exporter;
-  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+  if (!isObjWithExporterPath(importObj)) {
     return null;
   }
-  const exporterPath = (exporter as Record<string, unknown>)['path'];
-  if (typeof exporterPath !== 'string' || !filePaths.has(exporterPath)) {
+  if (!filePaths.has(importObj.exporter.path)) {
     return null;
   }
-  return exporterPath;
+  return importObj.exporter.path;
 }
 
 /**

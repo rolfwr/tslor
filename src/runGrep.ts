@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
-import { openStorage } from "./storage";
+import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizePath } from "./pathUtils";
 import { FileSystem } from "./filesystem";
@@ -15,13 +15,11 @@ interface ExporterIndexes {
   importersByExporter: Map<string, Set<string>>;
 }
 
-function extractExporterPath(obj: { exporter?: unknown }): string | null {
-  const exporter = obj.exporter;
-  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+function extractExporterPath(obj: import('./objstore').Obj): string | null {
+  if (!isObjWithExporterPath(obj)) {
     return null;
   }
-  const path = (exporter as Record<string, unknown>)['path'];
-  return typeof path === 'string' ? path : null;
+  return obj.exporter.path;
 }
 
 function extractImporterPath(id: unknown): string | null {
@@ -32,7 +30,7 @@ function extractImporterPath(id: unknown): string | null {
 }
 
 function buildExporterIndexes(
-  symbolImports: { exporter?: unknown; id?: unknown }[],
+  symbolImports: ReadonlyArray<import('./objstore').Obj>,
   symbolName: string,
   absoluteDirectory: string,
   options: GrepOptions
@@ -41,7 +39,7 @@ function buildExporterIndexes(
   const importersByExporter = new Map<string, Set<string>>();
 
   for (const obj of symbolImports) {
-    const exporterPath = extractExporterPath(obj as { exporter?: unknown });
+    const exporterPath = extractExporterPath(obj);
     if (!exporterPath || !isWithinDirectory(exporterPath, absoluteDirectory)) {
       continue;
     }
@@ -104,7 +102,7 @@ export async function runGrep(
   }
 
   const { exportersByPath, importersByExporter } = buildExporterIndexes(
-    symbolImports as { exporter?: unknown; id?: unknown }[],
+    symbolImports,
     symbolName,
     absoluteDirectory,
     options

@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
-import { openStorage } from "./storage";
+import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath, normalizePath } from "./pathUtils";
 import { FileSystem } from "./filesystem";
@@ -10,12 +10,10 @@ export interface TraceImportsOptions {
 }
 
 function getExporterPathFromObj(obj: import("./objstore").Obj): string | null {
-  const exporter = obj['exporter'];
-  if (!exporter || typeof exporter !== 'object' || !('path' in exporter)) {
+  if (!isObjWithExporterPath(obj)) {
     return null;
   }
-  const exporterPath = (exporter as Record<string, unknown>)['path'];
-  return typeof exporterPath === 'string' ? exporterPath : null;
+  return obj.exporter.path;
 }
 
 function addGroupSymbols(

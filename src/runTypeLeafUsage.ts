@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
-import { openStorage, Storage } from "./storage";
+import { openStorage, Storage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
 import { FileSystem } from "./filesystem";
@@ -54,9 +54,8 @@ function findFilesUsingTypes(db: Storage, typeNames: string[], directory: string
       }
       importers.add(importerPath);
 
-      const exporter = obj.exporter as { path?: string } | undefined;
-      if (exporter && typeof exporter.path === 'string') {
-        definers.add(exporter.path);
+      if (isObjWithExporterPath(obj)) {
+        definers.add(obj.exporter.path);
       }
     }
   }
