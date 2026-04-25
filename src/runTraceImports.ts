@@ -52,7 +52,7 @@ function buildImportsByExporter(
     if (options.fromProject && !isWithinProject(exporterPath, options.fromProject)) {
       continue;
     }
-    addGroupSymbols((obj['groups'] as unknown[]) || [], exporterPath, importsByExporter);
+    addGroupSymbols(obj['groups'] ?? [], exporterPath, importsByExporter);
   }
 
   return importsByExporter;

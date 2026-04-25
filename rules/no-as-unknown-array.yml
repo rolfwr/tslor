@@ -1,0 +1,6 @@
+id: no-as-unknown-array
+language: TypeScript
+severity: error
+message: "Do not cast to unknown[]. Access the declared type and handle undefined explicitly."
+rule:
+  pattern: '($EXPR as unknown[])'
