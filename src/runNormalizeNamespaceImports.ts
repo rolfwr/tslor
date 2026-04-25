@@ -301,29 +301,26 @@ function tryGetPropertyAccessMember(
   if (!parent || parent.getKind() !== SyntaxKind.PropertyAccessExpression) {
     return null;
   }
-  // RATIONALE: type narrowing after runtime kind check
-  // ast-grep-ignore: no-type-assertion
-  const propAccess = parent as PropertyAccessExpression;
-  if (propAccess.getExpression() !== id) {
+  if (!PropertyAccessExpression.isPropertyAccessExpression(parent)) {
     return null;
   }
-  return { node: propAccess, memberName: propAccess.getName(), isTypePosition: false };
+  if (parent.getExpression() !== id) {
+    return null;
+  }
+  return { node: parent, memberName: parent.getName(), isTypePosition: false };
 }
 
 function tryGetQualifiedNameMember(
   id: ReturnType<SourceFile['getDescendantsOfKind']>[number],
   parent: Node | undefined
 ): { node: Node; memberName: string; isTypePosition: true } | null {
-  if (!parent || parent.getKind() !== SyntaxKind.QualifiedName) {
+  if (!QualifiedName.isQualifiedName(parent)) {
     return null;
   }
-  // RATIONALE: type narrowing after runtime kind check
-  // ast-grep-ignore: no-type-assertion
-  const qualifiedName = parent as QualifiedName;
-  if (qualifiedName.getLeft() !== id) {
+  if (parent.getLeft() !== id) {
     return null;
   }
-  return { node: qualifiedName, memberName: qualifiedName.getRight().getText(), isTypePosition: true };
+  return { node: parent, memberName: parent.getRight().getText(), isTypePosition: true };
 }
 
 function collectNamespaceUsages(

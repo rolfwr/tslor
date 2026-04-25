@@ -20,7 +20,6 @@ import { FileSystem, InMemoryFileSystem } from "./filesystem";
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';
-import { invariant } from './invariant.js';
 
 /**
  * Update the index with all TypeScript files in the repository.
@@ -90,10 +89,18 @@ function parseWorkerResult(msg: WorkerMessage): ModuleInfo | null {
     return null;
   }
   const parsed: unknown = JSON.parse(msg.moduleInfo);
-  invariant(typeof parsed === 'object' && parsed !== null && 'path' in parsed, 'Worker returned invalid ModuleInfo');
-  // RATIONALE: JSON parsing boundary with invariant check
-  // ast-grep-ignore: no-type-assertion
-  return parsed as ModuleInfo;
+  if (!isModuleInfo(parsed)) {
+    throw new Error('Worker returned invalid ModuleInfo');
+  }
+  return parsed;
+}
+
+function isModuleInfo(x: unknown): x is ModuleInfo {
+  return typeof x === 'object' && x !== null && 'path' in x;
+}
+
+function isWorkerMessage(x: unknown): x is WorkerMessage {
+  return typeof x === 'object' && x !== null && 'type' in x;
 }
 
 async function getWorkerFile(): Promise<URL> {
@@ -175,9 +182,11 @@ function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueu
   const reader: AsyncQueueReader<T> = {
     take(): Promise<T | null> {
       if (items.length > 0) {
-        // RATIONALE: queue invariant (length > 0)
-        // ast-grep-ignore: no-type-assertion
-        return Promise.resolve(items.shift() as T);
+        const item = items.shift();
+        if (item === undefined) {
+          throw new Error('Queue underflow');
+        }
+        return Promise.resolve(item);
       }
       if (closed) {
         return Promise.resolve(null);
@@ -263,9 +272,10 @@ async function indexImportFromFilesParallel(
     }
     let moduleInfo: ModuleInfo | null;
     try {
-      // RATIONALE: IPC message from worker
-      // ast-grep-ignore: no-type-assertion
-      moduleInfo = parseWorkerResult(msg as WorkerMessage);
+      if (!isWorkerMessage(msg)) {
+        throw new Error('Invalid worker message');
+      }
+      moduleInfo = parseWorkerResult(msg);
     } catch (error) {
       throw makeFileProcessingError(currentItem.path, error);
     }

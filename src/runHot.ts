@@ -209,14 +209,16 @@ export function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<st
 export function calculateAllScores(
   hotMods: Record<string, HotModuleInfo>
 ): Record<string, ScoredHotModuleInfo> {
-  for (const hotModule of Object.values(hotMods)) {
+  const scored: Record<string, ScoredHotModuleInfo> = {};
+  for (const [path, hotModule] of Object.entries(hotMods)) {
     const upward = calcUpwards(hotMods, hotModule, new Set());
     const downward = calcDownwards(hotMods, hotModule, new Set());
-    hotModule.badness = (upward.weight - 1) * (downward.weight - 1);
+    scored[path] = {
+      ...hotModule,
+      badness: (upward.weight - 1) * (downward.weight - 1),
+    };
   }
-  // RATIONALE: intentional type narrowing after scoring
-  // ast-grep-ignore: no-type-assertion
-  return hotMods as Record<string, ScoredHotModuleInfo>;
+  return scored;
 }
 
 export function selectHotModule(

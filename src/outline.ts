@@ -338,12 +338,10 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
     
     if (options.verbose) {
       // Verbose mode: include summary and signatures
-      const byType = members.reduce((acc, member) => {
+      const byType = members.reduce((acc: Record<string, number>, member) => {
         acc[member.type] = (acc[member.type] || 0) + 1;
         return acc;
-      // RATIONALE: empty object as reduce accumulator
-      // ast-grep-ignore: no-type-assertion
-      }, {} as Record<string, number>);
+      }, {});
       
       console.log(`# ${filePath}`);
       const summary = Object.entries(byType).map(([type, count]) => count + ' ' + type).join(', ');

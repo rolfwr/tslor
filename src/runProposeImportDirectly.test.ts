@@ -179,9 +179,10 @@ import { realFunction, fakeFunction } from './vueCompat';
 
   if (consumerChanges.length > 0) {
     // If there are changes to consumer.ts, the fakeFunction import should still be from vueCompat
-    // RATIONALE: test scaffolding
-    // ast-grep-ignore: no-type-assertion
-    const modifyChange = consumerChanges[0] as ModifyFileChange;
+    const modifyChange = consumerChanges[0];
+    if (modifyChange?.type !== 'modify-file') {
+      assert.fail('Expected modify-file change');
+    }
     const modifiedContent = modifyChange.content;
     assert(modifiedContent.includes("fakeFunction } from './vueCompat'"),
       'fakeFunction should still import from vueCompat since it does not exist in realModule');
@@ -378,16 +379,17 @@ test('runProposeImportDirectly produces changes for mixed imports (relative path
   // The plan MUST have a change for consumer.ts
   assert.isAbove(plan.changes.length, 0,
     'Plan should have at least one change');
-  const consumerChange = plan.changes.find(c =>
-    c.type === 'modify-file' && c.path === '/repo/consumer.ts'
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange => c.type === 'modify-file' && c.path === '/repo/consumer.ts'
   );
   assert.isDefined(consumerChange,
     'consumer.ts should be modified to split the mixed import');
+  if (consumerChange === undefined) {
+    throw new Error('consumerChange is undefined');
+  }
 
   // Verify the modified content splits the import correctly
-  // RATIONALE: test scaffolding
-  // ast-grep-ignore: no-type-assertion
-  const content = (consumerChange as ModifyFileChange).content;
+  const content = consumerChange.content;
   assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
     'getItemRequestSchema must remain imported from getItem');
   assert.match(content, /getItemResponseSchema.*from.*\.\/getItemResponse/,
@@ -437,15 +439,16 @@ test('runProposeImportDirectly produces changes when consumer uses path-mapped i
 
   assert.isAbove(plan.changes.length, 0,
     'Plan should have at least one change');
-  const consumerChange = plan.changes.find(c =>
-    c.type === 'modify-file' && c.path === '/repo/src/consumer.ts'
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange => c.type === 'modify-file' && c.path === '/repo/src/consumer.ts'
   );
   assert.isDefined(consumerChange,
     'consumer.ts should be modified even when tsconfig has path aliases');
+  if (consumerChange === undefined) {
+    throw new Error('consumerChange is undefined');
+  }
 
-  // RATIONALE: test scaffolding
-  // ast-grep-ignore: no-type-assertion
-  const content = (consumerChange as ModifyFileChange).content;
+  const content = consumerChange.content;
   assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
     'getItemRequestSchema must remain imported from getItem');
   assert.match(content, /getItemResponseSchema.*from.*\.\/getItemResponse/,

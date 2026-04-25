@@ -218,10 +218,9 @@ export class Storage {
 
   getModuleNeeds(filePath: string): { nodejs: boolean } | undefined {
     const obj = this.objStore.get('needs|' + filePath);
-    if (obj?.needs && typeof obj.needs === 'object' && 'nodejs' in obj.needs) {
-      // RATIONALE: type narrowing after runtime shape check
-      // ast-grep-ignore: no-type-assertion
-      return obj.needs as { nodejs: boolean };
+    const needs = obj?.needs;
+    if (needs && typeof needs === 'object' && 'nodejs' in needs && typeof needs.nodejs === 'boolean') {
+      return needs as { nodejs: boolean };
     }
     return undefined;
   }
@@ -277,9 +276,7 @@ export class Storage {
     const allReExports: Array<Obj & { reExport: ReExportInfo }> = [];
     for (const [id, obj] of this.objStore.objs) {
       if (id.startsWith('reexport|') && obj.reExport) {
-        // RATIONALE: type narrowing after runtime check
-        // ast-grep-ignore: no-type-assertion
-        allReExports.push(obj as Obj & { reExport: ReExportInfo });
+        allReExports.push({ ...obj, reExport: obj.reExport as ReExportInfo });
       }
     }
     return allReExports;
