@@ -11,7 +11,7 @@ import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
 import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
 import { promises as fsp } from "fs";
-import { SourceFile, ImportDeclaration } from "ts-morph";
+import { SourceFile, ImportDeclaration, Identifier } from "ts-morph";
 import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
 import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
@@ -268,7 +268,7 @@ function leadingCommentsEqual(a: string[], b: string[]): boolean {
   return a.every((text, i) => text === b[i]);
 }
 
-function namedImportKey(namedImport: { getName(): string; getAliasNode(): any }): string {
+function namedImportKey(namedImport: { getName(): string; getAliasNode(): Identifier | undefined }): string {
   const alias = namedImport.getAliasNode();
   return alias ? `${namedImport.getName()} as ${alias.getText()}` : namedImport.getName();
 }

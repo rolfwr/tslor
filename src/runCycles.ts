@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot, getTypeScriptFilePaths } from "./project";
-import { openStorage, isObjWithExporterPath } from "./storage";
+import { openStorage, isObjWithExporterPath, Storage } from "./storage";
 import { DebugOptions, Obj } from "./objstore";
 import { normalizePath, denormalizePath } from "./pathUtils";
 import { dirname } from "path";
@@ -74,7 +74,7 @@ export async function runCycles(
 /**
  * Find cycles between individual modules (TypeScript files).
  */
-async function findModuleCycles(db: any, directory: string, options: CyclesOptions) {
+async function findModuleCycles(db: Storage, directory: string, options: CyclesOptions) {
   // First, discover all TypeScript files in the target directory
   const filePaths = await getTypeScriptFilePaths(directory, false);
   const fileSet = new Set(filePaths);
@@ -113,7 +113,7 @@ function getExporterPathIfInScope(
 /**
  * Build dependency graph for a specific set of module files.
  */
-function buildModuleGraph(db: any, filePaths: Set<string>): Map<string, Set<string>> {
+function buildModuleGraph(db: Storage, filePaths: Set<string>): Map<string, Set<string>> {
   const graph = new Map<string, Set<string>>();
   
   for (const filePath of filePaths) {
@@ -827,7 +827,7 @@ function reportDirectoryCyclesFancy(cycles: string[][], graph: Map<string, Set<s
 /**
  * Find cycles between directories containing modules.
  */
-async function findDirectoryCycles(db: any, directory: string, options: CyclesOptions) {
+async function findDirectoryCycles(db: Storage, directory: string, options: CyclesOptions) {
   // First, discover all TypeScript files in the target directory
   const filePaths = await getTypeScriptFilePaths(directory, false);
   const fileSet = new Set(filePaths);
@@ -853,7 +853,7 @@ async function findDirectoryCycles(db: any, directory: string, options: CyclesOp
 /**
  * Build directory dependency graph for a specific set of module files.
  */
-function buildDirectoryGraph(db: any, filePaths: Set<string>): Map<string, Set<string>> {
+function buildDirectoryGraph(db: Storage, filePaths: Set<string>): Map<string, Set<string>> {
   const dirGraph = new Map<string, Set<string>>();
   
   for (const filePath of filePaths) {

@@ -1,5 +1,5 @@
 import { test, assert } from 'vitest';
-import { Project } from 'ts-morph';
+import { Project, SourceFile } from 'ts-morph';
 import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
 import {
   buildIntraModuleDependencies,
@@ -26,7 +26,7 @@ function createTestSourceFile(project: Project, filename: string, content: strin
  */
 function performSplitInMemory(
   project: Project,
-  sourceFile: any,
+  sourceFile: SourceFile,
   targetPath: string,
   symbolsToMove: string[]
 ): { sourceContent: string; targetContent: string; errors: string[] } {

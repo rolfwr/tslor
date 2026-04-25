@@ -10,7 +10,11 @@
  * improvements on large codebases.
  */
 
-import { Project, ProjectOptions, QuoteKind, SourceFile, SyntaxKind, ts, Node, ExportSpecifier } from "ts-morph";
+import { Project, ProjectOptions, QuoteKind, SourceFile, SyntaxKind, ts, Node, ExportSpecifier,
+  TypeReferenceNode, ExpressionWithTypeArguments, IndexedAccessTypeNode, MappedTypeNode,
+  FunctionTypeNode, TypeLiteralNode, TypeQueryNode,
+  FunctionDeclaration, InterfaceDeclaration, ClassDeclaration, MethodDeclaration, MethodSignature,
+} from "ts-morph";
 import { getTsconfigPathForFile, getTypeScriptFilePaths } from "./project";
 import { dirname, relative, resolve } from "path";
 import { CompilerOptions, modulePathSpec, modulePathToImportSpecAlias } from "./importSpec";
@@ -641,7 +645,7 @@ function addIdentifierUses(
 function trackExportedSymbol(
   staticModuleInfo: StaticModuleInfo,
   name: string,
-  node: any,
+  node: Node,
   isExported: boolean
 ): void {
   if (isExported) {
@@ -654,129 +658,106 @@ function trackExportedSymbol(
 
 type TypeRefCallback = (name: string) => void;
 
-function traverseTypeArgs(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getTypeArguments && typeof typeNode.getTypeArguments === 'function') {
-    const typeArgs = typeNode.getTypeArguments();
-    if (typeArgs) {
-      for (const typeArg of typeArgs) {
-        traverseTypeNodeWith(typeArg, fn);
-      }
-    }
-  }
-}
-
-function traverseExpressionWithTypeArgsNode(typeNode: any, fn: TypeRefCallback): void {
-  const expression = typeNode.getExpression();
-  if (expression && expression.getKind() === SyntaxKind.Identifier) {
-    fn(expression.getText());
-  }
-  traverseTypeArgs(typeNode, fn);
-}
-
-function traverseIndexedAccessNode(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getObjectTypeNode && typeof typeNode.getObjectTypeNode === 'function') {
-    traverseTypeNodeWith(typeNode.getObjectTypeNode(), fn);
-  }
-  if (typeNode.getIndexTypeNode && typeof typeNode.getIndexTypeNode === 'function') {
-    traverseTypeNodeWith(typeNode.getIndexTypeNode(), fn);
-  }
-}
-
-function traverseMappedTypeNode(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getTypeParameter && typeof typeNode.getTypeParameter === 'function') {
-    const typeParam = typeNode.getTypeParameter();
-    if (typeParam && typeParam.getConstraint && typeof typeParam.getConstraint === 'function') {
-      traverseTypeNodeWith(typeParam.getConstraint(), fn);
-    }
-  }
-  if (typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
-    traverseTypeNodeWith(typeNode.getTypeNode(), fn);
-  }
-}
-
-function traverseFunctionTypeNode(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getParameters && typeof typeNode.getParameters === 'function') {
-    for (const param of typeNode.getParameters()) {
-      traverseTypeNodeWith(param.getTypeNode(), fn);
-    }
-  }
-  if (typeNode.getReturnTypeNode && typeof typeNode.getReturnTypeNode === 'function') {
-    traverseTypeNodeWith(typeNode.getReturnTypeNode(), fn);
-  }
-}
-
-function traverseTypeLiteralNode(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getMembers && typeof typeNode.getMembers === 'function') {
-    for (const member of typeNode.getMembers()) {
-      if (member.getTypeNode && typeof member.getTypeNode === 'function') {
-        traverseTypeNodeWith(member.getTypeNode(), fn);
-      }
-    }
-  }
-}
-
-function traverseTypeQueryNode(typeNode: any, fn: TypeRefCallback): void {
-  if (typeNode.getExprName && typeof typeNode.getExprName === 'function') {
-    const exprName = typeNode.getExprName();
-    if (exprName && exprName.getKind() === SyntaxKind.Identifier) {
-      fn(exprName.getText());
-    }
-  }
-}
-
-function traverseTypeReferenceNode(typeNode: any, fn: TypeRefCallback): void {
+function traverseTypeReferenceNode(typeNode: TypeReferenceNode, fn: TypeRefCallback): void {
   const typeName = typeNode.getTypeName();
-  if (typeName && typeName.getKind() === SyntaxKind.Identifier) {
+  if (typeName.isKind(SyntaxKind.Identifier)) {
     fn(typeName.getText());
   }
-  traverseTypeArgs(typeNode, fn);
+  for (const typeArg of typeNode.getTypeArguments()) {
+    traverseTypeNodeWith(typeArg, fn);
+  }
 }
 
-function traverseTypeNodeWith(typeNode: any, fn: TypeRefCallback): void {
+function traverseExpressionWithTypeArgsNode(typeNode: ExpressionWithTypeArguments, fn: TypeRefCallback): void {
+  const expression = typeNode.getExpression();
+  if (expression.isKind(SyntaxKind.Identifier)) {
+    fn(expression.getText());
+  }
+  for (const typeArg of typeNode.getTypeArguments()) {
+    traverseTypeNodeWith(typeArg, fn);
+  }
+}
+
+function traverseIndexedAccessNode(typeNode: IndexedAccessTypeNode, fn: TypeRefCallback): void {
+  traverseTypeNodeWith(typeNode.getObjectTypeNode(), fn);
+  traverseTypeNodeWith(typeNode.getIndexTypeNode(), fn);
+}
+
+function traverseMappedTypeNode(typeNode: MappedTypeNode, fn: TypeRefCallback): void {
+  const typeParam = typeNode.getTypeParameter();
+  const constraint = typeParam.getConstraint();
+  if (constraint) {
+    traverseTypeNodeWith(constraint, fn);
+  }
+  traverseTypeNodeWith(typeNode.getTypeNode(), fn);
+}
+
+function traverseFunctionTypeNode(typeNode: FunctionTypeNode, fn: TypeRefCallback): void {
+  for (const param of typeNode.getParameters()) {
+    traverseTypeNodeWith(param.getTypeNode(), fn);
+  }
+  traverseTypeNodeWith(typeNode.getReturnTypeNode(), fn);
+}
+
+function traverseTypeLiteralNode(typeNode: TypeLiteralNode, fn: TypeRefCallback): void {
+  for (const member of typeNode.getMembers()) {
+    if (member.isKind(SyntaxKind.PropertySignature)) {
+      traverseTypeNodeWith(member.getTypeNode(), fn);
+    }
+  }
+}
+
+function traverseTypeQueryNode(typeNode: TypeQueryNode, fn: TypeRefCallback): void {
+  const exprName = typeNode.getExprName();
+  if (exprName.isKind(SyntaxKind.Identifier)) {
+    fn(exprName.getText());
+  }
+}
+
+function traverseTypeNodeWith(typeNode: Node | undefined, fn: TypeRefCallback): void {
   if (!typeNode) {
     return;
   }
-  const kind = typeNode.getKind();
-  if (kind === SyntaxKind.TypeReference) {
+  if (typeNode.isKind(SyntaxKind.TypeReference)) {
     traverseTypeReferenceNode(typeNode, fn);
     return;
   }
-  if (kind === SyntaxKind.ExpressionWithTypeArguments) {
+  if (typeNode.isKind(SyntaxKind.ExpressionWithTypeArguments)) {
     traverseExpressionWithTypeArgsNode(typeNode, fn);
     return;
   }
-  if (kind === SyntaxKind.UnionType || kind === SyntaxKind.IntersectionType) {
+  if (typeNode.isKind(SyntaxKind.UnionType) || typeNode.isKind(SyntaxKind.IntersectionType)) {
     for (const type of typeNode.getTypeNodes()) {
       traverseTypeNodeWith(type, fn);
     }
     return;
   }
-  if (kind === SyntaxKind.ParenthesizedType && typeNode.getTypeNode && typeof typeNode.getTypeNode === 'function') {
+  if (typeNode.isKind(SyntaxKind.ParenthesizedType)) {
     traverseTypeNodeWith(typeNode.getTypeNode(), fn);
     return;
   }
-  if (kind === SyntaxKind.ArrayType) {
+  if (typeNode.isKind(SyntaxKind.ArrayType)) {
     traverseTypeNodeWith(typeNode.getElementTypeNode(), fn);
     return;
   }
-  if (kind === SyntaxKind.IndexedAccessType) {
+  if (typeNode.isKind(SyntaxKind.IndexedAccessType)) {
     traverseIndexedAccessNode(typeNode, fn);
   }
-  if (kind === SyntaxKind.TypeQuery) {
+  if (typeNode.isKind(SyntaxKind.TypeQuery)) {
     traverseTypeQueryNode(typeNode, fn);
   }
-  if (kind === SyntaxKind.MappedType) {
+  if (typeNode.isKind(SyntaxKind.MappedType)) {
     traverseMappedTypeNode(typeNode, fn);
   }
-  if (kind === SyntaxKind.FunctionType) {
+  if (typeNode.isKind(SyntaxKind.FunctionType)) {
     traverseFunctionTypeNode(typeNode, fn);
   }
-  if (kind === SyntaxKind.TypeLiteral) {
+  if (typeNode.isKind(SyntaxKind.TypeLiteral)) {
     traverseTypeLiteralNode(typeNode, fn);
   }
 }
 
-function traverseParamsAndReturn(node: any, fn: TypeRefCallback): void {
+function traverseParamsAndReturn(node: FunctionDeclaration | MethodDeclaration | MethodSignature, fn: TypeRefCallback): void {
   for (const param of node.getParameters()) {
     traverseTypeNodeWith(param.getTypeNode(), fn);
   }
@@ -784,7 +765,7 @@ function traverseParamsAndReturn(node: any, fn: TypeRefCallback): void {
   traverseTypeNodeWith(returnTypeNode, fn);
 }
 
-function traverseHeritageClauses(node: any, fn: TypeRefCallback): void {
+function traverseHeritageClauses(node: InterfaceDeclaration | ClassDeclaration, fn: TypeRefCallback): void {
   for (const clause of node.getHeritageClauses()) {
     for (const type of clause.getTypeNodes()) {
       traverseTypeNodeWith(type, fn);
@@ -792,17 +773,17 @@ function traverseHeritageClauses(node: any, fn: TypeRefCallback): void {
   }
 }
 
-function traverseClassMethods(methods: any[], fn: TypeRefCallback): void {
+function traverseClassMethods(methods: Array<MethodDeclaration | MethodSignature>, fn: TypeRefCallback): void {
   for (const method of methods) {
     traverseParamsAndReturn(method, fn);
   }
 }
 
-function extractTypeRefsFromFunctionDecl(node: any, fn: TypeRefCallback): void {
+function extractTypeRefsFromFunctionDecl(node: FunctionDeclaration, fn: TypeRefCallback): void {
   traverseParamsAndReturn(node, fn);
 }
 
-function extractTypeRefsFromInterfaceDecl(node: any, fn: TypeRefCallback): void {
+function extractTypeRefsFromInterfaceDecl(node: InterfaceDeclaration, fn: TypeRefCallback): void {
   traverseHeritageClauses(node, fn);
   for (const prop of node.getProperties()) {
     traverseTypeNodeWith(prop.getTypeNode(), fn);
@@ -810,7 +791,7 @@ function extractTypeRefsFromInterfaceDecl(node: any, fn: TypeRefCallback): void 
   traverseClassMethods(node.getMethods(), fn);
 }
 
-function extractTypeRefsFromClassDecl(node: any, fn: TypeRefCallback): void {
+function extractTypeRefsFromClassDecl(node: ClassDeclaration, fn: TypeRefCallback): void {
   traverseHeritageClauses(node, fn);
   for (const prop of node.getProperties()) {
     const propTypeNode = prop.getTypeNode();
@@ -826,7 +807,7 @@ function extractTypeRefsFromClassDecl(node: any, fn: TypeRefCallback): void {
   traverseClassMethods(node.getMethods(), fn);
 }
 
-function extractTypeReferences(node: any): string[] {
+function extractTypeReferences(node: Node): string[] {
   const typeReferences: string[] = [];
   const visited = new Set<string>();
   const addTypeReference = (typeName: string) => {
@@ -835,20 +816,19 @@ function extractTypeReferences(node: any): string[] {
       typeReferences.push(typeName);
     }
   };
-  const kind = node.getKind();
-  if (kind === SyntaxKind.FunctionDeclaration) {
+  if (node.isKind(SyntaxKind.FunctionDeclaration)) {
     extractTypeRefsFromFunctionDecl(node, addTypeReference);
   }
-  if (kind === SyntaxKind.VariableDeclaration) {
+  if (node.isKind(SyntaxKind.VariableDeclaration)) {
     traverseTypeNodeWith(node.getTypeNode(), addTypeReference);
   }
-  if (kind === SyntaxKind.InterfaceDeclaration) {
+  if (node.isKind(SyntaxKind.InterfaceDeclaration)) {
     extractTypeRefsFromInterfaceDecl(node, addTypeReference);
   }
-  if (kind === SyntaxKind.ClassDeclaration) {
+  if (node.isKind(SyntaxKind.ClassDeclaration)) {
     extractTypeRefsFromClassDecl(node, addTypeReference);
   }
-  if (kind === SyntaxKind.TypeAliasDeclaration) {
+  if (node.isKind(SyntaxKind.TypeAliasDeclaration)) {
     traverseTypeNodeWith(node.getTypeNode(), addTypeReference);
   }
   return typeReferences;
@@ -1147,8 +1127,8 @@ function detectNodejsGlobals(sourceFile: SourceFile): {
 /**
  * Collect identifier references from a node, skipping property names in property access expressions
  */
-function collectIdentifierReferences(node: any): string[] {
-  const identifiers: any[] = node.getKind() === SyntaxKind.Identifier
+function collectIdentifierReferences(node: Node): string[] {
+  const identifiers: Node[] = node.isKind(SyntaxKind.Identifier)
     ? [node]
     : node.getDescendantsOfKind(SyntaxKind.Identifier);
   
@@ -1187,7 +1167,7 @@ function collectIdentifierReferences(node: any): string[] {
 /**
  * Collect local names (parameters and local variables) from a function
  */
-function collectLocalNames(funcDecl: any): Set<string> {
+function collectLocalNames(funcDecl: FunctionDeclaration): Set<string> {
   const localNames = new Set<string>();
   
   // Add parameter names
@@ -1212,7 +1192,7 @@ function collectLocalNames(funcDecl: any): Set<string> {
  * Parse import declaration
  */
 function parseImportDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const idecl = node.asKind(SyntaxKind.ImportDeclaration);
@@ -1280,7 +1260,7 @@ function parseImportDeclaration(
  * Parse variable statement
  */
 function parseVariableStatement(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const varStatement = node.asKind(SyntaxKind.VariableStatement);
@@ -1325,7 +1305,7 @@ function parseVariableStatement(
  * Parse function declaration
  */
 function parseFunctionDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const funcDecl = node.asKind(SyntaxKind.FunctionDeclaration);
@@ -1377,7 +1357,7 @@ function parseFunctionDeclaration(
  * Parse interface declaration
  */
 function parseInterfaceDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const interfaceDecl = node.asKind(SyntaxKind.InterfaceDeclaration);
@@ -1395,7 +1375,7 @@ function parseInterfaceDeclaration(
  * Parse type alias declaration
  */
 function parseTypeAliasDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const typeAliasDecl = node.asKind(SyntaxKind.TypeAliasDeclaration);
@@ -1413,7 +1393,7 @@ function parseTypeAliasDeclaration(
  * Parse class declaration
  */
 function parseClassDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const classDecl = node.asKind(SyntaxKind.ClassDeclaration);
@@ -1433,7 +1413,7 @@ function parseClassDeclaration(
  * Parse export declaration (re-exports)
  */
 function parseExportDeclaration(
-  node: any,
+  node: Node,
   staticModuleInfo: StaticModuleInfo
 ): void {
   const exportDecl = node.asKind(SyntaxKind.ExportDeclaration);

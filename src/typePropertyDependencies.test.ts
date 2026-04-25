@@ -15,6 +15,7 @@ import { Project, SourceFile } from 'ts-morph';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
+  SplitAnalysis,
   extractSymbolDefinitions,
   findImportsOnlyUsedBySymbols,
   computeRequiredImports,
@@ -79,7 +80,7 @@ export interface OtherType {
 
   // Analyze what needs to be moved
   const allSymbolsToMove = new Set<string>();
-  const splitAnalyses: Array<{ symbol: string; analysis: any }> = [];
+  const splitAnalyses: Array<{ symbol: string; analysis: SplitAnalysis }> = [];
 
   for (const symbol of requestedSymbols) {
     const analysis = analyzeSplit(deps, symbol);

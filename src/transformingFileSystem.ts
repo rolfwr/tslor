@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync, Dirent } from "node:fs";
 import { mkdir, writeFile, stat, readFile } from "node:fs/promises";
 import type { FileSystemHost, RuntimeDirEntry } from "ts-morph";
 
@@ -16,7 +16,7 @@ export class TransformingFileSystem implements FileSystemHost {
   readDirSync(dirPath: string): RuntimeDirEntry[] {
     try {
       const entries = readdirSync(dirPath, { withFileTypes: true });
-      return entries.map((entry: any) => ({
+      return entries.map((entry: Dirent) => ({
         name: entry.name,
         isFile: entry.isFile(),
         isDirectory: entry.isDirectory(),

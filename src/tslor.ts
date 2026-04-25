@@ -13,7 +13,7 @@ import { runCycles } from './runCycles';
 import { runNeeds } from './runNeeds';
 import { runHot } from './runHot';
 import { runTsort } from './runTsort';
-import { program } from 'commander';
+import { program, Command, OptionValues } from 'commander';
 import { findGitRepoRoot } from './project';
 import { inspectModule } from './indexing';
 import { runImportChain } from './runImportChain';
@@ -29,9 +29,10 @@ import { RealFileSystem } from './filesystem';
 import { dirname, resolve } from 'path';
 import { DebugOptions } from './objstore';
 
-function getDebugOptions(cmd: any): DebugOptions {
-  const globalOptions = cmd.parent?.opts() || {};
-  return { traceId: globalOptions.traceId || null };
+function getDebugOptions(cmd: Command): DebugOptions {
+  const globalOptions = cmd.parent?.opts() ?? {};
+  const traceId = globalOptions.traceId;
+  return { traceId: typeof traceId === 'string' ? traceId : null };
 }
 
 program
@@ -220,11 +221,16 @@ program
   .requiredOption('--source-module <specifier>', 'Import specifier for the source type')
   .requiredOption('--target-type <name>', 'Replacement type name')
   .requiredOption('--target-module <specifier>', 'Import specifier for the target type')
-  .action(async (directory: string, opts: any, cmd: any) => {
+  .action(async (directory: string, opts: OptionValues, cmd: Command) => {
+    const { sourceType, sourceModule, targetType, targetModule } = opts;
+    if (typeof sourceType !== 'string' || typeof sourceModule !== 'string' ||
+        typeof targetType !== 'string' || typeof targetModule !== 'string') {
+      throw new Error('Missing required options: --source-type, --source-module, --target-type, --target-module');
+    }
     const debugOptions = getDebugOptions(cmd);
     const repoProvider = new GitRepositoryRootProvider();
     const fileSystem = new RealFileSystem();
-    await runReplaceTypeUse(directory, opts, debugOptions, repoProvider, fileSystem);
+    await runReplaceTypeUse(directory, { sourceType, sourceModule, targetType, targetModule }, debugOptions, repoProvider, fileSystem);
   });
 
 program
@@ -241,10 +247,10 @@ program
   .command('type-leaf-usage <directory> <types...>')
   .description('Find leaf modules importing specified types (no transitive type-using dependencies)')
   .option('--all', 'Include modules that define the types')
-  .action(async (directory: string, types: string[], opts: any, cmd: any) => {
+  .action(async (directory: string, types: string[], opts: OptionValues, cmd: Command) => {
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runTypeLeafUsage(directory, types, opts, debugOptions, fileSystem);
+    await runTypeLeafUsage(directory, types, { all: opts['all'] === true }, debugOptions, fileSystem);
   });
 
 program

@@ -9,7 +9,12 @@
  * Usage: pnpm run outline <MODULE_PATH_TS>
  */
 
-import { Project, SourceFile, SyntaxKind } from 'ts-morph';
+import {
+  Project, SourceFile, SyntaxKind,
+  FunctionDeclaration, VariableStatement, TypeAliasDeclaration,
+  InterfaceDeclaration, ClassDeclaration, HeritageClause,
+  ImportDeclaration, ImportSpecifier, ExportDeclaration, ExportSpecifier,
+} from 'ts-morph';
 import { TransformingFileSystem } from './transformingFileSystem';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
@@ -33,9 +38,9 @@ function getLineNumber(sourceFile: SourceFile, pos: number): number {
 /**
  * Extract function signature for display
  */
-function getFunctionSignature(func: any): string {
+function getFunctionSignature(func: FunctionDeclaration): string {
   const name = func.getName() || '<anonymous>';
-  const params = func.getParameters().map((p: any) => {
+  const params = func.getParameters().map((p) => {
     const paramName = p.getName();
     const paramType = p.getTypeNode()?.getText() || '';
     const optional = p.hasQuestionToken() ? '?' : '';
@@ -51,26 +56,27 @@ function getFunctionSignature(func: any): string {
 /**
  * Extract variable/constant signature for display
  */
-function getVariableSignature(stmt: any): string {
+function getVariableSignature(stmt: VariableStatement): string {
   const kind = stmt.getDeclarationKind(); // const, let, var
   const declarations = stmt.getDeclarations();
-  
-  if (declarations.length === 1) {
-    const decl = declarations[0];
-    const name = decl.getName();
-    const type = decl.getTypeNode()?.getText();
-    const typePart = type ? `: ${type}` : '';
-    return `${kind} ${name}${typePart}`;
-  } else {
-    const names = declarations.map((d: any) => d.getName()).join(', ');
+  const names = declarations.map((d) => d.getName()).join(', ');
+
+  if (declarations.length !== 1) {
     return `${kind} ${names}`;
   }
+
+  for (const decl of declarations) {
+    const type = decl.getTypeNode()?.getText();
+    return `${kind} ${decl.getName()}${type ? `: ${type}` : ''}`;
+  }
+
+  return `${kind} ${names}`;
 }
 
 /**
  * Extract type alias signature for display
  */
-function getTypeAliasSignature(typeAlias: any): string {
+function getTypeAliasSignature(typeAlias: TypeAliasDeclaration): string {
   const name = typeAlias.getName();
   const typeNode = typeAlias.getTypeNode()?.getText() || '';
   return `type ${name} = ${typeNode}`;
@@ -79,12 +85,14 @@ function getTypeAliasSignature(typeAlias: any): string {
 /**
  * Extract interface signature for display
  */
-function getInterfaceSignature(iface: any): string {
+function getInterfaceSignature(iface: InterfaceDeclaration): string {
   const name = iface.getName();
   const props = iface.getProperties();
   const propCount = props.length;
   const heritage = iface.getHeritageClauses();
-  const extendsClause = heritage.length > 0 ? ` extends ${heritage[0].getTypeNodes().map((n: any) => n.getText()).join(', ')}` : '';
+  const extendsClause = heritage.length > 0
+    ? ` extends ${heritage.flatMap((h) => h.getTypeNodes().map((n) => n.getText())).join(', ')}`
+    : '';
   
   return `interface ${name}${extendsClause} { ${propCount} properties }`;
 }
@@ -92,18 +100,18 @@ function getInterfaceSignature(iface: any): string {
 /**
  * Extract class signature for display
  */
-function getClassSignature(cls: any): string {
+function getClassSignature(cls: ClassDeclaration): string {
   const name = cls.getName() || '<anonymous>';
   const heritage = cls.getHeritageClauses();
-  const extendsClause = heritage.find((h: any) => h.getToken() === SyntaxKind.ExtendsKeyword);
-  const implementsClause = heritage.find((h: any) => h.getToken() === SyntaxKind.ImplementsKeyword);
+  const extendsClause = heritage.find((h: HeritageClause) => h.getToken() === SyntaxKind.ExtendsKeyword);
+  const implementsClause = heritage.find((h: HeritageClause) => h.getToken() === SyntaxKind.ImplementsKeyword);
   
   let signature = `class ${name}`;
   if (extendsClause) {
-    signature += ` extends ${extendsClause.getTypeNodes().map((n: any) => n.getText()).join(', ')}`;
+    signature += ` extends ${extendsClause.getTypeNodes().map((n) => n.getText()).join(', ')}`;
   }
   if (implementsClause) {
-    signature += ` implements ${implementsClause.getTypeNodes().map((n: any) => n.getText()).join(', ')}`;
+    signature += ` implements ${implementsClause.getTypeNodes().map((n) => n.getText()).join(', ')}`;
   }
   
   const methods = cls.getMethods().length;
@@ -116,7 +124,7 @@ function getClassSignature(cls: any): string {
 /**
  * Extract import/export signature for display
  */
-function getImportSignature(importDecl: any): string {
+function getImportSignature(importDecl: ImportDeclaration): string {
   const moduleSpec = importDecl.getModuleSpecifierValue();
   const namedImports = importDecl.getNamedImports();
   const defaultImport = importDecl.getDefaultImport();
@@ -125,14 +133,14 @@ function getImportSignature(importDecl: any): string {
   let signature = 'import ';
   
   if (defaultImport) {
-    signature += defaultImport.getName();
+    signature += defaultImport.getText();
     if (namedImports.length > 0 || namespaceImport) {
       signature += ', ';
     }
   }
   
   if (namespaceImport) {
-    signature += `* as ${namespaceImport.getName()}`;
+    signature += `* as ${namespaceImport.getText()}`;
     if (namedImports.length > 0) {
       signature += ', ';
     }
@@ -140,10 +148,11 @@ function getImportSignature(importDecl: any): string {
   
   if (namedImports.length > 0) {
     if (namedImports.length <= 3) {
-      const names = namedImports.map((imp: any) => imp.getName()).join(', ');
+      const names = namedImports.map((imp: ImportSpecifier) => imp.getName()).join(', ');
       signature += `{ ${names} }`;
     } else {
-      signature += `{ ${namedImports[0].getName()}, ... +${namedImports.length - 1} more }`;
+      const allNames = namedImports.map((imp) => imp.getName());
+      signature += `{ ${allNames.slice(0, 1).join('')}, ... +${namedImports.length - 1} more }`;
     }
   }
   
@@ -151,7 +160,7 @@ function getImportSignature(importDecl: any): string {
   return signature;
 }
 
-function getExportSignature(exportDecl: any): string {
+function getExportSignature(exportDecl: ExportDeclaration): string {
   const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
   const namedExports = exportDecl.getNamedExports();
   
@@ -159,10 +168,11 @@ function getExportSignature(exportDecl: any): string {
   
   if (namedExports.length > 0) {
     if (namedExports.length <= 3) {
-      const names = namedExports.map((exp: any) => exp.getName()).join(', ');
+      const names = namedExports.map((exp: ExportSpecifier) => exp.getName()).join(', ');
       signature += `{ ${names} }`;
     } else {
-      signature += `{ ${namedExports[0].getName()}, ... +${namedExports.length - 1} more }`;
+      const allNames = namedExports.map((exp) => exp.getName());
+      signature += `{ ${allNames.slice(0, 1).join('')}, ... +${namedExports.length - 1} more }`;
     }
   }
   

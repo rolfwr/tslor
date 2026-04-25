@@ -9,7 +9,9 @@
     "correctness": "error"
   },
   "rules": {
-    "no-unused-vars": "error"
+    "no-unused-vars": "error",
+    "typescript/no-non-null-assertion": "warn",
+    "typescript/no-explicit-any": "warn"
   },
   "env": {
     "builtin": true

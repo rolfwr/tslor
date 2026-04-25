@@ -42,38 +42,44 @@ export function makeStub<T>(what: string, obj: Partial<T>): T {
   return new Proxy<Partial<T>>(obj, new StubProxy(what, obj)) as T;
 }
 
-class StubProxy implements Required<ProxyHandler<any>> {
+class StubProxy implements Required<ProxyHandler<object>> {
   constructor(private what: string, private inner: unknown) {
   }
-  apply(target: any, thisArg: any, argArray: any[]) {
+  apply(target: object, thisArg: unknown, argArray: unknown[]) {
     void target;
     void thisArg;
     void argArray;
     throw new Error('Apply on ' + this.what + ' stub not implemented');
   }
-  construct(target: any, argArray: any[], newTarget: Function): object {
+  construct(target: object, argArray: unknown[], newTarget: Function): object {
     void target;
     void argArray;
     void newTarget;
     throw new Error('Construct on ' + this.what + ' stub not implemented');
   }
-  defineProperty(target: any, property: string | symbol, attributes: PropertyDescriptor): boolean {
+  defineProperty(target: object, property: string | symbol, attributes: PropertyDescriptor): boolean {
     void target;
     void property;
     void attributes;
     throw new Error('Define property on ' + this.what + ' stub not implemented');
   }
-  deleteProperty(target: any, p: string | symbol): boolean {
+  deleteProperty(target: object, p: string | symbol): boolean {
     void target;
     void p;
     throw new Error('Delete property on ' + this.what + ' stub not implemented');
   }
-  get(target: any, p: string | symbol, receiver: any) {
+  get(target: object, p: string | symbol, receiver: unknown) {
     void p;
     void receiver;
 
     if (p in target) {
-      return target[p];
+      /*
+        RATIONALE: ProxyHandler.get must return an arbitrary property of 'target: object'.
+        'object' does not support index access; casting to Record is the only way to read the
+        already-confirmed-present property (guarded by 'p in target' above) in this trap.
+      */
+      // ast-grep-ignore: no-type-assertion
+      return (target as Record<string | symbol, unknown>)[p];
     }
 
     throw new Error('Stub ' + this.what + ' does not have property ' + p.toString());
@@ -104,7 +110,7 @@ class StubProxy implements Required<ProxyHandler<any>> {
     void target;
     throw new Error('Prevent extensions on ' + this.what + ' stub not implemented');
   }
-  set(target: {}, p: string | symbol, newValue: any, receiver: any): boolean {
+  set(target: {}, p: string | symbol, newValue: unknown, receiver: unknown): boolean {
     void target;
     void p;
     void newValue;
