@@ -371,7 +371,7 @@ async function outline(filePath: string, options: { verbose?: boolean; quiet?: b
     
   } catch (error) {
     if (!options.quiet) {
-      console.error(`Error: ${error}`);
+      console.error(`Error: ${String(error)}`);
     }
     process.exit(1);
   }

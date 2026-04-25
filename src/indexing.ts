@@ -140,7 +140,7 @@ function createWorkerWrapper(workerFile: URL): WorkerWrapper {
       worker.postMessage({ type: 'index', path, repoRoot });
     },
     terminate(): void {
-      worker.terminate();
+      void worker.terminate();
     },
   };
 }

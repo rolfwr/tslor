@@ -11,7 +11,7 @@
  */
 
 import { assert, test } from 'vitest';
-import { Project, SourceFile } from 'ts-morph';
+import { Project, SourceFile, Diagnostic, ts } from 'ts-morph';
 import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing';
 import {
@@ -31,6 +31,10 @@ import {
  */
 function createTestSourceFile(project: Project, filename: string, sourceCode: string): SourceFile {
   return project.createSourceFile(filename, sourceCode);
+}
+
+function diagMessageText(diag: Diagnostic): string {
+  return ts.flattenDiagnosticMessageText(diag.compilerObject.messageText, '\n');
 }
 
 /**
@@ -85,7 +89,7 @@ export { MyInterface } from "./target";
   if (initialDiagnostics.length > 0) {
     console.error('Initial type errors:');
     for (const diag of initialDiagnostics) {
-      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diag.getMessageText()}`);
+      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`);
     }
   }
   assert.equal(initialDiagnostics.length, 0, 'Should have no type errors initially');
@@ -185,7 +189,7 @@ export { MyInterface } from "./target";
       const file = diag.getSourceFile();
       const filePath = file?.getFilePath() || 'unknown';
       const lineAndChar = file?.getLineAndColumnAtPos(diag.getStart() || 0);
-      console.error(`  ${filePath}:${lineAndChar?.line}:${lineAndChar?.column}: ${diag.getMessageText()}`);
+      console.error(`  ${filePath}:${lineAndChar?.line}:${lineAndChar?.column}: ${diagMessageText(diag)}`);
     }
   }
 
@@ -264,7 +268,7 @@ export default value;
   if (finalDiagnostics.length > 0) {
     console.error('Type errors:');
     for (const diag of finalDiagnostics) {
-      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diag.getMessageText()}`);
+      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`);
     }
   }
 

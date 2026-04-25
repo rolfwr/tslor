@@ -11,7 +11,7 @@
  */
 
 import { assert, test } from 'vitest';
-import { Project, SourceFile } from 'ts-morph';
+import { Project, SourceFile, Diagnostic, ts } from 'ts-morph';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -33,6 +33,10 @@ import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 function createTestSourceFile(sourceCode: string): SourceFile {
   const project = new Project({ useInMemoryFileSystem: true });
   return project.createSourceFile('test.ts', sourceCode);
+}
+
+function diagMessageText(diag: Diagnostic): string {
+  return ts.flattenDiagnosticMessageText(diag.compilerObject.messageText, '\n');
 }
 
 /**
@@ -275,7 +279,7 @@ export function createItem(): Item {
   if (finalDiagnostics.length > 0) {
     console.error('Type errors after split:');
     for (const diag of finalDiagnostics) {
-      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diag.getMessageText()}`);
+      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`);
     }
   }
 
@@ -446,7 +450,7 @@ export default interface ExternalType {
     for (const diag of finalDiagnostics) {
       const file = diag.getSourceFile();
       const lineNumber = file?.getLineAndColumnAtPos(diag.getStart() ?? 0);
-      console.error(`  ${file?.getFilePath()}:${lineNumber?.line}: ${diag.getMessageText()}`);
+      console.error(`  ${file?.getFilePath()}:${lineNumber?.line}: ${diagMessageText(diag)}`);
     }
   }
 
