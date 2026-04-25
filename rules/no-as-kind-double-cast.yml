@@ -1,0 +1,6 @@
+id: no-as-kind-double-cast
+language: TypeScript
+severity: error
+message: "Do not chain .asKind() with 'as Type'. Check the return value for undefined instead."
+rule:
+  pattern: '$CALL.asKind($KIND) as $TYPE'

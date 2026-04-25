@@ -215,11 +215,11 @@ interface UnresolvedImportDecls {
 function collectUnresolvedImports(sourceFile: import("ts-morph").SourceFile): UnresolvedImportDecls[] {
   const unresolvedImports: UnresolvedImportDecls[] = [];
   sourceFile.forEachChild((node) => {
-    const importDecl = node.asKind(SyntaxKind.ImportDeclaration) as ImportDeclaration;
+    const importDecl = node.asKind(SyntaxKind.ImportDeclaration);
     if (!importDecl) {
       return;
     }
-    const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
+    const moduleSpecifier = importDecl.getModuleSpecifier();
     if (!moduleSpecifier) {
       throw new Error('No module specifier found');
     }
