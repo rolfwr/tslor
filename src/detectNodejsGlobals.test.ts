@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { assert, describe, test } from 'vitest';
 import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 
 describe('Node.js global detection', () => {
@@ -8,9 +8,9 @@ describe('Node.js global detection', () => {
         return Buffer.from(data, 'base64');
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(true);
-    expect(result.nodejsGlobalUsages).toHaveLength(1);
-    expect(result.nodejsGlobalUsages?.[0]?.identifier).toBe('Buffer');
+    assert.strictEqual(result.usesNodejsGlobals, true);
+    assert.strictEqual(result.nodejsGlobalUsages?.length, 1);
+    assert.strictEqual(result.nodejsGlobalUsages?.[0]?.identifier, 'Buffer');
   });
 
   test('ignores Buffer in type position', () => {
@@ -19,7 +19,7 @@ describe('Node.js global detection', () => {
         return Promise.resolve(new Uint8Array());
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores process in typeof guard', () => {
@@ -31,7 +31,7 @@ describe('Node.js global detection', () => {
         env = {};
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores process in typeof type query', () => {
@@ -40,7 +40,7 @@ describe('Node.js global detection', () => {
         process: typeof process;
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores process as property name in interface', () => {
@@ -50,7 +50,7 @@ describe('Node.js global detection', () => {
         processorRequest: string;
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores process as method name in interface', () => {
@@ -59,7 +59,7 @@ describe('Node.js global detection', () => {
         process(data: any): Promise<void>;
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores process as method name in class', () => {
@@ -70,12 +70,15 @@ describe('Node.js global detection', () => {
         }
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('parameter name shadows global (known limitation)', () => {
-    // This is a known limitation - we detect the parameter binding but
-    // references to it via 'this.require' are still flagged as potential globals
+    /*
+      This is a known limitation - we detect the parameter binding but
+      references to it via 'this.require' are still flagged as potential globals.
+      Full scope analysis would be needed to fix this edge case.
+    */
     const result = parseIsolatedSourceCode(`
       export class LazyRequire {
         constructor(public require: (id: string) => any) {}
@@ -85,8 +88,7 @@ describe('Node.js global detection', () => {
       }
     `);
     // Currently detects this.require as a global (false positive)
-    // Full scope analysis would be needed to fix this edge case
-    expect(result.usesNodejsGlobals).toBe(true);
+    assert.strictEqual(result.usesNodejsGlobals, true);
   });
 
   test('ignores global in property access', () => {
@@ -95,7 +97,7 @@ describe('Node.js global detection', () => {
         (window as any).global = window;
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores global in declare global', () => {
@@ -107,7 +109,7 @@ describe('Node.js global detection', () => {
       }
       export {};
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('ignores Buffer as type reference', () => {
@@ -119,22 +121,22 @@ describe('Node.js global detection', () => {
         return Promise.resolve(undefined);
       };
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('detects unguarded process.env usage', () => {
     const result = parseIsolatedSourceCode(`
       export const apiUrl = process.env.API_URL || 'http://localhost';
     `);
-    expect(result.usesNodejsGlobals).toBe(true);
-    expect(result.nodejsGlobalUsages?.[0]?.identifier).toBe('process');
+    assert.strictEqual(result.usesNodejsGlobals, true);
+    assert.strictEqual(result.nodejsGlobalUsages?.[0]?.identifier, 'process');
   });
 
   test('ignores __dirname in type annotation', () => {
     const result = parseIsolatedSourceCode(`
       export type DirName = typeof __dirname;
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 
   test('detects multiple Node.js globals', () => {
@@ -144,16 +146,19 @@ describe('Node.js global detection', () => {
         return require('zlib').gzipSync(buf);
       }
     `);
-    expect(result.usesNodejsGlobals).toBe(true);
-    expect(result.nodejsGlobalUsages).toHaveLength(2);
+    assert.strictEqual(result.usesNodejsGlobals, true);
+    assert.strictEqual(result.nodejsGlobalUsages?.length, 2);
     const identifiers = result.nodejsGlobalUsages?.map(u => u.identifier) || [];
-    expect(identifiers).toContain('Buffer');
-    expect(identifiers).toContain('require');
+    assert.include(identifiers, 'Buffer');
+    assert.include(identifiers, 'require');
   });
 
   test('variable name shadows global (known limitation)', () => {
-    // This is a known limitation - we detect the variable declaration but
-    // references to it are still flagged as potential globals
+    /*
+      This is a known limitation - we detect the variable declaration but
+      references to it are still flagged as potential globals.
+      Full scope analysis would be needed to fix this edge case.
+    */
     const result = parseIsolatedSourceCode(`
       export function startProcess() {
         const process = { id: 1, name: 'test' };
@@ -161,8 +166,7 @@ describe('Node.js global detection', () => {
       }
     `);
     // Currently detects process.id as a global (false positive)
-    // Full scope analysis would be needed to fix this edge case
-    expect(result.usesNodejsGlobals).toBe(true);
+    assert.strictEqual(result.usesNodejsGlobals, true);
   });
 
   test('ignores exports as property in object literal', () => {
@@ -172,6 +176,6 @@ describe('Node.js global detection', () => {
         imports: ['baz']
       };
     `);
-    expect(result.usesNodejsGlobals).toBe(false);
+    assert.strictEqual(result.usesNodejsGlobals, false);
   });
 });

@@ -9,9 +9,7 @@ import {
   buildImportChain,
 } from './runHot';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/* Helpers */
 
 function mustGet<K extends string, V>(record: Record<K, V>, key: K): V {
   const v = record[key];
@@ -34,14 +32,12 @@ function makeStorage(edges: Array<{ from: string; to: string }>): Storage {
   return storage;
 }
 
-// ---------------------------------------------------------------------------
-// buildHotModuleGraph
-// ---------------------------------------------------------------------------
-
 describe('buildHotModuleGraph', () => {
   test('builds imports and importedBy for a linear chain A→B→C', () => {
-    // "A imports from B" means A is the consumer, B is the exporter.
-    // In storage: putImport(A, ..., sym, {path: B}) → A's exporter is B.
+    /*
+      "A imports from B" means A is the consumer, B is the exporter.
+      In storage: putImport(A, ..., sym, {path: B}) → A's exporter is B.
+    */
     const db = makeStorage([
       { from: '/a.ts', to: '/b.ts' },
       { from: '/b.ts', to: '/c.ts' },
@@ -50,15 +46,12 @@ describe('buildHotModuleGraph', () => {
     const filePaths = ['/a.ts', '/b.ts', '/c.ts'];
     const hotMods = buildHotModuleGraph(db, filePaths);
 
-    // A imports B
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts']);
     assert.deepEqual(mustGet(hotMods, '/a.ts').importedBy, []);
 
-    // B imports C, is imported by A
     assert.deepEqual(mustGet(hotMods, '/b.ts').imports, ['/c.ts']);
     assert.deepEqual(mustGet(hotMods, '/b.ts').importedBy, ['/a.ts']);
 
-    // C is imported by B
     assert.deepEqual(mustGet(hotMods, '/c.ts').imports, []);
     assert.deepEqual(mustGet(hotMods, '/c.ts').importedBy, ['/b.ts']);
   });
@@ -76,10 +69,6 @@ describe('buildHotModuleGraph', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// calculateAllScores
-// ---------------------------------------------------------------------------
-
 describe('calculateAllScores', () => {
   test('assigns finite badness to all modules', () => {
     const db = makeStorage([
@@ -96,7 +85,7 @@ describe('calculateAllScores', () => {
   });
 
   test('middle node in a chain is hotter than the leaf nodes', () => {
-    // A→B→C: B is both imported and imports, so it should score highest
+    // A→B→C: B is both imported and imports, so it should score highest.
     const db = makeStorage([
       { from: '/a.ts', to: '/b.ts' },
       { from: '/b.ts', to: '/c.ts' },
@@ -108,10 +97,6 @@ describe('calculateAllScores', () => {
     assert.isAbove(mustGet(scored, '/b.ts').badness, mustGet(scored, '/c.ts').badness);
   });
 });
-
-// ---------------------------------------------------------------------------
-// selectHotModule
-// ---------------------------------------------------------------------------
 
 describe('selectHotModule', () => {
   test('throws when hotArray is empty', () => {
@@ -148,14 +133,12 @@ describe('selectHotModule', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildImportedByChain / buildImportChain
-// ---------------------------------------------------------------------------
-
 describe('buildImportedByChain', () => {
   test('walks upward from selected along the hottest importers', () => {
-    // Graph: X→A→B  (A is imported by X, B is imported by A)
-    // selected = A.  Up-chain should visit X (the importer of A).
+    /*
+      Graph: X→A→B  (A is imported by X, B is imported by A)
+      selected = A.  Up-chain should visit X (the importer of A).
+    */
     const db = makeStorage([
       { from: '/x.ts', to: '/a.ts' },
       { from: '/a.ts', to: '/b.ts' },
@@ -173,8 +156,10 @@ describe('buildImportedByChain', () => {
   });
 
   test('selected node does not appear in the up-chain (cycle guard)', () => {
-    // Cycle: A imports B, B imports A.  Starting from A, up-chain
-    // should NOT contain A again.
+    /*
+      Cycle: A imports B, B imports A.  Starting from A, up-chain
+      should NOT contain A again.
+    */
     const db = makeStorage([
       { from: '/a.ts', to: '/b.ts' },
       { from: '/b.ts', to: '/a.ts' },
@@ -195,7 +180,9 @@ describe('buildImportedByChain', () => {
 
 describe('buildImportChain', () => {
   test('walks downward from selected along the hottest imports', () => {
-    // Graph: X→A→B  selected = A.  Down-chain should visit B.
+    /*
+      Graph: X→A→B  selected = A.  Down-chain should visit B.
+    */
     const db = makeStorage([
       { from: '/x.ts', to: '/a.ts' },
       { from: '/a.ts', to: '/b.ts' },
@@ -230,10 +217,6 @@ describe('buildImportChain', () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// hotChain composition
-// ---------------------------------------------------------------------------
 
 describe('hotChain composition', () => {
   test('full chain has no duplicate paths for a linear graph', () => {
