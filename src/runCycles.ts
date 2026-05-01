@@ -572,8 +572,10 @@ function hasTerminalCapabilities(): { unicode: boolean; color: boolean } {
     )
   );
 
-  // Basic Unicode support detection - assume modern terminals support it
-  // unless explicitly disabled
+  /*
+    Basic Unicode support detection - assume modern terminals support it
+    unless explicitly disabled.
+  */
   const unicodeSupport = process.env.TERM !== 'dumb' && 
                         process.env.LANG !== 'C' &&
                         !process.env.NO_UNICODE;

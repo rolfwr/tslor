@@ -45,8 +45,10 @@ export function denormalizePath(absolutePath: string, basePath: string): string 
   const base = resolve(basePath);
   const relativePath = relative(base, absolutePath);
   
-  // If the relative path is shorter and doesn't go up too many levels, use it
-  // Otherwise, keep the absolute path for clarity
+  /*
+    If the relative path is shorter and doesn't go up too many levels, use it.
+    Otherwise, keep the absolute path for clarity.
+  */
   if (relativePath.length < absolutePath.length && !relativePath.startsWith("../../..")) {
     return relativePath;
   }

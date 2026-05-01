@@ -328,9 +328,11 @@ async function createImportDirectlyPlan(
         originalChecksum: fileChecksum
       });
 
-      // Create undo change to restore original content.
-      // This enables rollback if verification fails after applying the changes.
-      // The undo operation restores the file to its pre-refactoring state.
+      /*
+        Create undo change to restore original content.
+        This enables rollback if verification fails after applying the changes.
+        The undo operation restores the file to its pre-refactoring state.
+      */
       undo.push({
         type: 'modify-file',
         path: filePath,

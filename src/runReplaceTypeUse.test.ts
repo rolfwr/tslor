@@ -70,9 +70,11 @@ test('different target module computes correct relative path', () => {
 });
 
 test('relative import matches when source-module is a package specifier (same target module)', () => {
-  // Bug: files using relative imports are found by the index but skipped by analyzeImports
-  // because moduleSpecMatches cannot bridge './item' vs '@pkg/entity/item'.
-  // The resolvedExporterPath lets analyzeImports resolve the relative import and match.
+  /*
+    Bug: files using relative imports are found by the index but skipped by analyzeImports
+    because moduleSpecMatches cannot bridge './item' vs '@pkg/entity/item'.
+    The resolvedExporterPath lets analyzeImports resolve the relative import and match.
+  */
   const content = `import type { Item } from './item';\nconst x: Item = {};`;
   const result = replaceTypeInFile(
     '/repo/packages/server-common/src/entity/itemCharacteristics.ts', content,
@@ -102,8 +104,10 @@ test('relative import matches when source and target are different package modul
 });
 
 test('does not match same-named symbol from a different module', () => {
-  // File imports Item from searchResultHit, NOT from entity/item.
-  // The exporter path is from the wrong module — should be rejected.
+  /*
+    File imports Item from searchResultHit, NOT from entity/item.
+    The exporter path is from the wrong module — should be rejected.
+  */
   const content = `import type { Item } from '../dto/searchResultHit';\nconst x: Item = {};`;
   const result = replaceTypeInFile(
     '/repo/common/src/item/media.ts', content,

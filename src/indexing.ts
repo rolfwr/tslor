@@ -111,8 +111,10 @@ async function getWorkerFile(): Promise<URL> {
   if (!import.meta.url.endsWith('.ts')) {
     return new URL('./indexingWorker.mjs', import.meta.url);
   }
-  // In development (tsx mode), compile the worker to plain JS using esbuild.
-  // Write adjacent to node_modules so external packages resolve correctly.
+  /*
+    In development (tsx mode), compile the worker to plain JS using esbuild.
+    Write adjacent to node_modules so external packages resolve correctly.
+  */
   const { build } = await import('esbuild');
   const { mkdir } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
@@ -1038,26 +1040,34 @@ function isPropertyName(node: ts.Node): boolean {
     return false;
   }
 
-  // Check if this is the property name in a PropertyAccessExpression
-  // e.g., in `window.global`, `global` is the property name
+  /*
+    Check if this is the property name in a PropertyAccessExpression.
+    e.g., in `window.global`, `global` is the property name.
+  */
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
     return true;
   }
 
-  // Check if this is a property signature in an interface/type
-  // e.g., in `interface Foo { process: string }`, `process` is the property name
+  /*
+    Check if this is a property signature in an interface/type.
+    e.g., in `interface Foo { process: string }`, `process` is the property name.
+  */
   if (ts.isPropertySignature(parent) && parent.name === node) {
     return true;
   }
 
-  // Check if this is a property declaration in a class
-  // e.g., in `class Foo { process: string }`, `process` is the property name
+  /*
+    Check if this is a property declaration in a class.
+    e.g., in `class Foo { process: string }`, `process` is the property name.
+  */
   if (ts.isPropertyDeclaration(parent) && parent.name === node) {
     return true;
   }
 
-  // Check if this is a property assignment in an object literal
-  // e.g., in `{ process: value }`, `process` is the property name
+  /*
+    Check if this is a property assignment in an object literal.
+    e.g., in `{ process: value }`, `process` is the property name.
+  */
   if (ts.isPropertyAssignment(parent) && parent.name === node) {
     return true;
   }
@@ -1223,8 +1233,10 @@ function parseImportDeclaration(
         throw new Error('No name found');
       }
 
-      // NOTE: Import aliases (import { foo as bar }) are intentionally not supported.
-      // These will be handled by a separate `tslor normalize-imports` command.
+      /*
+        NOTE: Import aliases (import { foo as bar }) are intentionally not supported.
+        These will be handled by a separate `tslor normalize-imports` command.
+      */
       const importName = name.getText();
       const exportName = name.getText();
 
@@ -1443,9 +1455,11 @@ function parseExportDeclaration(
       staticModuleInfo.exportedNames.add(name);
     });
   } else {
-    // Handle namespace re-exports (export * from 'module')
-    // For now, we'll skip these as they're less common and harder to handle
-    // TODO: Add support for namespace re-exports if needed
+    /*
+      Handle namespace re-exports (export * from 'module').
+      For now, we'll skip these as they're less common and harder to handle.
+      TODO: Add support for namespace re-exports if needed.
+    */
   }
 }
 

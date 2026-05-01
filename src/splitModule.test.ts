@@ -377,10 +377,7 @@ export function simpleFormat(date: Date): string {
   
   // Verify processFile has correct import dependencies
   const processFileUsage = newImportUsages.find(u => u.symbol === 'processFile');
-  assert.isDefined(processFileUsage, 'processFile should be analyzed');
-  if (processFileUsage === undefined) {
-    throw new Error('Expected processFileUsage');
-  }
+  assertDefined(processFileUsage, 'processFile should be analyzed');
 
   // Should detect usage of multiple imports from different modules
   const expectedModules = new Set(['date-fns', 'fs', 'path', './utils']);
@@ -451,9 +448,7 @@ const CONSTANT_VALUE = 42;
   assertDefined(formatDate.jsDocs, 'formatDate should have JSDoc');
   assert.isTrue(formatDate.jsDocs.length > 0);
   const firstDoc = formatDate.jsDocs.at(0);
-  if (firstDoc === undefined) {
-    throw new Error('Expected first JSDoc comment');
-  }
+  assertDefined(firstDoc, 'Expected first JSDoc comment');
   assert.include(firstDoc.getInnerText(), 'Formats a date to ISO string');
   
   // Verify we have the actual AST node, not just text
@@ -522,9 +517,7 @@ function processData(data: unknown): unknown {
   assertDefined(formatDateUsage, 'formatDate usage should be found');
   assert.equal(formatDateUsage.usesImports.length, 1);
   const firstImport = formatDateUsage.usesImports.at(0);
-  if (firstImport === undefined) {
-    throw new Error('Expected first import');
-  }
+  assertDefined(firstImport, 'Expected first import');
   assert.equal(firstImport.moduleSpec, 'date-fns');
   assert.equal(firstImport.importedName, 'format');
   

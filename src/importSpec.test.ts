@@ -4,6 +4,18 @@ import { assert, test } from 'vitest'
 import { modulePathToImportSpecAlias } from './importSpec';
 import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 
+/*
+  Helper: assert that a value is defined and narrow its type.
+  vitest's assert.isDefined doesn't carry a type predicate, so this
+  wrapper bridges the gap without dead defensive code.
+*/
+function assertNotNull<T>(value: T, message?: string): NonNullable<T> {
+  assert.isDefined(value, message);
+  // RATIONALE: type-erasure mechanism for test scaffolding
+  // ast-grep-ignore: no-type-assertion
+  return value as NonNullable<T>;
+}
+
 test('importSpec', () => {
   const testCase = {
     compilerOptions: {
@@ -108,9 +120,11 @@ export function qux() {
 });
 
 test.skip('Parse import aliases correctly (normalize-first strategy)', () => {
-  // NOTE: Import aliases are intentionally NOT supported in core refactoring logic.
-  // These will be handled by a separate `tslor normalize-imports` command that
-  // converts aliases to straightforward syntax before refactoring operations.
+  /*
+    NOTE: Import aliases are intentionally NOT supported in core refactoring logic.
+    These will be handled by a separate `tslor normalize-imports` command that
+    converts aliases to straightforward syntax before refactoring operations.
+  */
   const src = `
 import { format as formatDate, parse as parseDate } from 'date-fns';
 import { join as pathJoin } from 'path';
@@ -141,21 +155,13 @@ export function processFile(filename: string, content: string): string {
   assert.equal(info.unresolvedExportsByImportNames.get('pathJoin')?.moduleSpec, 'path');
   
   // identifierUses should use the local aliased names
-  const processFileUses = info.identifierUses.get('processFile');
-  assert.isDefined(processFileUses);
-  if (!processFileUses) {
-    throw new Error('Expected processFileUses');
-  }
+  const processFileUses = assertNotNull(info.identifierUses.get('processFile'));
   assert.include(processFileUses, 'parseDate');
   assert.include(processFileUses, 'formatDate');
   assert.include(processFileUses, 'pathJoin');
 
   // Export should show transitive dependency on the original export names
-  const processFileExport = info.exports.get('processFile');
-  assert.isDefined(processFileExport);
-  if (!processFileExport) {
-    throw new Error('Expected processFileExport');
-  }
+  const processFileExport = assertNotNull(info.exports.get('processFile'));
   const expectedUses = [
     { name: 'format', moduleSpec: 'date-fns' },
     { name: 'parse', moduleSpec: 'date-fns' },
@@ -165,9 +171,11 @@ export function processFile(filename: string, content: string): string {
 });
 
 test.skip('Parse re-exports correctly (normalize-first strategy)', () => {
-  // NOTE: Complex re-exports are intentionally NOT supported in core refactoring logic.
-  // These will be handled by a separate `tslor normalize-imports` command that
-  // converts complex re-exports to explicit named exports before refactoring operations.
+  /*
+    NOTE: Complex re-exports are intentionally NOT supported in core refactoring logic.
+    These will be handled by a separate `tslor normalize-imports` command that
+    converts complex re-exports to explicit named exports before refactoring operations.
+  */
   const src = `
 import { format } from 'date-fns';
 export { join } from 'path';
@@ -193,9 +201,11 @@ export function processData(data: string): string {
 });
 
 test.skip('Parse namespace imports correctly (normalize-first strategy)', () => {
-  // NOTE: Namespace imports are intentionally NOT supported in core refactoring logic.
-  // These will be handled by a separate `tslor normalize-imports` command that
-  // converts namespace imports to explicit named imports before refactoring operations.
+  /*
+    NOTE: Namespace imports are intentionally NOT supported in core refactoring logic.
+    These will be handled by a separate `tslor normalize-imports` command that
+    converts namespace imports to explicit named imports before refactoring operations.
+  */
   const src = `
 import * as fs from 'fs';
 import * as path from 'path';
@@ -216,11 +226,7 @@ export function readConfig(filename: string): string {
   assert.deepEqual(info.imports, expectedImports);
   
   // Should track namespace usage
-  const readConfigUses = info.identifierUses.get('readConfig');
-  assert.isDefined(readConfigUses);
-  if (!readConfigUses) {
-    throw new Error('Expected readConfigUses');
-  }
+  const readConfigUses = assertNotNull(info.identifierUses.get('readConfig'));
   assert.include(readConfigUses, 'path');
   assert.include(readConfigUses, 'fs');
 });

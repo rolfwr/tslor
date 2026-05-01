@@ -82,10 +82,12 @@ export interface RequiredImport {
 export function buildIntraModuleDependencies(moduleInfo: StaticModuleInfo): IntraModuleDependencies {
   const exports = new Set<string>(moduleInfo.exports.keys());
   
-  // Collect all symbols defined in this module:
-  // 1. All symbols that use other symbols (keys of identifierUses)
-  // 2. All exported symbols (from exports)
-  // Note: We explicitly exclude imported symbols
+  /*
+    Collect all symbols defined in this module:
+    1. All symbols that use other symbols (keys of identifierUses)
+    2. All exported symbols (from exports)
+    Note: We explicitly exclude imported symbols.
+  */
   const allDefinedSymbols = new Set<string>();
   
   // Add all symbols that use other symbols (these are locally defined)
@@ -105,8 +107,10 @@ export function buildIntraModuleDependencies(moduleInfo: StaticModuleInfo): Intr
     
     for (const usedSymbol of uses) {
       cleanDeps.add(usedSymbol);
-      // Only add the used symbol to our definitions if it's NOT an import
-      // Check if this symbol is imported (appears in unresolvedExportsByImportNames)
+      /*
+        Only add the used symbol to our definitions if it's NOT an import.
+        Check if this symbol is imported (appears in unresolvedExportsByImportNames).
+      */
       if (!moduleInfo.unresolvedExportsByImportNames.has(usedSymbol)) {
         // It's a locally defined symbol, add it
         allDefinedSymbols.add(usedSymbol);
@@ -209,8 +213,10 @@ export function analyzeSplit(deps: IntraModuleDependencies, targetSymbol: string
   
   const allTransitiveDeps = computeTransitiveDependencies(deps, targetSymbol);
   
-  // Filter to only include dependencies that are actually defined in this module
-  // (exclude imported symbols)
+  /*
+    Filter to only include dependencies that are actually defined in this module
+    (exclude imported symbols).
+  */
   const requiredDeps = new Set<string>();
   for (const dep of allTransitiveDeps) {
     if (deps.definitions.has(dep)) {
@@ -626,8 +632,10 @@ export function generateNewModuleSource(
     addImportStructureToFile(newFile, imp);
   }
   
-  // Add symbol definitions by inserting their full AST text
-  // This preserves everything: methods, properties, comments, JSDoc, formatting, etc.
+  /*
+    Add symbol definitions by inserting their full AST text.
+    This preserves everything: methods, properties, comments, JSDoc, formatting, etc.
+  */
   const sortedDefinitions = symbolDefinitions.sort((a, b) => a.startPos - b.startPos);
   
   for (const def of sortedDefinitions) {
@@ -657,10 +665,12 @@ export function removeSymbolsFromSource(
   const timestamp = Date.now() + Math.random();
   const modifiedSourceFile = sourceFile.copy(`modified-${timestamp}.ts`);
   
-  // Use replaceWithText('') instead of remove() to preserve leading trivia
-  // (blank lines between declarations). remove() eats leading trivia;
-  // replaceWithText('') replaces from getStart(true) to getEnd(), keeping
-  // the whitespace that separated this node from the previous one.
+  /*
+    Use replaceWithText('') instead of remove() to preserve leading trivia
+    (blank lines between declarations). remove() eats leading trivia;
+    replaceWithText('') replaces from getStart(true) to getEnd(), keeping
+    the whitespace that separated this node from the previous one.
+  */
 
   // Remove function declarations
   modifiedSourceFile.getFunctions().forEach(func => {
@@ -922,8 +932,10 @@ export function addImportForMovedSymbols(
   // Classify symbols by kind (type vs value)
   const { typeSymbols, valueSymbols } = classifySymbolsByKind(movedSymbols, symbolDefinitions);
   
-  // Determine which symbols need imports
-  // When re-exporting, only import symbols that are actually used in the file
+  /*
+    Determine which symbols need imports.
+    When re-exporting, only import symbols that are actually used in the file.
+  */
   const symbolsToImport = shouldReExport
     ? findReferencedSymbols(sourceFile, movedSymbols)
     : movedSymbols;

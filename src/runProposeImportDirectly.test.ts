@@ -86,8 +86,10 @@ export function useCustomIcons(): ItemCustomIconsDto {
   // CRITICAL: The plan should have undo information
   assert(plan.undo && plan.undo.length > 0, 'Plan should have undo information for rollback');
 
-  // Verify that undo changes would restore the original imports
-  // Each change should have a corresponding undo that reverses it
+  /*
+    Verify that undo changes would restore the original imports.
+    Each change should have a corresponding undo that reverses it.
+  */
   assert.equal(plan.changes.length, plan.undo.length, 'Should have same number of changes and undo operations');
 
   // Check that undo operations are the reverse of changes
@@ -101,8 +103,10 @@ export function useCustomIcons(): ItemCustomIconsDto {
     assert.equal(change.type, undo.type, `Change and undo types should match for index ${i}`);
 
     if (change.type === 'modify-file' && undo.type === 'modify-file') {
-      // The undo content should restore the original file content
-      // For import changes, this means changing back from './original' to './reexport'
+      /*
+        The undo content should restore the original file content.
+        For import changes, this means changing back from './original' to './reexport'.
+      */
       assert(undo.content.includes("from './reexport'"), `Undo should restore import from reexport, got: ${undo.content}`);
       assert(!undo.content.includes("from './original'"), `Undo should not contain import from original, got: ${undo.content}`);
     }
@@ -166,13 +170,17 @@ import { realFunction, fakeFunction } from './vueCompat';
   const fileSystem = new InMemoryFileSystem(new Map());
   const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
 
-  // The plan should have NO changes for consumer.ts because fakeFunction doesn't exist in realModule
-  // Only realFunction should be changed, but since it's already importing from vueCompat,
-  // and vueCompat re-exports it from realModule, it should be changed.
-  // But fakeFunction should NOT be changed because it doesn't exist in realModule.
+  /*
+    The plan should have NO changes for consumer.ts because fakeFunction doesn't exist in realModule.
+    Only realFunction should be changed, but since it's already importing from vueCompat,
+    and vueCompat re-exports it from realModule, it should be changed.
+    But fakeFunction should NOT be changed because it doesn't exist in realModule.
+  */
 
-  // Check that consumer.ts is not in the modified files, or if it is,
-  // that the import still references vueCompat for fakeFunction
+  /*
+    Check that consumer.ts is not in the modified files, or if it is,
+    that the import still references vueCompat for fakeFunction.
+  */
   const consumerChanges = plan.changes.filter(change =>
     change.type === 'modify-file' && change.path.endsWith('consumer.ts')
   );

@@ -172,14 +172,18 @@ function tryMergeDonorIntoWinner(
   winnerDefaultName: string | undefined,
   winnerComments: string[]
 ): boolean {
-  // Don't merge imports with different leading comments — they may be
-  // build directives (e.g., /*VUE2*/) that control conditional compilation.
+  /*
+    Don't merge imports with different leading comments — they may be
+    build directives (e.g., a VUE2 marker) that control conditional compilation.
+  */
   if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) {
     return false;
   }
 
-  // TypeScript forbids `import type Default, { Named } from '...'` (TS1363).
-  // Skip merge if the result would have both a default and named imports on a type-only import.
+  /*
+    TypeScript forbids `import type Default, { Named } from '...'` (TS1363).
+    Skip merge if the result would have both a default and named imports on a type-only import.
+  */
   if (wouldViolateTypeOnlyRestriction(winner, donor, winnerDefaultName)) {
     return false;
   }
