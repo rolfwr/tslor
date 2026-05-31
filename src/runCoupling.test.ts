@@ -73,4 +73,51 @@ class Example {
       rmSync(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  test('ignores this.X from nested non-arrow this scopes', () => {
+    const tempDirectory = mkdtempSync(join(tmpdir(), 'tslor-coupling-'));
+    const filePath = join(tempDirectory, 'NestedScopes.ts');
+
+    try {
+      writeFileSync(
+        filePath,
+        `
+class NestedScopes {
+  private count = 0;
+
+  private wrapper(): void {
+    const callback = function(this: { count: number }): void {
+      this.count = this.count + 1;
+    };
+
+    class Local {
+      private count = 0;
+
+      private readonly update = () => {
+        this.count = this.count + 1;
+      };
+
+      run(): void {
+        this.count = this.count + 1;
+        this.update();
+      }
+    }
+
+    callback.call({ count: 1 });
+    void Local;
+  }
+}
+`
+      );
+
+      const graph = parseClassCoupling(filePath, 'NestedScopes');
+
+      assert.deepEqual(normalizeGraph(graph), {
+        count: [],
+        wrapper: [],
+      });
+    } finally {
+      rmSync(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,4 +1,10 @@
-import { Node, Project, SyntaxKind, type ClassDeclaration } from 'ts-morph';
+import {
+  Node,
+  Project,
+  SyntaxKind,
+  type ClassDeclaration,
+  type ClassElement,
+} from 'ts-morph';
 
 /**
  * Directed member dependency graph.
@@ -9,6 +15,7 @@ import { Node, Project, SyntaxKind, type ClassDeclaration } from 'ts-morph';
 export type CouplingGraph = Map<string, Set<string>>;
 
 interface ClassMemberDefinition {
+  declaration: ClassElement;
   name: string;
   executableBody: Node | null;
 }
@@ -85,6 +92,7 @@ function collectClassMembers(classDeclaration: ClassDeclaration): ClassMemberDef
     }
 
     members.push({
+      declaration: member,
       name,
       executableBody: getExecutableBody(member),
     });
@@ -105,11 +113,42 @@ function createGraphNodes(members: ReadonlyArray<ClassMemberDefinition>): Coupli
   return graph;
 }
 
-function collectThisAccessDependencies(body: Node): Set<string> {
+function isThisBindingScope(node: Node): boolean {
+  return (
+    Node.isPropertyDeclaration(node) ||
+    Node.isMethodDeclaration(node) ||
+    Node.isConstructorDeclaration(node) ||
+    Node.isFunctionDeclaration(node) ||
+    Node.isFunctionExpression(node) ||
+    Node.isGetAccessorDeclaration(node) ||
+    Node.isSetAccessorDeclaration(node)
+  );
+}
+
+function isClassThisAccess(access: Node, owningDeclaration: ClassElement): boolean {
+  const nearestNonArrowThisScope = access.getFirstAncestor((ancestor) => {
+    if (Node.isArrowFunction(ancestor)) {
+      return false;
+    }
+
+    return isThisBindingScope(ancestor);
+  });
+
+  return nearestNonArrowThisScope === owningDeclaration;
+}
+
+function collectThisAccessDependencies(
+  body: Node,
+  owningDeclaration: ClassElement
+): Set<string> {
   const dependencies = new Set<string>();
 
   for (const access of body.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
     if (!Node.isThisExpression(access.getExpression())) {
+      continue;
+    }
+
+    if (!isClassThisAccess(access, owningDeclaration)) {
       continue;
     }
 
@@ -136,7 +175,10 @@ function populateGraphEdges(
       `coupling graph node for member ${member.name}`
     );
 
-    for (const dependencyName of collectThisAccessDependencies(member.executableBody)) {
+    for (const dependencyName of collectThisAccessDependencies(
+      member.executableBody,
+      member.declaration
+    )) {
       if (dependencyName === member.name) {
         continue;
       }
