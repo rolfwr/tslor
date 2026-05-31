@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { assert, describe, test } from 'vitest';
-import { parseClassCoupling } from './runCoupling';
+import { parseClassCoupling, parseModuleCoupling } from './runCoupling';
 import type { CouplingGraph } from './runCoupling';
 
 function withTemporarySourceFile(
@@ -144,6 +144,71 @@ class NestedScopes {
         assert.deepEqual(normalizeGraph(graph), {
           count: [],
           wrapper: [],
+        });
+      }
+    );
+  });
+});
+
+describe('parseModuleCoupling', () => {
+  test('parses module declarations and captures bare-name dependencies', () => {
+    withTemporarySourceFile(
+      'ModuleExample.ts',
+      `
+import { externalThing } from './external';
+
+const shared = 1;
+const makeShared = () => shared;
+const alias = function namedAlias() {
+  return makeShared();
+};
+const first = 1,
+  second = () => makeShared();
+
+interface ModuleShape {
+  value: number;
+}
+
+type ModuleId = string;
+
+class Worker {
+  constructor() {
+    void shared;
+  }
+
+  run(): number {
+    return makeShared();
+  }
+
+  static create(): Worker {
+    return new Worker();
+  }
+}
+
+function orchestrate(): number {
+  void externalThing;
+  void missingName;
+  return makeShared() + shared + Math.max(1, 2);
+}
+
+function recursive(): number {
+  return recursive();
+}
+`,
+      (filePath) => {
+        const graph = parseModuleCoupling(filePath);
+
+        assert.deepEqual(normalizeGraph(graph), {
+          ModuleId: [],
+          ModuleShape: [],
+          Worker: ['makeShared', 'shared'],
+          alias: ['makeShared'],
+          first: [],
+          makeShared: ['shared'],
+          orchestrate: ['makeShared', 'shared'],
+          recursive: [],
+          second: ['makeShared'],
+          shared: [],
         });
       }
     );

@@ -4,14 +4,15 @@ import {
   SyntaxKind,
   type ClassDeclaration,
   type ClassElement,
+  type Identifier,
   type PropertyAccessExpression,
+  type SourceFile,
 } from 'ts-morph';
 
 /**
  * Directed member dependency graph.
  *
- * Keys are class member names, values are names of members the key depends on
- * via `this.X` references in executable member bodies.
+ * Keys are declaration names, values are names of declarations the key depends on.
  */
 export type CouplingGraph = Map<string, Set<string>>;
 
@@ -19,6 +20,17 @@ interface ClassMemberDefinition {
   declaration: ClassElement;
   name: string;
   executableBody: Node | null;
+}
+
+interface ModuleMemberDefinition {
+  declarations: ReadonlyArray<Node>;
+  executableBodies: ReadonlyArray<Node>;
+  name: string;
+}
+
+interface MutableModuleMemberDefinition {
+  declarations: Node[];
+  executableBodies: Node[];
 }
 
 function requiredMapGet<K, V>(
@@ -34,15 +46,18 @@ function requiredMapGet<K, V>(
   return value;
 }
 
-function findTargetClass(filePath: string, className: string): ClassDeclaration {
+function loadSourceFile(filePath: string): SourceFile {
   const project = new Project({
     skipAddingFilesFromTsConfig: true,
   });
 
-  const sourceFile = project.addSourceFileAtPath(filePath);
+  return project.addSourceFileAtPath(filePath);
+}
+
+function findTargetClass(sourceFile: SourceFile, className: string): ClassDeclaration {
   const classDeclaration = sourceFile.getClass(className);
   if (classDeclaration === undefined) {
-    throw new Error(`Class ${className} not found in ${filePath}`);
+    throw new Error(`Class ${className} not found in ${sourceFile.getFilePath()}`);
   }
 
   return classDeclaration;
@@ -102,12 +117,12 @@ function collectClassMembers(classDeclaration: ClassDeclaration): ClassMemberDef
   return members;
 }
 
-function createGraphNodes(members: ReadonlyArray<ClassMemberDefinition>): CouplingGraph {
+function createGraphNodes(memberNames: ReadonlyArray<string>): CouplingGraph {
   const graph: CouplingGraph = new Map();
 
-  for (const member of members) {
-    if (!graph.has(member.name)) {
-      graph.set(member.name, new Set());
+  for (const memberName of memberNames) {
+    if (!graph.has(memberName)) {
+      graph.set(memberName, new Set());
     }
   }
 
@@ -173,7 +188,7 @@ function collectThisAccessDependencies(
   return dependencies;
 }
 
-function populateGraphEdges(
+function populateClassGraphEdges(
   graph: CouplingGraph,
   members: ReadonlyArray<ClassMemberDefinition>
 ): void {
@@ -209,9 +224,298 @@ function populateGraphEdges(
 
 function buildClassCouplingGraph(classDeclaration: ClassDeclaration): CouplingGraph {
   const members = collectClassMembers(classDeclaration);
-  const graph = createGraphNodes(members);
+  const graph = createGraphNodes(members.map((member) => member.name));
 
-  populateGraphEdges(graph, members);
+  populateClassGraphEdges(graph, members);
+
+  return graph;
+}
+
+function addModuleMember(
+  members: Map<string, MutableModuleMemberDefinition>,
+  name: string,
+  declaration: Node,
+  executableBodies: ReadonlyArray<Node>
+): void {
+  const existing = members.get(name);
+  if (existing === undefined) {
+    members.set(name, {
+      declarations: [declaration],
+      executableBodies: [...executableBodies],
+    });
+    return;
+  }
+
+  existing.declarations.push(declaration);
+  existing.executableBodies.push(...executableBodies);
+}
+
+function collectClassExecutableBodies(classDeclaration: ClassDeclaration): Node[] {
+  const executableBodies: Node[] = [];
+
+  for (const member of classDeclaration.getMembers()) {
+    if (Node.isMethodDeclaration(member) || Node.isConstructorDeclaration(member)) {
+      const body = member.getBody();
+      if (body !== undefined) {
+        executableBodies.push(body);
+      }
+      continue;
+    }
+
+    if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
+      const body = member.getBody();
+      if (body !== undefined) {
+        executableBodies.push(body);
+      }
+    }
+  }
+
+  return executableBodies;
+}
+
+function getFunctionInitializerBody(variableDeclaration: Node): Node | null {
+  if (!Node.isVariableDeclaration(variableDeclaration)) {
+    return null;
+  }
+
+  const initializer = variableDeclaration.getInitializer();
+  if (initializer === undefined) {
+    return null;
+  }
+
+  if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+    return initializer.getBody();
+  }
+
+  return null;
+}
+
+function collectFunctionDeclarationMember(
+  statement: Node,
+  memberCollectors: Map<string, MutableModuleMemberDefinition>
+): boolean {
+  if (!Node.isFunctionDeclaration(statement)) {
+    return false;
+  }
+
+  const name = statement.getName();
+  if (name === undefined) {
+    return true;
+  }
+
+  const body = statement.getBody();
+  addModuleMember(memberCollectors, name, statement, body === undefined ? [] : [body]);
+
+  return true;
+}
+
+function collectClassDeclarationMember(
+  statement: Node,
+  memberCollectors: Map<string, MutableModuleMemberDefinition>
+): boolean {
+  if (!Node.isClassDeclaration(statement)) {
+    return false;
+  }
+
+  const name = statement.getName();
+  if (name === undefined) {
+    return true;
+  }
+
+  addModuleMember(
+    memberCollectors,
+    name,
+    statement,
+    collectClassExecutableBodies(statement)
+  );
+
+  return true;
+}
+
+function collectVariableStatementMembers(
+  statement: Node,
+  memberCollectors: Map<string, MutableModuleMemberDefinition>
+): boolean {
+  if (!Node.isVariableStatement(statement)) {
+    return false;
+  }
+
+  for (const declaration of statement.getDeclarations()) {
+    const executableBody = getFunctionInitializerBody(declaration);
+    addModuleMember(
+      memberCollectors,
+      declaration.getName(),
+      declaration,
+      executableBody === null ? [] : [executableBody]
+    );
+  }
+
+  return true;
+}
+
+function collectInterfaceDeclarationMember(
+  statement: Node,
+  memberCollectors: Map<string, MutableModuleMemberDefinition>
+): boolean {
+  if (!Node.isInterfaceDeclaration(statement)) {
+    return false;
+  }
+
+  addModuleMember(memberCollectors, statement.getName(), statement, []);
+
+  return true;
+}
+
+function collectTypeAliasDeclarationMember(
+  statement: Node,
+  memberCollectors: Map<string, MutableModuleMemberDefinition>
+): boolean {
+  if (!Node.isTypeAliasDeclaration(statement)) {
+    return false;
+  }
+
+  addModuleMember(memberCollectors, statement.getName(), statement, []);
+
+  return true;
+}
+
+function toModuleMemberDefinitions(
+  memberCollectors: ReadonlyMap<string, MutableModuleMemberDefinition>
+): ModuleMemberDefinition[] {
+  const members: ModuleMemberDefinition[] = [];
+
+  for (const [name, memberCollector] of memberCollectors) {
+    members.push({
+      declarations: memberCollector.declarations,
+      executableBodies: memberCollector.executableBodies,
+      name,
+    });
+  }
+
+  return members;
+}
+
+function collectModuleMembers(sourceFile: SourceFile): ModuleMemberDefinition[] {
+  const memberCollectors = new Map<string, MutableModuleMemberDefinition>();
+
+  for (const statement of sourceFile.getStatements()) {
+    if (collectFunctionDeclarationMember(statement, memberCollectors)) {
+      continue;
+    }
+
+    if (collectClassDeclarationMember(statement, memberCollectors)) {
+      continue;
+    }
+
+    if (collectVariableStatementMembers(statement, memberCollectors)) {
+      continue;
+    }
+
+    if (collectInterfaceDeclarationMember(statement, memberCollectors)) {
+      continue;
+    }
+
+    collectTypeAliasDeclarationMember(statement, memberCollectors);
+  }
+
+  return toModuleMemberDefinitions(memberCollectors);
+}
+
+function getIdentifiers(node: Node): ReadonlyArray<Identifier> {
+  const descendantIdentifiers = node.getDescendantsOfKind(SyntaxKind.Identifier);
+
+  if (Node.isIdentifier(node)) {
+    return [node, ...descendantIdentifiers];
+  }
+
+  return descendantIdentifiers;
+}
+
+function isBareIdentifier(identifier: Identifier): boolean {
+  const parent = identifier.getParent();
+  if (parent === undefined) {
+    return true;
+  }
+
+  if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === identifier) {
+    return false;
+  }
+
+  if (Node.isQualifiedName(parent) && parent.getRight() === identifier) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveModuleDependencyName(
+  identifier: Identifier,
+  moduleDeclarations: ReadonlyMap<string, ReadonlyArray<Node>>
+): string | null {
+  if (!isBareIdentifier(identifier)) {
+    return null;
+  }
+
+  const candidateName = identifier.getText();
+  const candidateDeclarations = moduleDeclarations.get(candidateName);
+  if (candidateDeclarations === undefined) {
+    return null;
+  }
+
+  const symbol = identifier.getSymbol();
+  if (symbol === undefined) {
+    return null;
+  }
+
+  const resolvedSymbol = symbol.getAliasedSymbol() ?? symbol;
+  const symbolDeclarations = resolvedSymbol.getDeclarations();
+
+  for (const symbolDeclaration of symbolDeclarations) {
+    if (candidateDeclarations.includes(symbolDeclaration)) {
+      return candidateName;
+    }
+  }
+
+  return null;
+}
+
+function populateModuleGraphEdges(
+  graph: CouplingGraph,
+  members: ReadonlyArray<ModuleMemberDefinition>
+): void {
+  const declarationsByName = new Map<string, ReadonlyArray<Node>>();
+  for (const member of members) {
+    declarationsByName.set(member.name, member.declarations);
+  }
+
+  for (const member of members) {
+    const sourceDependencies = requiredMapGet(
+      graph,
+      member.name,
+      `coupling graph node for declaration ${member.name}`
+    );
+
+    for (const executableBody of member.executableBodies) {
+      for (const identifier of getIdentifiers(executableBody)) {
+        const dependencyName = resolveModuleDependencyName(
+          identifier,
+          declarationsByName
+        );
+        if (dependencyName === null || dependencyName === member.name) {
+          continue;
+        }
+
+        sourceDependencies.add(dependencyName);
+      }
+    }
+  }
+}
+
+function buildModuleCouplingGraph(sourceFile: SourceFile): CouplingGraph {
+  const members = collectModuleMembers(sourceFile);
+  const graph = createGraphNodes(members.map((member) => member.name));
+
+  populateModuleGraphEdges(graph, members);
 
   return graph;
 }
@@ -224,5 +528,17 @@ function buildClassCouplingGraph(classDeclaration: ClassDeclaration): CouplingGr
  * executable member body to another member `X` in the same class.
  */
 export function parseClassCoupling(filePath: string, className: string): CouplingGraph {
-  return buildClassCouplingGraph(findTargetClass(filePath, className));
+  const sourceFile = loadSourceFile(filePath);
+  return buildClassCouplingGraph(findTargetClass(sourceFile, className));
+}
+
+/**
+ * Parse module-scope member coupling from one file.
+ *
+ * The graph includes top-level function declarations, class declarations,
+ * variable declarations, interfaces, and type aliases as nodes. Edges are
+ * added for bare-name references that resolve to another module declaration.
+ */
+export function parseModuleCoupling(filePath: string): CouplingGraph {
+  return buildModuleCouplingGraph(loadSourceFile(filePath));
 }
