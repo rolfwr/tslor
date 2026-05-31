@@ -250,24 +250,54 @@ function addModuleMember(
   existing.executableBodies.push(...executableBodies);
 }
 
+function getCallableMemberBody(member: ClassElement): Node | null {
+  if (
+    Node.isMethodDeclaration(member) ||
+    Node.isConstructorDeclaration(member) ||
+    Node.isGetAccessorDeclaration(member) ||
+    Node.isSetAccessorDeclaration(member)
+  ) {
+    return member.getBody() ?? null;
+  }
+
+  return null;
+}
+
+function getPropertyExecutableBodies(member: ClassElement): Node[] {
+  if (!Node.isPropertyDeclaration(member)) {
+    return [];
+  }
+
+  const initializer = member.getInitializer();
+  if (initializer === undefined) {
+    return [];
+  }
+
+  if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+    return [initializer.getBody()];
+  }
+
+  return [initializer];
+}
+
+function getClassMemberExecutableBodies(member: ClassElement): Node[] {
+  const callableBody = getCallableMemberBody(member);
+  if (callableBody !== null) {
+    return [callableBody];
+  }
+
+  if (Node.isClassStaticBlockDeclaration(member)) {
+    return [member.getBody()];
+  }
+
+  return getPropertyExecutableBodies(member);
+}
+
 function collectClassExecutableBodies(classDeclaration: ClassDeclaration): Node[] {
   const executableBodies: Node[] = [];
 
   for (const member of classDeclaration.getMembers()) {
-    if (Node.isMethodDeclaration(member) || Node.isConstructorDeclaration(member)) {
-      const body = member.getBody();
-      if (body !== undefined) {
-        executableBodies.push(body);
-      }
-      continue;
-    }
-
-    if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
-      const body = member.getBody();
-      if (body !== undefined) {
-        executableBodies.push(body);
-      }
-    }
+    executableBodies.push(...getClassMemberExecutableBodies(member));
   }
 
   return executableBodies;

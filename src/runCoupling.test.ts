@@ -213,4 +213,35 @@ function recursive(): number {
       }
     );
   });
+
+  test('captures dependencies from class property initializers and static blocks', () => {
+    withTemporarySourceFile(
+      'ModuleClassInitializers.ts',
+      `
+const shared = 1;
+const makeShared = () => shared;
+const helper = () => 0;
+
+class Worker {
+  private value = shared;
+  private readonly read = () => makeShared();
+
+  static {
+    void shared;
+    void helper();
+  }
+}
+`,
+      (filePath) => {
+        const graph = parseModuleCoupling(filePath);
+
+        assert.deepEqual(normalizeGraph(graph), {
+          Worker: ['helper', 'makeShared', 'shared'],
+          helper: [],
+          makeShared: ['shared'],
+          shared: [],
+        });
+      }
+    );
+  });
 });
