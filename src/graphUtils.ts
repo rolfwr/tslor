@@ -1,10 +1,10 @@
-/**
- * Pure graph algorithms for coupling analysis.
- *
- * All functions operate on directed graphs represented as adjacency maps
- * where `Map<string, Set<string>>` maps each node to the set of nodes
- * it depends on (outgoing edges from that node).
- */
+/*
+  Pure graph algorithms for coupling analysis.
+
+  All functions operate on directed graphs represented as adjacency maps
+  where `ReadonlyMap<string, ReadonlySet<string>>` maps each node to the
+  set of nodes it depends on (outgoing edges from that node).
+*/
 
 /**
  * A strongly-connected component, represented as a sorted non-empty list of member names.
@@ -14,7 +14,7 @@ export type SCC = readonly [string, ...string[]];
 /**
  * Adjacency map: each node maps to the set of nodes it depends on.
  */
-export type AdjacencyMap = Map<string, Set<string>>;
+export type AdjacencyMap = ReadonlyMap<string, ReadonlySet<string>>;
 
 function requiredMapGet<K, V>(
   map: ReadonlyMap<K, V>,
@@ -152,7 +152,7 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
  */
 export function condenseToDAG(
   graph: AdjacencyMap,
-  sccs: SCC[]
+  sccs: ReadonlyArray<SCC>
 ): Map<number, Set<number>> {
   // Map each node to its SCC index
   const nodeToScc = new Map<string, number>();
@@ -196,7 +196,7 @@ export function condenseToDAG(
  * @throws {Error} If `dag` contains a cycle.
  */
 export function computeTopologicalDepth(
-  dag: Map<number, Set<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>
 ): Map<number, number> {
   const depth = new Map<number, number>();
   const visiting = new Set<number>();
