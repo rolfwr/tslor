@@ -137,21 +137,6 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
   return result;
 }
 
-/**
- * Condense SCCs into a DAG.
- *
- * Each SCC becomes a single node. Edges between SCCs are derived from
- * the original graph: if any member of SCC A depends on any member of
- * SCC B, then the condensed DAG has an edge from A to B.
- *
- * @param graph - Original adjacency map
- * @param sccs - Strongly-connected components from `findSCCs()`
- * @returns Adjacency map where keys are SCC indices and values are
- *          sets of SCC indices that the key SCC depends on.
- * @throws {Error} If `sccs` is not a valid partition of graph nodes
- *                 (missing coverage, duplicate membership, or membership
- *                 of nodes that do not exist in the graph).
- */
 function mapNodesToSccIndices(sccs: ReadonlyArray<SCC>): Map<string, number> {
   const nodeToScc = new Map<string, number>();
   for (const [sccIndex, scc] of sccs.entries()) {
@@ -223,6 +208,21 @@ function assertAllSccNodesExistInGraph(
   }
 }
 
+/**
+ * Condense SCCs into a DAG.
+ *
+ * Each SCC becomes a single node. Edges between SCCs are derived from
+ * the original graph: if any member of SCC A depends on any member of
+ * SCC B, then the condensed DAG has an edge from A to B.
+ *
+ * @param graph - Original adjacency map
+ * @param sccs - Strongly-connected components from `findSCCs()`
+ * @returns Adjacency map where keys are SCC indices and values are
+ *          sets of SCC indices that the key SCC depends on.
+ * @throws {Error} If `sccs` is not a valid partition of graph nodes
+ *                 (missing coverage, duplicate membership, or membership
+ *                 of nodes that do not exist in the graph).
+ */
 export function condenseToDAG(
   graph: AdjacencyMap,
   sccs: ReadonlyArray<SCC>
