@@ -7,9 +7,9 @@
  */
 
 /**
- * A strongly-connected component, represented as a sorted list of member names.
+ * A strongly-connected component, represented as a sorted non-empty list of member names.
  */
-export type SCC = ReadonlyArray<string>;
+export type SCC = readonly [string, ...string[]];
 
 /**
  * Adjacency map: each node maps to the set of nodes it depends on.
@@ -66,10 +66,12 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
   function handleNeighbor(node: string, neighbor: string): void {
     if (!indices.has(neighbor)) {
       strongconnect(neighbor);
-      const neighborLowlink = lowlinks.get(neighbor);
-      if (neighborLowlink !== undefined) {
-        lowerLowlink(node, neighborLowlink);
-      }
+      const neighborLowlink = requiredMapGet(
+        lowlinks,
+        neighbor,
+        `lowlink for neighbor node ${neighbor}`
+      );
+      lowerLowlink(node, neighborLowlink);
       return;
     }
 
@@ -77,30 +79,36 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
       return;
     }
 
-    const neighborIndex = indices.get(neighbor);
-    if (neighborIndex !== undefined) {
-      lowerLowlink(node, neighborIndex);
-    }
+    const neighborIndex = requiredMapGet(indices, neighbor, `index for neighbor node ${neighbor}`);
+    lowerLowlink(node, neighborIndex);
   }
 
   function collectRootComponent(root: string): void {
-    const rootLowlink = lowlinks.get(root);
-    const rootIndex = indices.get(root);
-    if (rootLowlink === undefined || rootIndex === undefined || rootLowlink !== rootIndex) {
+    const rootLowlink = requiredMapGet(lowlinks, root, `lowlink for root node ${root}`);
+    const rootIndex = requiredMapGet(indices, root, `index for root node ${root}`);
+    if (rootLowlink !== rootIndex) {
       return;
     }
 
-    const component: string[] = [];
-    while (true) {
+    const firstMember = stack.pop();
+    if (firstMember === undefined) {
+      throw new Error('Tarjan stack underflow while collecting SCC members');
+    }
+
+    onStack.delete(firstMember);
+
+    const component: [string, ...string[]] = [firstMember];
+    let currentMember = firstMember;
+
+    while (currentMember !== root) {
       const popped = stack.pop();
       if (popped === undefined) {
         throw new Error('Tarjan stack underflow while collecting SCC members');
       }
+
       onStack.delete(popped);
       component.push(popped);
-      if (popped === root) {
-        break;
-      }
+      currentMember = popped;
     }
 
     component.sort();
@@ -200,8 +208,8 @@ export function computeTopologicalDepth(
       return knownDepth;
     }
 
-    const deps = dag.get(node);
-    if (deps === undefined || deps.size === 0) {
+    const deps = requiredMapGet(dag, node, `DAG dependencies for SCC ${String(node)}`);
+    if (deps.size === 0) {
       depth.set(node, 0);
       return 0;
     }

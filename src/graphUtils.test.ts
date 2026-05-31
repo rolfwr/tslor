@@ -1,5 +1,6 @@
 import { assert, describe, test } from 'vitest';
 import { findSCCs, condenseToDAG, computeTopologicalDepth } from './graphUtils';
+import type { SCC } from './graphUtils';
 
 // Helper to build an adjacency map from edge tuples
 function buildGraph(edges: [string, string][]): Map<string, Set<string>> {
@@ -33,23 +34,27 @@ function ensureNodes(
   }
 }
 
-/**
- * Normalize SCC output for comparison: sort members within each SCC,
- * then sort SCCs by their first member for deterministic ordering.
- */
-function normalizeSCCs(sccs: ReadonlyArray<ReadonlyArray<string>>): string[][] {
-  return sccs.map(scc => [...scc].sort()).sort((a, b) => {
-    const aFirst = a[0];
-    const bFirst = b[0];
-    if (aFirst === undefined || bFirst === undefined) {
-      return 0;
-    }
-    return aFirst.localeCompare(bFirst);
-  });
+/*
+  Normalize SCC output for comparison: sort members within each SCC,
+  then sort SCCs by their first member for deterministic ordering.
+*/
+function normalizeSCCMembers(scc: SCC): SCC {
+  const sortedMembers = [...scc].sort();
+  const firstMember = sortedMembers[0];
+  if (firstMember === undefined) {
+    throw new Error('Expected SCC to contain at least one member');
+  }
+  return [firstMember, ...sortedMembers.slice(1)];
+}
+
+function normalizeSCCs(sccs: ReadonlyArray<SCC>): string[][] {
+  const normalizedSccs = sccs.map(normalizeSCCMembers);
+  normalizedSccs.sort((a, b) => a[0].localeCompare(b[0]));
+  return normalizedSccs.map(scc => [...scc]);
 }
 
 function mapNodesToSccIndices(
-  sccs: ReadonlyArray<ReadonlyArray<string>>
+  sccs: ReadonlyArray<SCC>
 ): Map<string, number> {
   const nodeToIdx = new Map<string, number>();
   for (const [sccIndex, scc] of sccs.entries()) {
