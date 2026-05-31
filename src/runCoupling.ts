@@ -12,7 +12,6 @@ import {
   computeTopologicalDepth,
   condenseToDAG,
   findSCCs,
-  type AdjacencyMap,
   type SCC,
 } from './graphUtils';
 
@@ -615,13 +614,9 @@ interface DotColor {
   red: number;
 }
 
-function normalizeAdjacencyMap(graph: CouplingGraph): AdjacencyMap {
-  return graph;
-}
-
 function analyzeCouplingGraph(graph: CouplingGraph): CouplingAnalysis {
-  const sccs = findSCCs(normalizeAdjacencyMap(graph));
-  const dag = condenseToDAG(normalizeAdjacencyMap(graph), sccs);
+  const sccs = findSCCs(graph);
+  const dag = condenseToDAG(graph, sccs);
   const depthByScc = computeTopologicalDepth(dag);
 
   return {
@@ -651,7 +646,9 @@ function compareSccIndices(
   const leftMembers = sccs[leftSccIndex];
   const rightMembers = sccs[rightSccIndex];
   if (leftMembers === undefined || rightMembers === undefined) {
-    throw new Error('Missing SCC members while sorting');
+    throw new Error(
+      `Missing SCC members while sorting (left=${String(leftSccIndex)}, right=${String(rightSccIndex)}, total=${String(sccs.length)})`
+    );
   }
 
   return leftMembers.join(',').localeCompare(rightMembers.join(','));
