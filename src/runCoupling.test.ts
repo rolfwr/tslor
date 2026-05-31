@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { assert, describe, test } from 'vitest';
-import { parseClassCoupling, parseModuleCoupling } from './runCoupling';
+import { parseClassCoupling, parseModuleCoupling, runCoupling } from './runCoupling';
 import type { CouplingGraph } from './runCoupling';
 
 function withTemporarySourceFile(
@@ -243,6 +243,87 @@ class Worker {
           makeShared: ['shared'],
           shared: [],
         });
+      }
+    );
+  });
+});
+
+describe('runCoupling', () => {
+  test('renders text output grouped by depth with SCC details in class scope', () => {
+    withTemporarySourceFile(
+      'ClassOutput.ts',
+      `
+class ClassOutput {
+  private left = 0;
+  private right = 0;
+
+  private first(): void {
+    this.second();
+    this.left = this.left + 1;
+  }
+
+  private second(): void {
+    this.first();
+    this.right = this.right + 1;
+  }
+}
+`,
+      (filePath) => {
+        const chunks: string[] = [];
+
+        runCoupling(filePath, {
+          class: 'ClassOutput',
+          output: {
+            write: (text) => {
+              chunks.push(text);
+            },
+          },
+        });
+
+        const output = chunks.join('');
+        assert.include(output, `Coupling analysis for ${filePath} (class scope (ClassOutput))`);
+        assert.include(output, 'Depth 0:');
+        assert.include(output, 'Depth 1:');
+        assert.include(output, 'depth=0');
+        assert.include(output, 'depth=1');
+        assert.include(output, '2 members: first, second');
+        assert.include(output, '1 member: left');
+        assert.include(output, '1 member: right');
+      }
+    );
+  });
+
+  test('renders Graphviz DOT output with depth-colored nodes in module scope', () => {
+    withTemporarySourceFile(
+      'ModuleOutput.ts',
+      `
+const value = 1;
+
+function alpha(): number {
+  return beta() + value;
+}
+
+function beta(): number {
+  return alpha() + value;
+}
+`,
+      (filePath) => {
+        const chunks: string[] = [];
+
+        runCoupling(filePath, {
+          graphviz: true,
+          output: {
+            write: (text) => {
+              chunks.push(text);
+            },
+          },
+        });
+
+        const output = chunks.join('');
+        assert.match(output, /^digraph Coupling \{/);
+        assert.include(output, 'fillcolor="#');
+        assert.match(output, /scc_\d+ -> scc_\d+;/);
+        assert.include(output, 'Depth 0');
       }
     );
   });

@@ -13,6 +13,7 @@ import { runCycles } from './runCycles';
 import { runNeeds } from './runNeeds';
 import { runHot } from './runHot';
 import { runTsort } from './runTsort';
+import { runCoupling } from './runCoupling';
 import { program, Command, OptionValues } from 'commander';
 import { findGitRepoRoot } from './project';
 import { inspectModule } from './indexing';
@@ -146,6 +147,18 @@ program
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runCycles(directory, opts, debugOptions, fileSystem);
+  });
+
+program
+  .command('coupling <path>')
+  .description('Analyze member coupling via SCC decomposition and topological depth')
+  .option('--class <name>', 'Analyze members of the named class instead of module scope')
+  .option('-g, --graphviz', 'Output coupling graph in Graphviz DOT format')
+  .action((path: string, opts) => {
+    runCoupling(path, {
+      class: typeof opts.class === 'string' ? opts.class : undefined,
+      graphviz: opts.graphviz === true,
+    });
   });
 
 program
