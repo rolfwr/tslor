@@ -149,39 +149,53 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
  * @returns Adjacency map where keys are SCC indices and values are
  *          sets of SCC indices that the key SCC depends on.
  * @throws {Error} If `sccs` is not a valid partition of graph nodes
- *                 (missing coverage or duplicate membership).
+ *                 (missing coverage, duplicate membership, or membership
+ *                 of nodes that do not exist in the graph).
  */
-export function condenseToDAG(
-  graph: AdjacencyMap,
-  sccs: ReadonlyArray<SCC>
-): Map<number, Set<number>> {
-  // Map each node to its SCC index.
+function mapNodesToSccIndices(sccs: ReadonlyArray<SCC>): Map<string, number> {
   const nodeToScc = new Map<string, number>();
   for (const [sccIndex, scc] of sccs.entries()) {
     for (const member of scc) {
-      if (nodeToScc.has(member)) {
-        const previousSccIndex = requiredMapGet(
-          nodeToScc,
-          member,
-          `previous SCC index for duplicate node ${member}`
-        );
-        throw new Error(
-          `Node ${member} appears in multiple SCCs: ${String(previousSccIndex)} and ${String(sccIndex)}`
-        );
+      if (!nodeToScc.has(member)) {
+        nodeToScc.set(member, sccIndex);
+        continue;
       }
-      nodeToScc.set(member, sccIndex);
+
+      const previousSccIndex = requiredMapGet(
+        nodeToScc,
+        member,
+        `previous SCC index for duplicate node ${member}`
+      );
+      throw new Error(
+        `Node ${member} appears in multiple SCCs: ${String(previousSccIndex)} and ${String(sccIndex)}`
+      );
     }
   }
 
+  return nodeToScc;
+}
+
+function createDagNodes(sccCount: number): Map<number, Set<number>> {
   const dag = new Map<number, Set<number>>();
-  for (let i = 0; i < sccs.length; i++) {
+  for (let i = 0; i < sccCount; i++) {
     dag.set(i, new Set());
   }
+  return dag;
+}
 
+function populateDagEdges(
+  graph: AdjacencyMap,
+  nodeToScc: ReadonlyMap<string, number>,
+  dag: ReadonlyMap<number, Set<number>>
+): Set<string> {
+  const graphNodes = new Set<string>();
   for (const [node, deps] of graph) {
+    graphNodes.add(node);
     const fromScc = requiredMapGet(nodeToScc, node, `SCC index for node ${node}`);
     const sccDeps = requiredMapGet(dag, fromScc, `DAG node for SCC ${String(fromScc)}`);
+
     for (const dep of deps) {
+      graphNodes.add(dep);
       const toScc = requiredMapGet(
         nodeToScc,
         dep,
@@ -193,6 +207,30 @@ export function condenseToDAG(
     }
   }
 
+  return graphNodes;
+}
+
+function assertAllSccNodesExistInGraph(
+  nodeToScc: ReadonlyMap<string, number>,
+  graphNodes: ReadonlySet<string>
+): void {
+  for (const member of nodeToScc.keys()) {
+    if (graphNodes.has(member)) {
+      continue;
+    }
+
+    throw new Error(`Node ${member} appears in SCCs but is not present in the graph`);
+  }
+}
+
+export function condenseToDAG(
+  graph: AdjacencyMap,
+  sccs: ReadonlyArray<SCC>
+): Map<number, Set<number>> {
+  const nodeToScc = mapNodesToSccIndices(sccs);
+  const dag = createDagNodes(sccs.length);
+  const graphNodes = populateDagEdges(graph, nodeToScc, dag);
+  assertAllSccNodesExistInGraph(nodeToScc, graphNodes);
   return dag;
 }
 

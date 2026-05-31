@@ -262,6 +262,16 @@ describe('condenseToDAG', () => {
     );
   });
 
+  test('throws when SCC list includes a node that is not present in the graph', () => {
+    const graph = buildGraph([['A', 'B']]);
+    const invalidSccs: SCC[] = [['A'], ['B'], ['C']];
+
+    assert.throws(
+      () => condenseToDAG(graph, invalidSccs),
+      /Node C appears in SCCs but is not present in the graph/
+    );
+  });
+
   test('throws when SCC list assigns a node to multiple SCCs', () => {
     const graph = buildGraph([['A', 'B']]);
     const invalidSccs: SCC[] = [['A'], ['A', 'B']];
