@@ -303,21 +303,21 @@ function collectClassExecutableBodies(classDeclaration: ClassDeclaration): Node[
   return executableBodies;
 }
 
-function getFunctionInitializerBody(variableDeclaration: Node): Node | null {
+function getVariableExecutableBodies(variableDeclaration: Node): ReadonlyArray<Node> {
   if (!Node.isVariableDeclaration(variableDeclaration)) {
-    return null;
+    return [];
   }
 
   const initializer = variableDeclaration.getInitializer();
   if (initializer === undefined) {
-    return null;
+    return [];
   }
 
   if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
-    return initializer.getBody();
+    return [initializer.getBody()];
   }
 
-  return null;
+  return [initializer];
 }
 
 function collectFunctionDeclarationMember(
@@ -371,12 +371,11 @@ function collectVariableStatementMembers(
   }
 
   for (const declaration of statement.getDeclarations()) {
-    const executableBody = getFunctionInitializerBody(declaration);
     addModuleMember(
       memberCollectors,
       declaration.getName(),
       declaration,
-      executableBody === null ? [] : [executableBody]
+      getVariableExecutableBodies(declaration)
     );
   }
 

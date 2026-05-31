@@ -162,6 +162,7 @@ const makeShared = () => shared;
 const alias = function namedAlias() {
   return makeShared();
 };
+const derived = shared + 1;
 const first = 1,
   second = () => makeShared();
 
@@ -203,6 +204,7 @@ function recursive(): number {
           ModuleShape: [],
           Worker: ['makeShared', 'shared'],
           alias: ['makeShared'],
+          derived: ['shared'],
           first: [],
           makeShared: ['shared'],
           orchestrate: ['makeShared', 'shared'],
