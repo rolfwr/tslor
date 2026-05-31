@@ -84,6 +84,28 @@ class Example {
     );
   });
 
+  test('captures this.X dependencies in class field initializers', () => {
+    withTemporarySourceFile(
+      'FieldInitializerDependencies.ts',
+      `
+class FieldInitializerDependencies {
+  private base = 1;
+  private doubled = this.base * 2;
+  private tripled = this.doubled + this.base;
+}
+`,
+      (filePath) => {
+        const graph = parseClassCoupling(filePath, 'FieldInitializerDependencies');
+
+        assert.deepEqual(normalizeGraph(graph), {
+          base: [],
+          doubled: ['base'],
+          tripled: ['base', 'doubled'],
+        });
+      }
+    );
+  });
+
   test('captures this.X dependencies in concise arrow-function properties', () => {
     withTemporarySourceFile(
       'ConciseArrowBody.ts',

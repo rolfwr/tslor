@@ -20,7 +20,9 @@ import {
  *
  * Keys are declaration names, values are names of declarations the key depends on.
  */
-export type CouplingGraph = Map<string, Set<string>>;
+export type CouplingGraph = ReadonlyMap<string, ReadonlySet<string>>;
+
+type MutableCouplingGraph = Map<string, Set<string>>;
 
 interface ClassMemberDefinition {
   declaration: ClassElement;
@@ -96,9 +98,15 @@ function getExecutableBody(member: Node): Node | null {
 
   if (Node.isPropertyDeclaration(member)) {
     const initializer = member.getInitializer();
-    if (initializer !== undefined && Node.isArrowFunction(initializer)) {
+    if (initializer === undefined) {
+      return null;
+    }
+
+    if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
       return initializer.getBody();
     }
+
+    return initializer;
   }
 
   return null;
@@ -123,8 +131,8 @@ function collectClassMembers(classDeclaration: ClassDeclaration): ClassMemberDef
   return members;
 }
 
-function createGraphNodes(memberNames: ReadonlyArray<string>): CouplingGraph {
-  const graph: CouplingGraph = new Map();
+function createGraphNodes(memberNames: ReadonlyArray<string>): MutableCouplingGraph {
+  const graph: MutableCouplingGraph = new Map();
 
   for (const memberName of memberNames) {
     if (!graph.has(memberName)) {
@@ -195,7 +203,7 @@ function collectThisAccessDependencies(
 }
 
 function populateClassGraphEdges(
-  graph: CouplingGraph,
+  graph: MutableCouplingGraph,
   members: ReadonlyArray<ClassMemberDefinition>
 ): void {
   const memberNames = new Set(graph.keys());
@@ -228,7 +236,7 @@ function populateClassGraphEdges(
   }
 }
 
-function buildClassCouplingGraph(classDeclaration: ClassDeclaration): CouplingGraph {
+function buildClassCouplingGraph(classDeclaration: ClassDeclaration): MutableCouplingGraph {
   const members = collectClassMembers(classDeclaration);
   const graph = createGraphNodes(members.map((member) => member.name));
 
@@ -515,7 +523,7 @@ function resolveModuleDependencyName(
 }
 
 function populateModuleGraphEdges(
-  graph: CouplingGraph,
+  graph: MutableCouplingGraph,
   members: ReadonlyArray<ModuleMemberDefinition>
 ): void {
   const declarationsByName = new Map<string, ReadonlyArray<Node>>();
@@ -546,7 +554,7 @@ function populateModuleGraphEdges(
   }
 }
 
-function buildModuleCouplingGraph(sourceFile: SourceFile): CouplingGraph {
+function buildModuleCouplingGraph(sourceFile: SourceFile): MutableCouplingGraph {
   const members = collectModuleMembers(sourceFile);
   const graph = createGraphNodes(members.map((member) => member.name));
 
@@ -591,6 +599,11 @@ export interface RunCouplingOptions {
  * Optional output sink for `runCoupling`.
  */
 export interface CouplingOutput {
+  /**
+   * Write one complete rendered coupling report.
+   *
+   * The text is already fully formatted (either human-readable text or DOT).
+   */
   write(text: string): void;
 }
 
