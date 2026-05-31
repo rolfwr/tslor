@@ -5,6 +5,22 @@ import { assert, describe, test } from 'vitest';
 import { parseClassCoupling } from './runCoupling';
 import type { CouplingGraph } from './runCoupling';
 
+function withTemporarySourceFile(
+  fileName: string,
+  sourceCode: string,
+  testBody: (filePath: string) => void
+): void {
+  const tempDirectory = mkdtempSync(join(tmpdir(), 'tslor-coupling-'));
+  const filePath = join(tempDirectory, fileName);
+
+  try {
+    writeFileSync(filePath, sourceCode);
+    testBody(filePath);
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+}
+
 function normalizeGraph(graph: CouplingGraph): Record<string, string[]> {
   const normalizedEntries = [...graph.entries()]
     .map(([memberName, dependencies]): [string, string[]] => [
@@ -18,13 +34,9 @@ function normalizeGraph(graph: CouplingGraph): Record<string, string[]> {
 
 describe('parseClassCoupling', () => {
   test('parses class members and captures this.X dependencies', () => {
-    const tempDirectory = mkdtempSync(join(tmpdir(), 'tslor-coupling-'));
-    const filePath = join(tempDirectory, 'Example.ts');
-
-    try {
-      writeFileSync(
-        filePath,
-        `
+    withTemporarySourceFile(
+      'Example.ts',
+      `
 class Example {
   private count = 0;
   private label = 'ready';
@@ -55,33 +67,27 @@ class Example {
     this.untouched();
   }
 }
-`
-      );
+`,
+      (filePath) => {
+        const graph = parseClassCoupling(filePath, 'Example');
 
-      const graph = parseClassCoupling(filePath, 'Example');
-
-      assert.deepEqual(normalizeGraph(graph), {
-        compute: ['count'],
-        constructor: ['compute', 'count', 'init'],
-        count: [],
-        init: ['count', 'onTick'],
-        label: [],
-        onTick: ['compute', 'count'],
-        untouched: [],
-      });
-    } finally {
-      rmSync(tempDirectory, { recursive: true, force: true });
-    }
+        assert.deepEqual(normalizeGraph(graph), {
+          compute: ['count'],
+          constructor: ['compute', 'count', 'init'],
+          count: [],
+          init: ['count', 'onTick'],
+          label: [],
+          onTick: ['compute', 'count'],
+          untouched: [],
+        });
+      }
+    );
   });
 
   test('ignores this.X from nested non-arrow this scopes', () => {
-    const tempDirectory = mkdtempSync(join(tmpdir(), 'tslor-coupling-'));
-    const filePath = join(tempDirectory, 'NestedScopes.ts');
-
-    try {
-      writeFileSync(
-        filePath,
-        `
+    withTemporarySourceFile(
+      'NestedScopes.ts',
+      `
 class NestedScopes {
   private count = 0;
 
@@ -107,17 +113,15 @@ class NestedScopes {
     void Local;
   }
 }
-`
-      );
+`,
+      (filePath) => {
+        const graph = parseClassCoupling(filePath, 'NestedScopes');
 
-      const graph = parseClassCoupling(filePath, 'NestedScopes');
-
-      assert.deepEqual(normalizeGraph(graph), {
-        count: [],
-        wrapper: [],
-      });
-    } finally {
-      rmSync(tempDirectory, { recursive: true, force: true });
-    }
+        assert.deepEqual(normalizeGraph(graph), {
+          count: [],
+          wrapper: [],
+        });
+      }
+    );
   });
 });
