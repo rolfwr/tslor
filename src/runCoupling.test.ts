@@ -268,6 +268,35 @@ class Worker {
       }
     );
   });
+
+  test('tracks destructured top-level variable declarations as individual module members', () => {
+    withTemporarySourceFile(
+      'ModuleDestructuring.ts',
+      `
+const source = { alpha: 1, beta: 2 };
+const { alpha, beta: renamedBeta } = source;
+
+function readAlpha(): number {
+  return alpha;
+}
+
+function readRenamedBeta(): number {
+  return renamedBeta;
+}
+`,
+      (filePath) => {
+        const graph = parseModuleCoupling(filePath);
+
+        assert.deepEqual(normalizeGraph(graph), {
+          alpha: ['source'],
+          readAlpha: ['alpha'],
+          readRenamedBeta: ['renamedBeta'],
+          renamedBeta: ['source'],
+          source: [],
+        });
+      }
+    );
+  });
 });
 
 describe('runCoupling', () => {

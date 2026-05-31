@@ -334,6 +334,49 @@ function getVariableExecutableBodies(variableDeclaration: Node): ReadonlyArray<N
   return [initializer];
 }
 
+interface VariableBinding {
+  declaration: Node;
+  name: string;
+}
+
+function collectVariablePatternBindings(
+  nameNode: Node,
+  bindings: VariableBinding[]
+): void {
+  if (Node.isIdentifier(nameNode)) {
+    const bindingElement = nameNode.getFirstAncestorByKind(SyntaxKind.BindingElement);
+    if (bindingElement === undefined) {
+      return;
+    }
+
+    bindings.push({ declaration: bindingElement, name: nameNode.getText() });
+    return;
+  }
+
+  if (Node.isObjectBindingPattern(nameNode) || Node.isArrayBindingPattern(nameNode)) {
+    for (const element of nameNode.getElements()) {
+      if (Node.isBindingElement(element)) {
+        collectVariablePatternBindings(element.getNameNode(), bindings);
+      }
+    }
+  }
+}
+
+function collectVariableBindings(variableDeclaration: Node): VariableBinding[] {
+  if (!Node.isVariableDeclaration(variableDeclaration)) {
+    return [];
+  }
+
+  const nameNode = variableDeclaration.getNameNode();
+  if (Node.isIdentifier(nameNode)) {
+    return [{ declaration: variableDeclaration, name: nameNode.getText() }];
+  }
+
+  const bindings: VariableBinding[] = [];
+  collectVariablePatternBindings(nameNode, bindings);
+  return bindings;
+}
+
 function collectFunctionDeclarationMember(
   statement: Node,
   memberCollectors: Map<string, MutableModuleMemberDefinition>
@@ -385,12 +428,15 @@ function collectVariableStatementMembers(
   }
 
   for (const declaration of statement.getDeclarations()) {
-    addModuleMember(
-      memberCollectors,
-      declaration.getName(),
-      declaration,
-      getVariableExecutableBodies(declaration)
-    );
+    const executableBodies = getVariableExecutableBodies(declaration);
+    for (const binding of collectVariableBindings(declaration)) {
+      addModuleMember(
+        memberCollectors,
+        binding.name,
+        binding.declaration,
+        executableBodies
+      );
+    }
   }
 
   return true;
