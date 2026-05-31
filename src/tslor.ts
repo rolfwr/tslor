@@ -155,8 +155,9 @@ program
   .option('--class <name>', 'Analyze members of the named class instead of module scope')
   .option('-g, --graphviz', 'Output coupling graph in Graphviz DOT format')
   .action((path: string, opts) => {
+    const classOption = typeof opts.class === 'string' ? opts.class : null;
     runCoupling(path, {
-      class: typeof opts.class === 'string' ? opts.class : undefined,
+      ...(classOption !== null && { class: classOption }),
       graphviz: opts.graphviz === true,
     });
   });
