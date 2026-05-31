@@ -84,6 +84,30 @@ class Example {
     );
   });
 
+  test('captures this.X dependencies in concise arrow-function properties', () => {
+    withTemporarySourceFile(
+      'ConciseArrowBody.ts',
+      `
+class ConciseArrowBody {
+  private value = 1;
+
+  private readonly read = () => this.value;
+
+  private readonly trigger = () => this.read();
+}
+`,
+      (filePath) => {
+        const graph = parseClassCoupling(filePath, 'ConciseArrowBody');
+
+        assert.deepEqual(normalizeGraph(graph), {
+          read: ['value'],
+          trigger: ['read'],
+          value: [],
+        });
+      }
+    );
+  });
+
   test('ignores this.X from nested non-arrow this scopes', () => {
     withTemporarySourceFile(
       'NestedScopes.ts',

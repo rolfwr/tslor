@@ -4,6 +4,7 @@ import {
   SyntaxKind,
   type ClassDeclaration,
   type ClassElement,
+  type PropertyAccessExpression,
 } from 'ts-morph';
 
 /**
@@ -137,13 +138,27 @@ function isClassThisAccess(access: Node, owningDeclaration: ClassElement): boole
   return nearestNonArrowThisScope === owningDeclaration;
 }
 
+function getPropertyAccesses(
+  node: Node
+): ReadonlyArray<PropertyAccessExpression> {
+  const descendantAccesses = node.getDescendantsOfKind(
+    SyntaxKind.PropertyAccessExpression
+  );
+
+  if (Node.isPropertyAccessExpression(node)) {
+    return [node, ...descendantAccesses];
+  }
+
+  return descendantAccesses;
+}
+
 function collectThisAccessDependencies(
   body: Node,
   owningDeclaration: ClassElement
 ): Set<string> {
   const dependencies = new Set<string>();
 
-  for (const access of body.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
+  for (const access of getPropertyAccesses(body)) {
     if (!Node.isThisExpression(access.getExpression())) {
       continue;
     }
@@ -192,6 +207,15 @@ function populateGraphEdges(
   }
 }
 
+function buildClassCouplingGraph(classDeclaration: ClassDeclaration): CouplingGraph {
+  const members = collectClassMembers(classDeclaration);
+  const graph = createGraphNodes(members);
+
+  populateGraphEdges(graph, members);
+
+  return graph;
+}
+
 /**
  * Parse class-scope member coupling from one file.
  *
@@ -200,11 +224,5 @@ function populateGraphEdges(
  * executable member body to another member `X` in the same class.
  */
 export function parseClassCoupling(filePath: string, className: string): CouplingGraph {
-  const targetClass = findTargetClass(filePath, className);
-  const members = collectClassMembers(targetClass);
-  const graph = createGraphNodes(members);
-
-  populateGraphEdges(graph, members);
-
-  return graph;
+  return buildClassCouplingGraph(findTargetClass(filePath, className));
 }
