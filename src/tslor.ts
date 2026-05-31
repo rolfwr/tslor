@@ -154,11 +154,13 @@ program
   .description('Analyze member coupling via SCC decomposition and topological depth')
   .option('--class <name>', 'Analyze members of the named class instead of module scope')
   .option('-g, --graphviz', 'Output coupling graph in Graphviz DOT format')
+  .option('--graphviz-depth-zero-one-subset', 'Output only the depth-0/1 SCC subset as Graphviz DOT')
   .action((path: string, opts) => {
     const classOption = typeof opts.class === 'string' ? opts.class : null;
     runCoupling(path, {
       ...(classOption !== null && { class: classOption }),
       graphviz: opts.graphviz === true,
+      graphvizDepthZeroOneSubset: opts.graphvizDepthZeroOneSubset === true,
     });
   });
 

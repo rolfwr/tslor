@@ -106,6 +106,45 @@ class FieldInitializerDependencies {
     );
   });
 
+  test('captures get/set accessors as members with dependencies', () => {
+    withTemporarySourceFile(
+      'AccessorMembers.ts',
+      `
+class AccessorMembers {
+  private mutableState = {
+    timed: 1,
+    dirty: false,
+  };
+
+  private get timed(): number {
+    return this.mutableState.timed;
+  }
+
+  private set timed(value: number) {
+    this.mutableState.timed = value;
+  }
+
+  private get dirty(): boolean {
+    return this.mutableState.dirty;
+  }
+
+  private set dirty(value: boolean) {
+    this.mutableState.dirty = value;
+  }
+}
+`,
+      (filePath) => {
+        const graph = parseClassCoupling(filePath, 'AccessorMembers');
+
+        assert.deepEqual(normalizeGraph(graph), {
+          dirty: ['mutableState'],
+          mutableState: [],
+          timed: ['mutableState'],
+        });
+      }
+    );
+  });
+
   test('captures this.X dependencies in concise arrow-function properties', () => {
     withTemporarySourceFile(
       'ConciseArrowBody.ts',
@@ -300,7 +339,7 @@ function readRenamedBeta(): number {
 });
 
 describe('runCoupling', () => {
-  test('renders text output grouped by depth with SCC details in class scope', () => {
+  test('renders nested SCC text output with dependency indentation in class scope', () => {
     withTemporarySourceFile(
       'ClassOutput.ts',
       `
@@ -333,13 +372,81 @@ class ClassOutput {
 
         const output = chunks.join('');
         assert.include(output, `Coupling analysis for ${filePath} (class scope (ClassOutput))`);
-        assert.include(output, 'Depth 0:');
-        assert.include(output, 'Depth 1:');
-        assert.include(output, 'depth=0');
-        assert.include(output, 'depth=1');
-        assert.include(output, '2 members: first, second');
-        assert.include(output, '1 member: left');
-        assert.include(output, '1 member: right');
+        assert.include(output, 'Dependents -> Dependencies:');
+        assert.include(output, 'Dependencies -> Dependents:');
+        assert.include(output, 'Leaf clustering (max cross-cluster distance):');
+        assert.include(output, 'Metric: minimum edge count between depth-0 groups, traversing edges in either direction.');
+        assert.include(output, 'Depth 0-1 subset weakly connected components:');
+        assert.match(output, /^Group-1-\d+: first, second:$/m);
+        assert.match(output, /^  Group-0-\d+: left\.$/m);
+        assert.match(output, /^  Group-0-\d+: right\.$/m);
+        assert.match(output, /^Group-0-\d+: left:$/m);
+        assert.match(output, /^  Group-1-\d+: first, second\.$/m);
+        assert.match(output, /^Cross-cluster distance sum: 2$/m);
+        assert.match(output, /^Cluster A: (left|right)$/m);
+        assert.match(output, /^Cluster B: (left|right)$/m);
+        assert.match(output, /^Component 1: first, second, left, right$/m);
+      }
+    );
+  });
+
+  test('prints repeated dependency groups with ellipsis when revisited', () => {
+    withTemporarySourceFile(
+      'RepeatedDependencyOutput.ts',
+      `
+function leaf(): number {
+  return 1;
+}
+
+function middle(): number {
+  return leaf();
+}
+
+function left(): number {
+  return middle();
+}
+
+function right(): number {
+  return middle();
+}
+
+function root(): number {
+  return left() + right();
+}
+`,
+      (filePath) => {
+        const chunks: string[] = [];
+
+        runCoupling(filePath, {
+          output: {
+            write: (text) => {
+              chunks.push(text);
+            },
+          },
+        });
+
+        const output = chunks.join('');
+
+        assert.include(output, `Coupling analysis for ${filePath} (module scope)`);
+        assert.include(output, 'Dependents -> Dependencies:');
+        assert.include(output, 'Dependencies -> Dependents:');
+        assert.include(output, 'Leaf clustering (max cross-cluster distance):');
+        assert.include(output, 'Depth 0-1 subset weakly connected components:');
+        assert.match(output, /^Group-3-\d+: root:$/m);
+        assert.match(output, /^  Group-2-\d+: left:$/m);
+        assert.match(output, /^  Group-2-\d+: right:$/m);
+        assert.match(output, /^    Group-1-\d+: middle:$/m);
+        assert.match(output, /^      Group-0-\d+: leaf\.$/m);
+        assert.match(output, /^    Group-1-\d+: middle\.\.\.$/m);
+        assert.match(output, /^Group-0-\d+: leaf:$/m);
+        assert.match(output, /^  Group-1-\d+: middle:$/m);
+        assert.match(output, /^    Group-2-\d+: left:$/m);
+        assert.match(output, /^    Group-2-\d+: right:$/m);
+        assert.match(output, /^      Group-3-\d+: root\.$/m);
+        assert.match(output, /^Cross-cluster distance sum: 0$/m);
+        assert.match(output, /^Cluster A: leaf$/m);
+        assert.match(output, /^Cluster B: \(none\)$/m);
+        assert.match(output, /^Component 1: leaf, middle$/m);
       }
     );
   });
@@ -375,6 +482,52 @@ function beta(): number {
         assert.include(output, 'fillcolor="#');
         assert.match(output, /scc_\d+ -> scc_\d+;/);
         assert.include(output, 'Depth 0');
+        assert.equal(/\\\\n/.test(output), false);
+      }
+    );
+  });
+
+  test('renders Graphviz DOT output for only depth-0/1 SCC subset when requested', () => {
+    withTemporarySourceFile(
+      'GraphvizDepthSubset.ts',
+      `
+function leaf(): number {
+  return 1;
+}
+
+function middleB(): number {
+  return leaf();
+}
+
+function middleA(): number {
+  return leaf() + middleB();
+}
+
+function root(): number {
+  return middleA();
+}
+`,
+      (filePath) => {
+        const chunks: string[] = [];
+
+        runCoupling(filePath, {
+          graphvizDepthZeroOneSubset: true,
+          output: {
+            write: (text) => {
+              chunks.push(text);
+            },
+          },
+        });
+
+        const output = chunks.join('');
+        assert.match(output, /^digraph Coupling \{/);
+        const edgeLines = output.split('\n').filter((line) => line.includes('->'));
+
+        assert.include(output, 'middleA');
+        assert.include(output, 'middleB');
+        assert.include(output, 'leaf');
+        assert.notInclude(output, 'root');
+        assert.lengthOf(edgeLines, 2);
       }
     );
   });

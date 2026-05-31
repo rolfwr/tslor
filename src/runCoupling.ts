@@ -12,6 +12,7 @@ import {
   computeTopologicalDepth,
   condenseToDAG,
   findSCCs,
+  partitionLeafSccsByDistance,
   type SCC,
 } from './graphUtils';
 
@@ -80,6 +81,10 @@ function getMemberName(member: Node): string | null {
     return member.getName();
   }
 
+  if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
+    return member.getName();
+  }
+
   if (Node.isConstructorDeclaration(member)) {
     return 'constructor';
   }
@@ -89,6 +94,10 @@ function getMemberName(member: Node): string | null {
 
 function getExecutableBody(member: Node): Node | null {
   if (Node.isMethodDeclaration(member)) {
+    return member.getBody() ?? null;
+  }
+
+  if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
     return member.getBody() ?? null;
   }
 
@@ -638,6 +647,7 @@ export function parseModuleCoupling(filePath: string): CouplingGraph {
 export interface RunCouplingOptions {
   class?: string;
   graphviz?: boolean;
+  graphvizDepthZeroOneSubset?: boolean;
   output?: CouplingOutput;
 }
 
@@ -660,11 +670,6 @@ export interface CouplingAnalysis {
   dag: ReadonlyMap<number, ReadonlySet<number>>;
   depthByScc: ReadonlyMap<number, number>;
   sccs: ReadonlyArray<SCC>;
-}
-
-interface DepthGroup {
-  depth: number;
-  sccIndices: number[];
 }
 
 interface DotColor {
@@ -713,31 +718,6 @@ function compareSccIndices(
   return leftMembers.join(',').localeCompare(rightMembers.join(','));
 }
 
-function groupSccsByDepth(analysis: CouplingAnalysis): DepthGroup[] {
-  const groups = new Map<number, number[]>();
-
-  for (const sccIndex of analysis.sccs.keys()) {
-    const depth = requiredDepth(analysis.depthByScc, sccIndex);
-    const existingGroup = groups.get(depth);
-
-    if (existingGroup !== undefined) {
-      existingGroup.push(sccIndex);
-      continue;
-    }
-
-    groups.set(depth, [sccIndex]);
-  }
-
-  return [...groups.entries()]
-    .map(([depth, sccIndices]) => ({
-      depth,
-      sccIndices: [...sccIndices].sort((left, right) =>
-        compareSccIndices(left, right, analysis.sccs)
-      ),
-    }))
-    .sort((left, right) => left.depth - right.depth);
-}
-
 function formatTextHeader(filePath: string, options: RunCouplingOptions): string {
   const scope =
     options.class === undefined
@@ -746,13 +726,382 @@ function formatTextHeader(filePath: string, options: RunCouplingOptions): string
   return `Coupling analysis for ${filePath} (${scope})`;
 }
 
-function formatSccLine(
+type SccDepthSortDirection = 'ascending' | 'descending';
+
+function compareSccTreeOrder(
+  leftSccIndex: number,
+  rightSccIndex: number,
+  analysis: CouplingAnalysis,
+  direction: SccDepthSortDirection
+): number {
+  const leftDepth = requiredDepth(analysis.depthByScc, leftSccIndex);
+  const rightDepth = requiredDepth(analysis.depthByScc, rightSccIndex);
+
+  if (leftDepth !== rightDepth) {
+    return direction === 'descending'
+      ? rightDepth - leftDepth
+      : leftDepth - rightDepth;
+  }
+
+  return compareSccIndices(leftSccIndex, rightSccIndex, analysis.sccs);
+}
+
+function formatSccTreeLine(
   sccIndex: number,
   sccMembers: SCC,
-  depth: number
+  depth: number,
+  indent: string
 ): string {
-  const memberLabel = sccMembers.length === 1 ? 'member' : 'members';
-  return `  - SCC ${String(sccIndex + 1)} | depth=${String(depth)} | ${String(sccMembers.length)} ${memberLabel}: ${sccMembers.join(', ')}`;
+  return `${indent}Group-${String(depth)}-${String(sccIndex + 1)}: ${sccMembers.join(', ')}`;
+}
+
+function sortedSccIndices(
+  sccIndices: Iterable<number>,
+  analysis: CouplingAnalysis,
+  direction: SccDepthSortDirection
+): number[] {
+  return [...sccIndices].sort((left, right) =>
+    compareSccTreeOrder(left, right, analysis, direction)
+  );
+}
+
+function formatNestedSccLines(
+  analysis: CouplingAnalysis,
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
+  direction: SccDepthSortDirection
+): string[] {
+  const lines: string[] = [];
+  const printedSccs = new Set<number>();
+  const unprintedSccs = new Set<number>(analysis.sccs.keys());
+
+  function printScc(sccIndex: number, indent: string): void {
+    const sccMembers = analysis.sccs[sccIndex];
+    if (sccMembers === undefined) {
+      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
+    }
+
+    const depth = requiredDepth(analysis.depthByScc, sccIndex);
+    const dependencies = dag.get(sccIndex);
+    if (dependencies === undefined) {
+      throw new Error(`Expected DAG dependencies for SCC ${String(sccIndex)}`);
+    }
+
+    const linePrefix = formatSccTreeLine(sccIndex, sccMembers, depth, indent);
+
+    if (dependencies.size === 0) {
+      lines.push(`${linePrefix}.`);
+      printedSccs.add(sccIndex);
+      unprintedSccs.delete(sccIndex);
+      return;
+    }
+
+    if (printedSccs.has(sccIndex)) {
+      lines.push(`${linePrefix}...`);
+      return;
+    }
+
+    lines.push(`${linePrefix}:`);
+    printedSccs.add(sccIndex);
+    unprintedSccs.delete(sccIndex);
+
+    for (const dependencySccIndex of sortedSccIndices(dependencies, analysis, direction)) {
+      printScc(dependencySccIndex, `${indent}  `);
+    }
+  }
+
+  while (unprintedSccs.size > 0) {
+    const [nextSccIndex] = sortedSccIndices(unprintedSccs, analysis, direction);
+    if (nextSccIndex === undefined) {
+      throw new Error('Expected at least one SCC while rendering coupling text');
+    }
+
+    printScc(nextSccIndex, '');
+  }
+
+  return lines;
+}
+
+function reverseDag(
+  dag: ReadonlyMap<number, ReadonlySet<number>>
+): ReadonlyMap<number, ReadonlySet<number>> {
+  const reversed = new Map<number, Set<number>>();
+
+  for (const sccIndex of dag.keys()) {
+    reversed.set(sccIndex, new Set<number>());
+  }
+
+  for (const [fromSccIndex, dependencies] of dag) {
+    for (const toSccIndex of dependencies) {
+      const dependents = reversed.get(toSccIndex);
+      if (dependents === undefined) {
+        throw new Error(`Expected reversed DAG node for SCC ${String(toSccIndex)}`);
+      }
+
+      dependents.add(fromSccIndex);
+    }
+  }
+
+  return reversed;
+}
+
+function formatLeafClusterMembers(
+  label: string,
+  cluster: ReadonlyArray<number>,
+  analysis: CouplingAnalysis
+): string {
+  if (cluster.length === 0) {
+    return `${label}: (none)`;
+  }
+
+  const memberNames = sortedSccIndices(cluster, analysis, 'ascending').flatMap((sccIndex) => {
+    const sccMembers = analysis.sccs[sccIndex];
+    if (sccMembers === undefined) {
+      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
+    }
+
+    return sccMembers;
+  });
+
+  return `${label}: ${memberNames.join(', ')}`;
+}
+
+interface DepthZeroOneSubsetGraph {
+  dag: ReadonlyMap<number, ReadonlySet<number>>;
+  sccIndices: number[];
+}
+
+function isDepthZeroOrOne(
+  depthByScc: ReadonlyMap<number, number>,
+  sccIndex: number
+): boolean {
+  return requiredDepth(depthByScc, sccIndex) <= 1;
+}
+
+function collectDepthZeroOneSccIndices(analysis: CouplingAnalysis): number[] {
+  const subsetSccIndices: number[] = [];
+
+  for (const sccIndex of analysis.sccs.keys()) {
+    if (isDepthZeroOrOne(analysis.depthByScc, sccIndex)) {
+      subsetSccIndices.push(sccIndex);
+    }
+  }
+
+  return subsetSccIndices;
+}
+
+function initializeEmptySubsetDag(
+  subsetSccIndices: ReadonlyArray<number>
+): Map<number, Set<number>> {
+  const subsetDag = new Map<number, Set<number>>();
+  for (const sccIndex of subsetSccIndices) {
+    subsetDag.set(sccIndex, new Set<number>());
+  }
+
+  return subsetDag;
+}
+
+function addDepthOneToZeroSubsetEdges(
+  subsetDag: ReadonlyMap<number, Set<number>>,
+  subsetIndexSet: ReadonlySet<number>,
+  analysis: CouplingAnalysis,
+  subsetSccIndices: ReadonlyArray<number>
+): void {
+  for (const fromSccIndex of subsetSccIndices) {
+    if (requiredDepth(analysis.depthByScc, fromSccIndex) !== 1) {
+      continue;
+    }
+
+    const dependencies = analysis.dag.get(fromSccIndex);
+    if (dependencies === undefined) {
+      throw new Error(`Expected DAG dependencies for SCC ${String(fromSccIndex)}`);
+    }
+
+    const subsetDependencies = requiredMapGet(
+      subsetDag,
+      fromSccIndex,
+      `depth-0/1 subset DAG node for SCC ${String(fromSccIndex)}`
+    );
+
+    for (const toSccIndex of dependencies) {
+      if (!subsetIndexSet.has(toSccIndex)) {
+        continue;
+      }
+
+      if (requiredDepth(analysis.depthByScc, toSccIndex) === 0) {
+        subsetDependencies.add(toSccIndex);
+      }
+    }
+  }
+}
+
+function buildDepthZeroOneSubsetGraph(
+  analysis: CouplingAnalysis
+): DepthZeroOneSubsetGraph {
+  const subsetSccIndices = collectDepthZeroOneSccIndices(analysis);
+  const subsetDag = initializeEmptySubsetDag(subsetSccIndices);
+  const subsetIndexSet = new Set<number>(subsetSccIndices);
+
+  addDepthOneToZeroSubsetEdges(
+    subsetDag,
+    subsetIndexSet,
+    analysis,
+    subsetSccIndices
+  );
+
+  return {
+    dag: subsetDag,
+    sccIndices: subsetSccIndices,
+  };
+}
+
+function formatLeafClusteringLines(analysis: CouplingAnalysis): string[] {
+  const subsetGraph = buildDepthZeroOneSubsetGraph(analysis);
+  const partition = partitionLeafSccsByDistance(subsetGraph.dag);
+
+  return [
+    'Leaf clustering (max cross-cluster distance):',
+    'Metric: minimum edge count between depth-0 groups, traversing edges in either direction.',
+    `Cross-cluster distance sum: ${String(partition.crossClusterDistanceSum)}`,
+    formatLeafClusterMembers('Cluster A', partition.clusterA, analysis),
+    formatLeafClusterMembers('Cluster B', partition.clusterB, analysis),
+  ];
+}
+
+function subsetUndirectedAdjacency(
+  dag: ReadonlyMap<number, ReadonlySet<number>>
+): Map<number, Set<number>> {
+  const undirected = new Map<number, Set<number>>();
+
+  for (const sccIndex of dag.keys()) {
+    undirected.set(sccIndex, new Set<number>());
+  }
+
+  for (const [fromSccIndex, dependencies] of dag) {
+    const fromNeighbors = requiredMapGet(
+      undirected,
+      fromSccIndex,
+      `subset graph node for SCC ${String(fromSccIndex)}`
+    );
+
+    for (const toSccIndex of dependencies) {
+      const toNeighbors = requiredMapGet(
+        undirected,
+        toSccIndex,
+        `subset graph node for SCC ${String(toSccIndex)}`
+      );
+
+      fromNeighbors.add(toSccIndex);
+      toNeighbors.add(fromSccIndex);
+    }
+  }
+
+  return undirected;
+}
+
+function collectWeaklyConnectedComponents(
+  undirected: ReadonlyMap<number, ReadonlySet<number>>,
+  analysis: CouplingAnalysis
+): number[][] {
+  const components: number[][] = [];
+  const visited = new Set<number>();
+
+  for (const sccIndex of sortedSccIndices(undirected.keys(), analysis, 'ascending')) {
+    if (visited.has(sccIndex)) {
+      continue;
+    }
+
+    const queue: number[] = [sccIndex];
+    const component: number[] = [];
+    visited.add(sccIndex);
+
+    let cursor = 0;
+    while (cursor < queue.length) {
+      const currentSccIndex = queue[cursor];
+      if (currentSccIndex === undefined) {
+        throw new Error('Expected SCC index while collecting weakly connected components');
+      }
+
+      cursor++;
+      component.push(currentSccIndex);
+
+      const neighbors = requiredMapGet(
+        undirected,
+        currentSccIndex,
+        `subset neighbors for SCC ${String(currentSccIndex)}`
+      );
+
+      for (const neighborSccIndex of sortedSccIndices(neighbors, analysis, 'ascending')) {
+        if (visited.has(neighborSccIndex)) {
+          continue;
+        }
+
+        visited.add(neighborSccIndex);
+        queue.push(neighborSccIndex);
+      }
+    }
+
+    component.sort((left, right) => compareSccIndices(left, right, analysis.sccs));
+    components.push(component);
+  }
+
+  components.sort((left, right) => {
+    const leftLabel = left
+      .flatMap((sccIndex) => {
+        const sccMembers = analysis.sccs[sccIndex];
+        if (sccMembers === undefined) {
+          throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
+        }
+
+        return sccMembers;
+      })
+      .join(',');
+    const rightLabel = right
+      .flatMap((sccIndex) => {
+        const sccMembers = analysis.sccs[sccIndex];
+        if (sccMembers === undefined) {
+          throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
+        }
+
+        return sccMembers;
+      })
+      .join(',');
+
+    return leftLabel.localeCompare(rightLabel);
+  });
+
+  return components;
+}
+
+function formatWeaklyConnectedSubsetComponent(
+  componentIndex: number,
+  component: ReadonlyArray<number>,
+  analysis: CouplingAnalysis
+): string {
+  const memberNames = component.flatMap((sccIndex) => {
+    const sccMembers = analysis.sccs[sccIndex];
+    if (sccMembers === undefined) {
+      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
+    }
+
+    return sccMembers;
+  });
+
+  return `Component ${String(componentIndex)}: ${memberNames.join(', ')}`;
+}
+
+function formatDepthZeroOneWeaklyConnectedLines(analysis: CouplingAnalysis): string[] {
+  const subsetGraph = buildDepthZeroOneSubsetGraph(analysis);
+  const undirected = subsetUndirectedAdjacency(subsetGraph.dag);
+  const components = collectWeaklyConnectedComponents(undirected, analysis);
+
+  const lines = ['Depth 0-1 subset weakly connected components:'];
+  for (const [componentIndex, component] of components.entries()) {
+    lines.push(
+      formatWeaklyConnectedSubsetComponent(componentIndex + 1, component, analysis)
+    );
+  }
+
+  return lines;
 }
 
 /**
@@ -765,30 +1114,20 @@ export function formatCouplingText(
 ): string {
   const lines: string[] = [formatTextHeader(filePath, options)];
 
-  const depthGroups = groupSccsByDepth(analysis);
-  if (depthGroups.length === 0) {
+  if (analysis.sccs.length === 0) {
     lines.push('No declarations found.');
     return `${lines.join('\n')}\n`;
   }
 
-  for (const depthGroup of depthGroups) {
-    lines.push(`Depth ${String(depthGroup.depth)}:`);
-
-    for (const sccIndex of depthGroup.sccIndices) {
-      const sccMembers = analysis.sccs[sccIndex];
-      if (sccMembers === undefined) {
-        throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-      }
-
-      lines.push(
-        formatSccLine(
-          sccIndex,
-          sccMembers,
-          requiredDepth(analysis.depthByScc, sccIndex)
-        )
-      );
-    }
-  }
+  lines.push('Dependents -> Dependencies:');
+  lines.push(...formatNestedSccLines(analysis, analysis.dag, 'descending'));
+  lines.push('');
+  lines.push('Dependencies -> Dependents:');
+  lines.push(...formatNestedSccLines(analysis, reverseDag(analysis.dag), 'ascending'));
+  lines.push('');
+  lines.push(...formatLeafClusteringLines(analysis));
+  lines.push('');
+  lines.push(...formatDepthZeroOneWeaklyConnectedLines(analysis));
 
   return `${lines.join('\n')}\n`;
 }
@@ -832,7 +1171,7 @@ function formatDotNode(
   depth: number,
   maxDepth: number
 ): string {
-  const label = `SCC ${String(sccIndex + 1)}\\nDepth ${String(depth)}\\n${sccMembers.join('\\n')}`;
+  const label = `SCC ${String(sccIndex + 1)}\nDepth ${String(depth)}\n${sccMembers.join('\n')}`;
 
   return `  scc_${String(sccIndex)} [label="${escapeDotLabel(label)}", fillcolor="${depthColor(depth, maxDepth)}"];`;
 }
@@ -849,10 +1188,11 @@ function formatDotEdges(dag: ReadonlyMap<number, ReadonlySet<number>>): string[]
   return edges;
 }
 
-/**
- * Format SCC/depth coupling analysis as Graphviz DOT output.
- */
-export function formatCouplingDot(analysis: CouplingAnalysis): string {
+function formatCouplingDotForSccIndices(
+  analysis: CouplingAnalysis,
+  sccIndices: ReadonlyArray<number>,
+  dag: ReadonlyMap<number, ReadonlySet<number>>
+): string {
   const lines: string[] = [
     'digraph Coupling {',
     '  rankdir=LR;',
@@ -860,13 +1200,14 @@ export function formatCouplingDot(analysis: CouplingAnalysis): string {
   ];
 
   let maxDepth = 0;
-  for (const depth of analysis.depthByScc.values()) {
+  for (const sccIndex of sccIndices) {
+    const depth = requiredDepth(analysis.depthByScc, sccIndex);
     if (depth > maxDepth) {
       maxDepth = depth;
     }
   }
 
-  for (const sccIndex of analysis.sccs.keys()) {
+  for (const sccIndex of [...sccIndices].sort((left, right) => left - right)) {
     const sccMembers = analysis.sccs[sccIndex];
     if (sccMembers === undefined) {
       throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
@@ -882,10 +1223,35 @@ export function formatCouplingDot(analysis: CouplingAnalysis): string {
     );
   }
 
-  lines.push(...formatDotEdges(analysis.dag));
+  lines.push(...formatDotEdges(dag));
   lines.push('}');
 
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Format SCC/depth coupling analysis as Graphviz DOT output.
+ */
+export function formatCouplingDot(analysis: CouplingAnalysis): string {
+  return formatCouplingDotForSccIndices(
+    analysis,
+    [...analysis.sccs.keys()],
+    analysis.dag
+  );
+}
+
+/**
+ * Format depth-0/1 SCC subset as Graphviz DOT output.
+ */
+export function formatCouplingDotDepthZeroOneSubset(
+  analysis: CouplingAnalysis
+): string {
+  const subsetGraph = buildDepthZeroOneSubsetGraph(analysis);
+  return formatCouplingDotForSccIndices(
+    analysis,
+    subsetGraph.sccIndices,
+    subsetGraph.dag
+  );
 }
 
 /**
@@ -903,9 +1269,11 @@ export function runCoupling(
   const analysis = analyzeCouplingGraph(graph);
 
   const renderedOutput =
-    options.graphviz === true
-      ? formatCouplingDot(analysis)
-      : formatCouplingText(filePath, options, analysis);
+    options.graphvizDepthZeroOneSubset === true
+      ? formatCouplingDotDepthZeroOneSubset(analysis)
+      : options.graphviz === true
+        ? formatCouplingDot(analysis)
+        : formatCouplingText(filePath, options, analysis);
 
   if (options.output === undefined) {
     process.stdout.write(renderedOutput);

@@ -1,5 +1,11 @@
 import { assert, describe, test } from 'vitest';
-import { findSCCs, condenseToDAG, computeTopologicalDepth } from './graphUtils';
+import {
+  findSCCs,
+  condenseToDAG,
+  computeTopologicalDepth,
+  computeLeafDistanceMatrix,
+  partitionLeafSccsByDistance,
+} from './graphUtils';
 import type { SCC } from './graphUtils';
 
 // Helper to build an adjacency map from edge tuples
@@ -335,6 +341,25 @@ describe('computeTopologicalDepth', () => {
     assert.equal(nodeDepth(depth, nodeToIdx, 'D'), 0);
   });
 
+  test('branch with uneven paths uses shallowest path to a leaf', () => {
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['A', 'C'],
+      ['C', 'D'],
+    ]);
+    const sccs = findSCCs(graph);
+    const dag = condenseToDAG(graph, sccs);
+    const depth = computeTopologicalDepth(dag);
+
+    const nodeToIdx = mapNodesToSccIndices(sccs);
+
+    // Shortest path to a leaf from A is A→B (length 1), not A→C→D (length 2)
+    assert.equal(nodeDepth(depth, nodeToIdx, 'A'), 1);
+    assert.equal(nodeDepth(depth, nodeToIdx, 'B'), 0);
+    assert.equal(nodeDepth(depth, nodeToIdx, 'C'), 1);
+    assert.equal(nodeDepth(depth, nodeToIdx, 'D'), 0);
+  });
+
   test('mutual cycle A↔B: condensed SCC has depth 0 (leaf in DAG)', () => {
     const graph = buildGraph([['A', 'B'], ['B', 'A']]);
     const sccs = findSCCs(graph);
@@ -390,5 +415,81 @@ describe('computeTopologicalDepth', () => {
     const nodeToIdx = mapNodesToSccIndices(sccs);
 
     assert.equal(nodeDepth(depth, nodeToIdx, 'C'), 0);
+  });
+});
+
+describe('computeLeafDistanceMatrix', () => {
+  test('computes minimum undirected edge counts between leaves', () => {
+    const dag = new Map<number, Set<number>>([
+      [0, new Set([1, 2])],
+      [1, new Set([3])],
+      [2, new Set([4])],
+      [3, new Set()],
+      [4, new Set()],
+    ]);
+
+    const distances = computeLeafDistanceMatrix(dag);
+    const rowThree = distances.get(3);
+    const rowFour = distances.get(4);
+
+    if (rowThree === undefined || rowFour === undefined) {
+      throw new Error('Expected rows for both leaf SCCs');
+    }
+
+    assert.equal(rowThree.get(3), 0);
+    assert.equal(rowFour.get(4), 0);
+    assert.equal(rowThree.get(4), 4);
+    assert.equal(rowFour.get(3), 4);
+  });
+
+  test('marks leaves in different disconnected components as unreachable', () => {
+    const dag = new Map<number, Set<number>>([
+      [0, new Set([1])],
+      [1, new Set()],
+      [2, new Set([3])],
+      [3, new Set()],
+    ]);
+
+    const distances = computeLeafDistanceMatrix(dag);
+    const rowOne = distances.get(1);
+    const rowThree = distances.get(3);
+
+    if (rowOne === undefined || rowThree === undefined) {
+      throw new Error('Expected rows for disconnected leaf SCCs');
+    }
+
+    assert.equal(rowOne.get(3), null);
+    assert.equal(rowThree.get(1), null);
+  });
+});
+
+describe('partitionLeafSccsByDistance', () => {
+  test('splits leaves to maximize cross-cluster leaf distance', () => {
+    const dag = new Map<number, Set<number>>([
+      [0, new Set([1, 2])],
+      [1, new Set([3])],
+      [2, new Set([4])],
+      [3, new Set()],
+      [4, new Set()],
+    ]);
+
+    const partition = partitionLeafSccsByDistance(dag);
+
+    assert.deepEqual(partition.clusterA, [3]);
+    assert.deepEqual(partition.clusterB, [4]);
+    assert.equal(partition.crossClusterDistanceSum, 4);
+  });
+
+  test('returns one empty cluster when fewer than two leaves exist', () => {
+    const dag = new Map<number, Set<number>>([
+      [0, new Set([1])],
+      [1, new Set()],
+    ]);
+
+    const partition = partitionLeafSccsByDistance(dag);
+
+    assert.deepEqual(partition.clusterA, [1]);
+    assert.deepEqual(partition.clusterB, []);
+    assert.equal(partition.crossClusterDistanceSum, 0);
   });
 });
