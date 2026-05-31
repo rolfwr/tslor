@@ -35,9 +35,9 @@ function requiredMapGet<K, V>(
  * through directed edges. Singleton nodes with no mutual edges are
  * separate SCCs.
  *
- * @returns Array of SCCs, each a sorted array of node names. Order of
- *          SCCs in the outer array is reverse-topological (sinks last),
- *          which is the natural output of Tarjan's algorithm.
+ * @returns Array of SCCs, each a sorted array of node names. SCCs are
+ *          emitted in reverse topological order of the condensation graph
+ *          (sinks first), which is Tarjan's natural output.
  */
 export function findSCCs(graph: AdjacencyMap): SCC[] {
   const nodes = [...graph.keys()];
@@ -148,6 +148,7 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
  * @param sccs - Strongly-connected components from `findSCCs()`
  * @returns Adjacency map where keys are SCC indices and values are
  *          sets of SCC indices that the key SCC depends on.
+ * @throws {Error} If `sccs` does not cover every node referenced by `graph`.
  */
 export function condenseToDAG(
   graph: AdjacencyMap,
@@ -167,14 +168,15 @@ export function condenseToDAG(
   }
 
   for (const [node, deps] of graph) {
-    const fromScc = nodeToScc.get(node);
-    if (fromScc === undefined) {
-      continue;
-    }
+    const fromScc = requiredMapGet(nodeToScc, node, `SCC index for node ${node}`);
+    const sccDeps = requiredMapGet(dag, fromScc, `DAG node for SCC ${String(fromScc)}`);
     for (const dep of deps) {
-      const toScc = nodeToScc.get(dep);
-      if (toScc !== undefined && toScc !== fromScc) {
-        const sccDeps = requiredMapGet(dag, fromScc, `DAG node for SCC ${String(fromScc)}`);
+      const toScc = requiredMapGet(
+        nodeToScc,
+        dep,
+        `SCC index for dependency node ${dep} referenced from ${node}`
+      );
+      if (toScc !== fromScc) {
         sccDeps.add(toScc);
       }
     }
@@ -191,11 +193,13 @@ export function condenseToDAG(
  *
  * @param dag - Condensed DAG from `condenseToDAG()`
  * @returns Map from SCC index to its depth (non-negative integer)
+ * @throws {Error} If `dag` contains a cycle.
  */
 export function computeTopologicalDepth(
   dag: Map<number, Set<number>>
 ): Map<number, number> {
   const depth = new Map<number, number>();
+  const visiting = new Set<number>();
 
   // Initialize all nodes with depth -1 (unvisited)
   for (const node of dag.keys()) {
@@ -208,22 +212,31 @@ export function computeTopologicalDepth(
       return knownDepth;
     }
 
-    const deps = requiredMapGet(dag, node, `DAG dependencies for SCC ${String(node)}`);
-    if (deps.size === 0) {
-      depth.set(node, 0);
-      return 0;
+    if (visiting.has(node)) {
+      throw new Error(`Cycle detected in DAG while computing depth for SCC ${String(node)}`);
     }
 
-    let maxDepDepth = 0;
-    for (const dep of deps) {
-      const depDepth = dfs(dep);
-      if (depDepth + 1 > maxDepDepth) {
-        maxDepDepth = depDepth + 1;
+    visiting.add(node);
+    try {
+      const deps = requiredMapGet(dag, node, `DAG dependencies for SCC ${String(node)}`);
+      if (deps.size === 0) {
+        depth.set(node, 0);
+        return 0;
       }
-    }
 
-    depth.set(node, maxDepDepth);
-    return maxDepDepth;
+      let maxDepDepth = 0;
+      for (const dep of deps) {
+        const depDepth = dfs(dep);
+        if (depDepth + 1 > maxDepDepth) {
+          maxDepDepth = depDepth + 1;
+        }
+      }
+
+      depth.set(node, maxDepDepth);
+      return maxDepDepth;
+    } finally {
+      visiting.delete(node);
+    }
   }
 
   for (const node of dag.keys()) {

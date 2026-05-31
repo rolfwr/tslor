@@ -251,6 +251,16 @@ describe('condenseToDAG', () => {
     // D has no outgoing edges
     assert.equal(dag.get(dIdx)?.size, 0);
   });
+
+  test('throws when SCC list does not cover every node in graph dependencies', () => {
+    const graph = buildGraph([['A', 'B']]);
+    const invalidSccs: SCC[] = [['A']];
+
+    assert.throws(
+      () => condenseToDAG(graph, invalidSccs),
+      /SCC index for dependency node B referenced from A/
+    );
+  });
 });
 
 describe('computeTopologicalDepth', () => {
@@ -265,6 +275,17 @@ describe('computeTopologicalDepth', () => {
     dag.set(0, new Set());
     const depth = computeTopologicalDepth(dag);
     assert.equal(depth.get(0), 0);
+  });
+
+  test('throws when DAG contains a cycle', () => {
+    const dag = new Map<number, Set<number>>();
+    dag.set(0, new Set([1]));
+    dag.set(1, new Set([0]));
+
+    assert.throws(
+      () => computeTopologicalDepth(dag),
+      /Cycle detected in DAG while computing depth for SCC/
+    );
   });
 
   test('linear chain A→B→C: A has depth 2, B has depth 1, C (leaf) has depth 0', () => {
