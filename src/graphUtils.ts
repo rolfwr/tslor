@@ -148,16 +148,27 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
  * @param sccs - Strongly-connected components from `findSCCs()`
  * @returns Adjacency map where keys are SCC indices and values are
  *          sets of SCC indices that the key SCC depends on.
- * @throws {Error} If `sccs` does not cover every node referenced by `graph`.
+ * @throws {Error} If `sccs` is not a valid partition of graph nodes
+ *                 (missing coverage or duplicate membership).
  */
 export function condenseToDAG(
   graph: AdjacencyMap,
   sccs: ReadonlyArray<SCC>
 ): Map<number, Set<number>> {
-  // Map each node to its SCC index
+  // Map each node to its SCC index.
   const nodeToScc = new Map<string, number>();
   for (const [sccIndex, scc] of sccs.entries()) {
     for (const member of scc) {
+      if (nodeToScc.has(member)) {
+        const previousSccIndex = requiredMapGet(
+          nodeToScc,
+          member,
+          `previous SCC index for duplicate node ${member}`
+        );
+        throw new Error(
+          `Node ${member} appears in multiple SCCs: ${String(previousSccIndex)} and ${String(sccIndex)}`
+        );
+      }
       nodeToScc.set(member, sccIndex);
     }
   }

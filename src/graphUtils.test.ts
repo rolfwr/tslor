@@ -261,6 +261,16 @@ describe('condenseToDAG', () => {
       /SCC index for dependency node B referenced from A/
     );
   });
+
+  test('throws when SCC list assigns a node to multiple SCCs', () => {
+    const graph = buildGraph([['A', 'B']]);
+    const invalidSccs: SCC[] = [['A'], ['A', 'B']];
+
+    assert.throws(
+      () => condenseToDAG(graph, invalidSccs),
+      /Node A appears in multiple SCCs: 0 and 1/
+    );
+  });
 });
 
 describe('computeTopologicalDepth', () => {
