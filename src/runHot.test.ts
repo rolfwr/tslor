@@ -19,15 +19,28 @@ function mustGet<K extends string, V>(record: Record<K, V>, key: K): V {
   return v;
 }
 
-function makeStorage(edges: Array<{ from: string; to: string }>): Storage {
+function makeStorage(
+  edges: Array<{
+    from: string;
+    to: string;
+    fromTsconfig?: string;
+    toTsconfig?: string;
+  }>
+): Storage {
   const objStore = new ObjStore({ traceId: null });
   const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
   let idx = 0;
-  for (const { from, to } of edges) {
-    storage.putImport(from, '/tsconfig.json', idx++, 'sym', {
-      path: to,
-      tsconfig: '/tsconfig.json',
-    });
+  for (const { from, to, fromTsconfig, toTsconfig } of edges) {
+    storage.putImport(
+      from,
+      fromTsconfig ?? '/tsconfig.json',
+      idx++,
+      'sym',
+      {
+        path: to,
+        tsconfig: toTsconfig ?? '/tsconfig.json',
+      }
+    );
   }
   return storage;
 }
@@ -257,22 +270,13 @@ describe('buildHotModuleGraph with project-scope', () => {
       /a.ts imports /b.ts (same project) and /c.ts (different project).
       With project-scope, only /b.ts should appear in /a.ts imports.
     */
-    const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
-    let idx = 0;
-    // /a.ts imports /b.ts (same tsconfig)
-    storage.putImport('/a.ts', '/project/tsconfig.json', idx++, 'sym', {
-      path: '/b.ts',
-      tsconfig: '/project/tsconfig.json',
-    });
-    // /a.ts imports /c.ts (different tsconfig)
-    storage.putImport('/a.ts', '/project/tsconfig.json', idx++, 'sym', {
-      path: '/c.ts',
-      tsconfig: '/other/tsconfig.json',
-    });
+    const db = makeStorage([
+      { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/project/tsconfig.json' },
+      { from: '/a.ts', to: '/c.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
+    ]);
 
     const hotMods = buildHotModuleGraph(
-      storage,
+      db,
       ['/a.ts', '/b.ts', '/c.ts'],
       '/project/tsconfig.json'
     );
@@ -283,16 +287,12 @@ describe('buildHotModuleGraph with project-scope', () => {
   });
 
   test('excludes all imports when none share the tsconfig', () => {
-    const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
-    let idx = 0;
-    storage.putImport('/a.ts', '/project/tsconfig.json', idx++, 'sym', {
-      path: '/b.ts',
-      tsconfig: '/other/tsconfig.json',
-    });
+    const db = makeStorage([
+      { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
+    ]);
 
     const hotMods = buildHotModuleGraph(
-      storage,
+      db,
       ['/a.ts', '/b.ts'],
       '/project/tsconfig.json'
     );
