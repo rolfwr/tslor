@@ -47,10 +47,15 @@ program
   .command('dependencies <paths...>')
   .description('List transitive module imports')
   .option('-p, --project-scope', 'Only list modules within the same project')
-  .action(async (paths: string[], opts, cmd) => {
+  .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runDependencies(paths, opts, debugOptions, fileSystem);
+    await runDependencies(
+      paths,
+      { projectScope: opts.projectScope === true },
+      debugOptions,
+      fileSystem
+    );
   });
 
 program
