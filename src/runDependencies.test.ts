@@ -35,10 +35,12 @@ describe('runDependencies file input (backward compat)', () => {
     const fileSystem = new InMemoryFileSystem(files);
 
     const aPath = join(testDir, 'a.ts');
+    const bPath = join(testDir, 'b.ts');
+    const cPath = join(testDir, 'c.ts');
     const logs: string[] = [];
 
     await runDependencies(
-      [aPath],
+      [aPath, bPath, cPath],
       {
         repoRoot: testDir,
         storage,
@@ -49,14 +51,14 @@ describe('runDependencies file input (backward compat)', () => {
     );
 
     /*
-      a.ts imports b.ts, b.ts imports c.ts. The forward-import walk
-      starting from a.ts reaches all three modules. The shared `seen` set
-      ensures each module is printed exactly once.
+      All three input modules are printed exactly once.
+      The shared `seen` set prevents duplicates when a module
+      appears as a reverse dependency of multiple inputs.
     */
     assert.lengthOf(logs, 3);
     assert.isTrue(logs.includes(aPath), 'a.ts should be in output');
-    assert.isTrue(logs.includes(join(testDir, 'b.ts')), 'b.ts should be in output');
-    assert.isTrue(logs.includes(join(testDir, 'c.ts')), 'c.ts should be in output');
+    assert.isTrue(logs.includes(bPath), 'b.ts should be in output');
+    assert.isTrue(logs.includes(cPath), 'c.ts should be in output');
   });
 });
 
@@ -85,7 +87,7 @@ describe('runDependencies directory expansion', () => {
 
     /*
       Directory expansion finds a.ts, b.ts, c.ts (not d.js).
-      The forward-import walk covers all three TypeScript modules.
+      All three TypeScript files are printed exactly once.
     */
     const aPath = join(testDir, 'a.ts');
     const bPath = join(testDir, 'b.ts');
@@ -101,6 +103,38 @@ describe('runDependencies directory expansion', () => {
       logs.some(l => l.endsWith('d.js')),
       'd.js should not be in output'
     );
+  });
+});
+
+describe('runDependencies reverse-dependency walking', () => {
+  test('single input discovers transitive reverse dependencies', async () => {
+    const files = new Map<string, string>([
+      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
+      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
+      [join(testDir, 'c.ts'), 'export const c = 3;\n'],
+    ]);
+    const fileSystem = new InMemoryFileSystem(files);
+
+    const cPath = join(testDir, 'c.ts');
+    const logs: string[] = [];
+
+    // Pass only c.ts; reverse-dependency walking should discover:
+    // c.ts (input) → b.ts (imports c) → a.ts (imports b)
+    await runDependencies(
+      [cPath],
+      {
+        repoRoot: testDir,
+        storage,
+        output: { log: (msg) => logs.push(msg) },
+      },
+      { traceId: null },
+      fileSystem
+    );
+
+    assert.lengthOf(logs, 3);
+    assert.isTrue(logs.includes(cPath), 'c.ts (input) should be in output');
+    assert.isTrue(logs.includes(join(testDir, 'b.ts')), 'b.ts (imports c) should be in output');
+    assert.isTrue(logs.includes(join(testDir, 'a.ts')), 'a.ts (imports b) should be in output');
   });
 });
 

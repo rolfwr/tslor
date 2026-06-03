@@ -152,6 +152,50 @@ export class Storage {
     return result;
   }
 
+  /**
+   * Get all modules that import the given module, along with their tsconfig.
+   * Used for reverse-dependency walking with project scope filtering.
+   */
+  getReverseDependencies(exporterPath: string): ExporterPath[] {
+    const importRecords = this.objStore.getGroup('exportPath|' + exporterPath);
+    const seen = new Set<string>();
+    const result: ExporterPath[] = [];
+
+    for (const obj of importRecords) {
+      const id = obj.id;
+      const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
+      if (seen.has(importerPath)) {
+        continue;
+      }
+      seen.add(importerPath);
+
+      const importerTsconfig = this.extractImporterTsconfig(obj.groups);
+      result.push({ path: importerPath, tsconfig: importerTsconfig });
+    }
+
+    return result;
+  }
+
+  /**
+   * Extract the importer's tsconfig path from an object's groups list.
+   * Looks for a group matching the pattern `projectUse|{fromTsconfig}|{toTsconfig}`
+   * and returns the `fromTsconfig` portion.
+   */
+  private extractImporterTsconfig(groups: unknown): string {
+    if (!Array.isArray(groups)) {
+      return '';
+    }
+    for (const group of groups) {
+      if (typeof group === 'string' && group.startsWith('projectUse|')) {
+        const parts = group.split('|');
+        if (parts.length >= 3) {
+          return parts.at(1) ?? '';
+        }
+      }
+    }
+    return '';
+  }
+
   getProjectUses(fromTsconfig: string, toTsconfig: string): { importerPath: string, exporterPath: string }[] {
     const importers = this.objStore.getGroup('projectUse|' + fromTsconfig + '|' + toTsconfig);
     return importers.map(obj => {

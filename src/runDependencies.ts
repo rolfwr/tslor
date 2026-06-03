@@ -124,12 +124,12 @@ function dumpDependenciesFor(
   }
   seen.add(tsPath);
 
-  const exporters = db.getExporterPathsOfImport(tsPath);
-  for (const exporter of exporters) {
-    if (tsconfigPathScope && tsconfigPathScope !== exporter.tsconfig) {
+  const reverseDeps = db.getReverseDependencies(tsPath);
+  for (const dep of reverseDeps) {
+    if (tsconfigPathScope && tsconfigPathScope !== dep.tsconfig) {
       continue;
     }
-    dumpDependenciesFor(db, exporter.path, seen, tsconfigPathScope, output);
+    dumpDependenciesFor(db, dep.path, seen, tsconfigPathScope, output);
   }
 
   output.log(tsPath);
