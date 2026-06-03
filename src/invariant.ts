@@ -1,9 +1,8 @@
 /**
- * Runtime assertion utility for TSLOR.
- * 
- * This function throws an error if the given condition is false.
- * It is meant to be a safety net to prevent programming mistakes.
- * It MUST NOT BE USED for regular control flow!
+ * Runtime assertion utilities for TSLOR.
+ *
+ * Provides invariant checks for programming guarantees and helpers
+ * that replace non-null assertions on known-safe lookups.
  */
 
 type MessageValue = string;
@@ -18,7 +17,10 @@ function toString(msg: MessageValue | (() => MessageValue)): string {
 
 /**
  * Asserts that a condition is true, throwing an error with the provided message if not.
- * 
+ *
+ * Safety net for programming mistakes only — must not be used for regular
+ * control flow.
+ *
  * @param value - The condition to check
  * @param message - Error message (can be a string or function that returns a string)
  */
