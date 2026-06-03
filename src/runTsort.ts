@@ -2,7 +2,8 @@ import { updateStorage } from "./indexing";
 import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
 import { openStorage, Storage } from "./storage";
 import { DebugOptions } from "./objstore";
-import { normalizePaths, denormalizePath } from "./pathUtils";
+import { denormalizePath } from "./pathUtils";
+import { resolveCommandScope } from "./commandScope";
 import { FileSystem } from "./filesystem";
 
 export interface TsortOptions {
@@ -28,12 +29,18 @@ export async function runTsort(
     return;
   }
 
-  // Normalize all input paths to absolute paths
-  const absoluteModulePaths = normalizePaths(modulePaths);
-  const moduleSet = new Set(absoluteModulePaths);
+  /*
+    Resolve hybrid path input: files are normalized to absolute paths,
+    directories are expanded to all TypeScript modules within them.
+  */
+  const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
+
+  if (moduleSet.size === 0) {
+    return;
+  }
 
   // Find git repo root and open storage
-  const tsPath = absoluteModulePaths.at(0);
+  const tsPath = moduleSet.values().next().value;
   if (tsPath === undefined) {
     throw new Error('No module paths provided');
   }
