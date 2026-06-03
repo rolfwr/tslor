@@ -1,28 +1,9 @@
 import { ObjStore } from './objstore';
 import { Storage } from './storage';
-import { getOrThrow } from './invariant';
-import { assert, test, describe, beforeEach, vi, afterEach } from 'vitest';
-
-// Mock console.log and console.error to capture output
-let consoleOutput: string[] = [];
-let consoleErrors: string[] = [];
+import { getOrThrow, invariant } from './invariant';
+import { assert, test, describe } from 'vitest';
 
 describe('tsort', () => {
-  beforeEach(() => {
-    consoleOutput = [];
-    consoleErrors = [];
-    vi.spyOn(console, 'log').mockImplementation((msg: string) => {
-      consoleOutput.push(msg);
-    });
-    vi.spyOn(console, 'error').mockImplementation((msg: string) => {
-      consoleErrors.push(msg);
-    });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   // Helper to create a storage with import relationships
   function createStorageWithImports(imports: Array<{ from: string; to: string }>) {
     const objStore = new ObjStore({ traceId: null });
@@ -147,13 +128,10 @@ describe('tsort', () => {
 
     const result = performTsort(storage, ['/a.ts', '/b.ts', '/c.ts']);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
     assert.deepEqual(result, ['/c.ts', '/b.ts', '/a.ts']);
 
     // Verify dependency order: C should appear before B, B before A
-    if (result === null) {
-      throw new Error('Expected result');
-    }
     const aIndex = result.indexOf('/a.ts');
     const bIndex = result.indexOf('/b.ts');
     const cIndex = result.indexOf('/c.ts');
@@ -173,12 +151,9 @@ describe('tsort', () => {
 
     const result = performTsort(storage, ['/a.ts', '/b.ts', '/c.ts', '/d.ts']);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
 
     // Verify dependency order: D before B and C, B and C before A
-    if (result === null) {
-      throw new Error('Expected result');
-    }
     const aIndex = result.indexOf('/a.ts');
     const bIndex = result.indexOf('/b.ts');
     const cIndex = result.indexOf('/c.ts');
@@ -196,7 +171,7 @@ describe('tsort', () => {
 
     const result = performTsort(storage, ['/c.ts', '/a.ts', '/b.ts']);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
     // Should be sorted alphabetically since no dependencies
     assert.deepEqual(result, ['/a.ts', '/b.ts', '/c.ts']);
   });
@@ -206,7 +181,7 @@ describe('tsort', () => {
 
     const result = performTsort(storage, ['/only.ts']);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
     assert.deepEqual(result, ['/only.ts']);
   });
 
@@ -234,12 +209,9 @@ describe('tsort', () => {
     // Only ask for A and B, ignoring external
     const result = performTsort(storage, ['/a.ts', '/b.ts']);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
     assert.deepEqual(result, ['/b.ts', '/a.ts']);
 
-    if (result === null) {
-      throw new Error('Expected result');
-    }
     const aIndex = result.indexOf('/a.ts');
     const bIndex = result.indexOf('/b.ts');
     assert.isTrue(bIndex < aIndex, 'B (dependency) should come before A');
@@ -274,7 +246,7 @@ describe('tsort', () => {
 
     const result = performTsort(storage, []);
 
-    assert.isNotNull(result);
+    invariant(result !== null, 'Expected valid topological sort');
     assert.deepEqual(result, []);
   });
 });
