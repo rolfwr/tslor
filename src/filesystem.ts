@@ -172,10 +172,10 @@ export class InMemoryFileSystem implements FileSystem {
       const slashIndex = remainder.indexOf('/');
 
       if (slashIndex === -1) {
-        /* Direct child file */
+        // Direct child file
         children.set(remainder, 'file');
       } else {
-        /* Child directory (derived from nested file paths) */
+        // Child directory (derived from nested file paths)
         const dirName = remainder.slice(0, slashIndex);
         if (!children.has(dirName)) {
           children.set(dirName, 'directory');
