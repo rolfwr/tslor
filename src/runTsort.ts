@@ -8,7 +8,7 @@ import { FileSystem } from "./filesystem";
 import { assertDefined, getOrThrow } from "./invariant";
 
 /**
- * Output interface for tsort results and errors.
+ * Output interface for tsort results.
  *
  * Allows callers to capture or redirect output instead of writing
  * directly to console, enabling testing without global state mutation.
@@ -16,8 +16,6 @@ import { assertDefined, getOrThrow } from "./invariant";
 export interface TsortOutput {
   /** Write a module path to standard output */
   log: (msg: string) => void;
-  /** Write an error message to standard error */
-  error: (msg: string) => void;
 }
 
 /**
@@ -36,8 +34,8 @@ export interface TsortOptions {
    */
   repoRoot?: string;
   /**
-   * Output handler for module paths and error messages.
-   * Defaults to `console.log` / `console.error` when omitted.
+   * Output handler for module paths.
+   * Defaults to `console.log` when omitted.
    */
   output?: TsortOutput;
   /**
@@ -71,12 +69,11 @@ export async function runTsort(
 
   const output = options.output ?? {
     log: (msg: string) => console.log(msg),
-    error: (msg: string) => console.error(msg),
   };
 
   /*
     Resolve hybrid path input: files are normalized to absolute paths,
-    directories are expanded to all TypeScript modules within them.
+    and directories are expanded to all TypeScript modules within them.
   */
   const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
 
@@ -95,9 +92,9 @@ export async function runTsort(
   }
 
   /*
-    When project-scope is enabled, resolve each module's tsconfig so that
-    cross-project imports are filtered per-module rather than against a
-    single representative's tsconfig.
+    When project-scope is enabled, resolve each module's tsconfig
+    so that cross-project imports are filtered per-module rather than
+    against a single representative's tsconfig.
   */
   let moduleTsconfigMap: Map<string, string> | null = null;
   if (options.projectScope === true) {

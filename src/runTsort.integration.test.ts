@@ -43,7 +43,6 @@ describe('tsort directory expansion', () => {
         repoRoot: testDir,
         output: {
           log: (msg: string) => consoleOutput.push(msg),
-          error: (msg: string) => { throw new Error(`unexpected error: ${msg}`); },
         },
         storage,
       },
@@ -75,7 +74,6 @@ describe('tsort directory expansion', () => {
         repoRoot: testDir,
         output: {
           log: (msg: string) => consoleOutput.push(msg),
-          error: (msg: string) => { throw new Error(`unexpected error: ${msg}`); },
         },
         storage,
       },
