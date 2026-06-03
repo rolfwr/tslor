@@ -4,9 +4,10 @@ import { FileSystem } from "./filesystem";
 
 /**
  * Resolve hybrid path input (files and/or directories) to a deduplicated set
- * of absolute TypeScript file paths.
+ * of absolute file paths.
  *
- * - File paths are normalized to absolute paths via `normalizePath()`.
+ * - Direct file paths are normalized to absolute paths via `normalizePath()`
+ *   and included as-is, regardless of extension.
  * - Directory paths are expanded to all `.ts`/`.vue` files via
  *   `getTypeScriptFilePaths()`.
  * - The combined result is deduplicated.
