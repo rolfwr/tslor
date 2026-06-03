@@ -34,6 +34,7 @@ interface Direction {
 }
 
 export interface Options {
+  /** Module path to analyze instead of the hottest module */
   select: string | null;
   /** Only consider imports within the same tsconfig project (default: false) */
   projectScope?: boolean;
@@ -197,6 +198,17 @@ function isExportInScope(
   return true;
 }
 
+/**
+ * Build an import graph for the given files, querying the index for each file's
+ * dependencies.
+ *
+ * @param db - Storage index to query for import relationships
+ * @param filePaths - Absolute paths of modules to include in the graph
+ * @param moduleTsconfigMap - Optional map from module path to tsconfig path.
+ *     When provided, imports crossing tsconfig boundaries are filtered out
+ *     on a per-importer basis.
+ * @returns Graph keyed by normalized module path
+ */
 export function buildHotModuleGraph(
   db: Storage,
   filePaths: string[],
