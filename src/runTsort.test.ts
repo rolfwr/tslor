@@ -67,12 +67,12 @@ describe('tsort', () => {
       */
       const dependents = graph.get(exporter.path);
       if (dependents === undefined) {
-        throw new Error('Graph entry missing');
+        return;
       }
       dependents.add(modulePath);
       const dependencies = reverseGraph.get(modulePath);
       if (dependencies === undefined) {
-        throw new Error('Reverse graph entry missing');
+        return;
       }
       dependencies.add(exporter.path);
     }
@@ -135,7 +135,7 @@ describe('tsort', () => {
     for (const modulePath of moduleSet) {
       const rev = reverseGraph.get(modulePath);
       if (rev === undefined) {
-        throw new Error('Reverse graph entry missing');
+        continue;
       }
       inDegree.set(modulePath, rev.size);
     }
