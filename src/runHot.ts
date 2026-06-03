@@ -5,6 +5,7 @@ import { DebugOptions } from './objstore';
 import { denormalizePath } from './pathUtils';
 import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
+import { assertDefined } from './invariant';
 
 interface HotModuleInfo {
   path: string;
@@ -406,11 +407,9 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
     Resolve the git repo root from any path in the set.
     All paths belong to the same repo, so the choice is arbitrary.
     We take the first element; the guard above ensures the set is non-empty.
-    Array.from(moduleSet)[0] is string | undefined, but moduleSet.size > 0 is
-    guaranteed by the guard above, so index 0 always yields a string.
   */
-  // ast-grep-ignore: no-type-assertion
-  const entryPath = Array.from(moduleSet)[0] as string;
+  const [entryPath] = Array.from(moduleSet);
+  assertDefined(entryPath, 'moduleSet was empty despite size guard');
   const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, false);
@@ -428,16 +427,13 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
     const tsconfigs = await Promise.all(
       filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
     );
-    const entries: [string, string][] = [];
-    for (let i = 0; i < filePaths.length; i++) {
+    const entries: [string, string][] = filePaths.flatMap((path, i) => {
       const tsconfig = tsconfigs[i];
-      if (tsconfig !== null) {
-        // RATIONALE: i bounded by filePaths.length; tsconfig !== null checked above
-        // ast-grep-ignore: no-type-assertion
-        const entry = [filePaths[i], tsconfig] as [string, string];
-        entries.push(entry);
+      if (tsconfig == null) {
+        return [];
       }
-    }
+      return [[path, tsconfig]];
+    });
     moduleTsconfigMap = new Map(entries);
   }
 
