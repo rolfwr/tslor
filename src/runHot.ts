@@ -409,9 +409,8 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
     We take the first element; the guard above ensures the set is non-empty,
     so the iterator is guaranteed to return a defined value.
   */
-  const entryPathValue = moduleSet.values().next().value;
-  assertDefined(entryPathValue, 'moduleSet is non-empty (guarded above)');
-  const entryPath = entryPathValue;
+  const entryPath = moduleSet.values().next().value;
+  assertDefined(entryPath, 'moduleSet is non-empty (guarded above)');
   const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, false);
