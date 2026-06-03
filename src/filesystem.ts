@@ -12,6 +12,9 @@
  */
 
 
+/**
+ * Directory entry returned by {@link FileSystem.readdir}.
+ */
 export interface Dirent {
   name: string;
   isFile(): boolean;
@@ -35,7 +38,9 @@ export interface FileSystem {
   readFile(filePath: string, encoding?: string): Promise<string>;
 
   /**
-   * Read directory entries
+   * Read directory entries.
+   *
+   * @throws Error with ENOENT code if the directory does not exist.
    */
   readdir(dirPath: string): Promise<Dirent[]>;
 }
@@ -181,6 +186,16 @@ export class InMemoryFileSystem implements FileSystem {
           children.set(dirName, 'directory');
         }
       }
+    }
+
+    /*
+      In the in-memory model, directories are implicit — they exist only if
+      files are stored under them. An empty children map means no files share
+      the prefix, so the directory does not exist. Throw ENOENT to match
+      RealFileSystem behavior.
+    */
+    if (children.size === 0) {
+      throw new Error(`ENOENT: no such file or directory, readdir '${dirPath}'`);
     }
 
     return Array.from(children.entries()).map(([name, type]) => ({
