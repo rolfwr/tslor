@@ -3,7 +3,7 @@ import { findGitRepoRoot, getTsconfigPathForFile } from './project';
 import { ExporterPath, Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
 import { DebugOptions } from './objstore';
-import { denormalizePath } from './pathUtils';
+import { denormalizePath, normalizePath } from './pathUtils';
 import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
 
@@ -245,7 +245,8 @@ export function selectHotModule(
   options: Options
 ): ScoredHotModuleInfo {
   if (options.select) {
-    const found = hotMods[options.select];
+    const normalizedSelect = normalizePath(options.select);
+    const found = hotMods[normalizedSelect];
     if (!found) {
       throw new Error('Module not found in analyzed paths: ' + options.select);
     }
