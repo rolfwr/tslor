@@ -171,6 +171,9 @@ export class Storage {
       seen.add(importerPath);
 
       const importerTsconfig = this.extractImporterTsconfig(obj.groups);
+      if (importerTsconfig === null) {
+        continue;
+      }
       result.push({ path: importerPath, tsconfig: importerTsconfig });
     }
 
@@ -180,11 +183,12 @@ export class Storage {
   /**
    * Extract the importer's tsconfig path from an object's groups list.
    * Looks for a group matching the pattern `projectUse|{fromTsconfig}|{toTsconfig}`
-   * and returns the `fromTsconfig` portion.
+   * and returns the `fromTsconfig` portion. Returns null when no projectUse
+   * group is present.
    */
-  private extractImporterTsconfig(groups: string[] | undefined): string {
+  private extractImporterTsconfig(groups: string[] | undefined): string | null {
     if (!groups) {
-      return '';
+      return null;
     }
     for (const group of groups) {
       if (group.startsWith('projectUse|')) {
@@ -196,7 +200,7 @@ export class Storage {
         }
       }
     }
-    return '';
+    return null;
   }
 
   getProjectUses(fromTsconfig: string, toTsconfig: string): { importerPath: string, exporterPath: string }[] {
@@ -224,7 +228,7 @@ export class Storage {
 
   getProjectUsesWithSymbols(fromTsconfig: string, toTsconfig: string): { importerPath: string; exporterPath: string; symbolName: string }[] {
     const projectUseImports = this.objStore.getGroup('projectUse|' + fromTsconfig + '|' + toTsconfig);
-    const result: { importerPath: string, exporterPath: string, symbolName: string }[] = [];
+    const result: { importerPath: string; exporterPath: string; symbolName: string }[] = [];
     
     for (const obj of projectUseImports) {
       const importerPath = obj.id.slice('import|'.length, obj.id.lastIndexOf('|'));
