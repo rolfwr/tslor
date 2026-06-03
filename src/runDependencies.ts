@@ -77,25 +77,29 @@ export async function runDependencies(
   assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
   const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
 
-  const db = options.storage ?? openStorage(debugOptions, false);
-  if (!options.storage) {
-    await updateStorage(repoRoot, db, true, fileSystem);
-  }
-
-  // Get tsconfig path for project scope filtering if needed
-  const tsconfigPath = options.projectScope
-    ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
-    : null;
-
-  // Dump dependencies for each module
-  const seen = new Set<string>();
-  for (const path of moduleSet) {
-    dumpDependenciesFor(db, path, seen, tsconfigPath, output);
-  }
-
-  // Only persist storage that we created ourselves
-  if (!options.storage) {
-    db.save();
+  if (options.storage) {
+    const db = options.storage;
+    const tsconfigPath = options.projectScope
+      ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
+      : null;
+    const seen = new Set<string>();
+    for (const path of moduleSet) {
+      dumpDependenciesFor(db, path, seen, tsconfigPath, output);
+    }
+  } else {
+    const db = openStorage(debugOptions, true);
+    try {
+      await updateStorage(repoRoot, db, true, fileSystem);
+      const tsconfigPath = options.projectScope
+        ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
+        : null;
+      const seen = new Set<string>();
+      for (const path of moduleSet) {
+        dumpDependenciesFor(db, path, seen, tsconfigPath, output);
+      }
+    } finally {
+      db.save();
+    }
   }
 }
 
