@@ -126,9 +126,6 @@ export async function runTsort(
     const cycleNodes = findCycleNodes(moduleSet, reverseGraph);
     const cwd = process.cwd();
     const cyclePaths = [...cycleNodes].map((node) => denormalizePath(node, cwd));
-    for (const path of cyclePaths) {
-      output.error(`  ${path}`);
-    }
     throw new Error(
       `tsort: cycle detected among ${cyclePaths.length} module${cyclePaths.length === 1 ? '' : 's'}:\n` +
       cyclePaths.map((p) => `  ${p}`).join('\n')
