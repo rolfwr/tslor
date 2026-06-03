@@ -62,17 +62,20 @@ export async function runImportGroups(
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
 
-  const filePaths = Array.from(moduleSet);
-  const moduleTsconfigMap = await resolveModuleTsconfigs(
-    filePaths,
-    repoRoot,
-    options,
-    fileSystem
-  );
+  try {
+    const filePaths = Array.from(moduleSet);
+    const moduleTsconfigMap = await resolveModuleTsconfigs(
+      filePaths,
+      repoRoot,
+      options,
+      fileSystem
+    );
 
-  const groups = buildImportGroups(db, filePaths, moduleTsconfigMap);
-  renderGroups(groups, cwd);
-  db.save();
+    const groups = buildImportGroups(db, filePaths, moduleTsconfigMap);
+    renderGroups(groups, cwd);
+  } finally {
+    db.save();
+  }
 }
 
 /**

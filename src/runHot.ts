@@ -416,42 +416,45 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
 
-  const filePaths = Array.from(moduleSet);
+  try {
+    const filePaths = Array.from(moduleSet);
 
-  /*
-    When project-scope is enabled, resolve each module's tsconfig so that
-    cross-project imports are filtered per-module rather than against a
-    single representative's tsconfig.
-  */
-  let moduleTsconfigMap: Map<string, string> | null = null;
-  if (options.projectScope === true) {
-    const tsconfigs = await Promise.all(
-      filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
-    );
-    const entries: [string, string][] = filePaths.flatMap((path, i) => {
-      const tsconfig = tsconfigs[i];
-      if (tsconfig == null) {
-        return [];
-      }
-      return [[path, tsconfig]];
-    });
-    moduleTsconfigMap = new Map(entries);
+    /*
+      When project-scope is enabled, resolve each module's tsconfig so that
+      cross-project imports are filtered per-module rather than against a
+      single representative's tsconfig.
+    */
+    let moduleTsconfigMap: Map<string, string> | null = null;
+    if (options.projectScope === true) {
+      const tsconfigs = await Promise.all(
+        filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+      );
+      const entries: [string, string][] = filePaths.flatMap((path, i) => {
+        const tsconfig = tsconfigs[i];
+        if (tsconfig == null) {
+          return [];
+        }
+        return [[path, tsconfig]];
+      });
+      moduleTsconfigMap = new Map(entries);
+    }
+
+    const hotMods = buildHotModuleGraph(db, filePaths, moduleTsconfigMap);
+    const scoredMods = calculateAllScores(hotMods);
+
+    const hotArray = Object.values(scoredMods);
+    hotArray.sort((a, b) => b.badness - a.badness);
+
+    const selected = selectHotModule(scoredMods, hotArray, options);
+
+    printTopModules(hotArray, cwd);
+
+    const importedByChain = buildImportedByChain(scoredMods, selected);
+    const importChain = buildImportChain(scoredMods, selected);
+    const hotChain = [...importedByChain.reverse(), selected, ...importChain];
+
+    printHotChain(hotChain, selected, cwd);
+  } finally {
+    db.save();
   }
-
-  const hotMods = buildHotModuleGraph(db, filePaths, moduleTsconfigMap);
-  const scoredMods = calculateAllScores(hotMods);
-
-  const hotArray = Object.values(scoredMods);
-  hotArray.sort((a, b) => b.badness - a.badness);
-
-  const selected = selectHotModule(scoredMods, hotArray, options);
-
-  printTopModules(hotArray, cwd);
-
-  const importedByChain = buildImportedByChain(scoredMods, selected);
-  const importChain = buildImportChain(scoredMods, selected);
-  const hotChain = [...importedByChain.reverse(), selected, ...importChain];
-
-  printHotChain(hotChain, selected, cwd);
-  db.save();
 }

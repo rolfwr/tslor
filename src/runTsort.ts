@@ -89,13 +89,29 @@ export async function runTsort(
     await updateStorage(repoRoot, db, true, fileSystem);
   }
 
-  // Get tsconfig path for project scope filtering if needed
-  const tsconfigPath = options.projectScope
-    ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
-    : null;
+  /*
+    When project-scope is enabled, resolve each module's tsconfig so that
+    cross-project imports are filtered per-module rather than against a
+    single representative's tsconfig.
+  */
+  let moduleTsconfigMap: Map<string, string> | null = null;
+  if (options.projectScope === true) {
+    const filePaths = Array.from(moduleSet);
+    const tsconfigs = await Promise.all(
+      filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+    );
+    const entries: [string, string][] = filePaths.flatMap((path, i) => {
+      const tsconfig = tsconfigs[i];
+      if (tsconfig == null) {
+        return [];
+      }
+      return [[path, tsconfig]];
+    });
+    moduleTsconfigMap = new Map(entries);
+  }
 
   // Build the dependency graph considering only the input modules
-  const { graph, reverseGraph } = buildDependencyGraph(db, moduleSet, tsconfigPath);
+  const { graph, reverseGraph } = buildDependencyGraph(db, moduleSet, moduleTsconfigMap);
 
   // Perform topological sort using Kahn's algorithm
   const sorted = topologicalSort(moduleSet, graph, reverseGraph);
@@ -129,13 +145,15 @@ export async function runTsort(
  * This way Kahn's algorithm processes zero-in-degree nodes (no dependencies
  * within the set) first, producing dependency-first output.
  *
+ * @param moduleTsconfigMap Per-module tsconfig map for project-scope filtering,
+ *   or null when project-scope is disabled.
  * @returns graph: Map of module -> modules that import it (within the set)
  * @returns reverseGraph: Map of module -> modules it imports (within the set)
  */
 function buildDependencyGraph(
   db: Storage,
   moduleSet: Set<string>,
-  tsconfigPath: string | null
+  moduleTsconfigMap: Map<string, string> | null
 ): { graph: Map<string, Set<string>>; reverseGraph: Map<string, Set<string>> } {
   const graph = new Map<string, Set<string>>();
   const reverseGraph = new Map<string, Set<string>>();
@@ -148,7 +166,7 @@ function buildDependencyGraph(
 
   // Build edges
   for (const modulePath of moduleSet) {
-    buildEdgesForModule(modulePath, db, moduleSet, tsconfigPath, graph, reverseGraph);
+    buildEdgesForModule(modulePath, db, moduleSet, moduleTsconfigMap, graph, reverseGraph);
   }
 
   return { graph, reverseGraph };
@@ -158,14 +176,14 @@ function buildEdgesForModule(
   modulePath: string,
   db: Storage,
   moduleSet: Set<string>,
-  tsconfigPath: string | null,
+  moduleTsconfigMap: Map<string, string> | null,
   graph: Map<string, Set<string>>,
   reverseGraph: Map<string, Set<string>>
 ): void {
   const exporters = db.getExporterPathsOfImport(modulePath);
 
   for (const exporter of exporters) {
-    if (shouldSkipExporter(exporter, tsconfigPath)) {
+    if (shouldSkipExporter(modulePath, exporter, moduleTsconfigMap)) {
       continue;
     }
     addEdgeIfInScope(modulePath, exporter.path, moduleSet, graph, reverseGraph);
@@ -173,10 +191,18 @@ function buildEdgesForModule(
 }
 
 function shouldSkipExporter(
+  modulePath: string,
   exporter: { path: string; tsconfig: string },
-  tsconfigPath: string | null
+  moduleTsconfigMap: Map<string, string> | null
 ): boolean {
-  return tsconfigPath !== null && tsconfigPath !== exporter.tsconfig;
+  if (moduleTsconfigMap === null) {
+    return false;
+  }
+  const moduleTsconfig = moduleTsconfigMap.get(modulePath);
+  if (moduleTsconfig === undefined) {
+    return true;
+  }
+  return moduleTsconfig !== exporter.tsconfig;
 }
 
 function addEdgeIfInScope(
