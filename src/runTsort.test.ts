@@ -22,6 +22,14 @@ describe('tsort', () => {
     vi.restoreAllMocks();
   });
 
+  function mapGet<K, V>(map: Map<K, V>, key: K, msg: string): V {
+    const value = map.get(key);
+    if (value === undefined) {
+      throw new Error(msg);
+    }
+    return value;
+  }
+
   // Helper to create a storage with import relationships
   function createStorageWithImports(imports: Array<{ from: string; to: string }>) {
     const objStore = new ObjStore({ traceId: null });
@@ -60,16 +68,8 @@ describe('tsort', () => {
       if (!moduleSet.has(exporter.path)) {
         continue;
       }
-      const dependents = graph.get(exporter.path);
-      if (dependents === undefined) {
-        return;
-      }
-      dependents.add(modulePath);
-      const dependencies = reverseGraph.get(modulePath);
-      if (dependencies === undefined) {
-        return;
-      }
-      dependencies.add(exporter.path);
+      mapGet(graph, exporter.path, 'exporter.path not in graph').add(modulePath);
+      mapGet(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporter.path);
     }
   }
 
@@ -104,11 +104,7 @@ describe('tsort', () => {
     inDegree: Map<string, number>,
     queue: string[]
   ): void {
-    const dependents = graph.get(current);
-    if (dependents === undefined) {
-      return;
-    }
-    for (const dependent of dependents) {
+    for (const dependent of mapGet(graph, current, 'current not in graph')) {
       const dependentInDegree = inDegree.get(dependent);
       if (dependentInDegree === undefined) {
         continue;
@@ -128,11 +124,7 @@ describe('tsort', () => {
   ): string[] | null {
     const inDegree = new Map<string, number>();
     for (const modulePath of moduleSet) {
-      const rev = reverseGraph.get(modulePath);
-      if (rev === undefined) {
-        continue;
-      }
-      inDegree.set(modulePath, rev.size);
+      inDegree.set(modulePath, mapGet(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
     }
     const queue: string[] = [];
     for (const modulePath of moduleSet) {

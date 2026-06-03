@@ -5,7 +5,7 @@ import { DebugOptions } from "./objstore";
 import { denormalizePath } from "./pathUtils";
 import { resolveCommandScope } from "./commandScope";
 import { FileSystem } from "./filesystem";
-import { assertDefined } from "./invariant";
+import { assertDefined, getOrThrow } from "./invariant";
 
 /**
  * Output interface for tsort results and errors.
@@ -189,16 +189,8 @@ function addEdgeIfInScope(
   if (!moduleSet.has(exporterPath)) {
     return;
   }
-  const dependents = graph.get(exporterPath);
-  if (dependents === undefined) {
-    return;
-  }
-  dependents.add(modulePath);
-  const dependencies = reverseGraph.get(modulePath);
-  if (dependencies === undefined) {
-    return;
-  }
-  dependencies.add(exporterPath);
+  getOrThrow(graph, exporterPath, 'exporterPath not in graph').add(modulePath);
+  getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporterPath);
 }
 
 function insertSorted(queue: string[], item: string): void {
@@ -238,11 +230,7 @@ function computeInDegree(
 ): Map<string, number> {
   const inDegree = new Map<string, number>();
   for (const modulePath of moduleSet) {
-    const rev = reverseGraph.get(modulePath);
-    if (rev === undefined) {
-      continue;
-    }
-    inDegree.set(modulePath, rev.size);
+    inDegree.set(modulePath, getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
   }
   return inDegree;
 }
@@ -285,11 +273,7 @@ function processDependents(
   inDegree: Map<string, number>,
   queue: string[]
 ): void {
-  const dependents = graph.get(current);
-  if (dependents === undefined) {
-    return;
-  }
-  for (const dependent of dependents) {
+  for (const dependent of getOrThrow(graph, current, 'current not in graph')) {
     const dependentInDegree = inDegree.get(dependent);
     if (dependentInDegree === undefined) {
       continue;

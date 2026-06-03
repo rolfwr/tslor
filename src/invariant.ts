@@ -31,10 +31,31 @@ export function invariant(value: unknown, message: MessageFormatter): asserts va
 
 /**
  * Type-safe assertion that a value is not null or undefined.
- * 
+ *
  * @param value - The value to check
  * @param message - Error message if value is null/undefined
  */
 export function assertDefined<T>(value: T | null | undefined, message: MessageFormatter): asserts value is T {
   invariant(value != null, message);
+}
+
+/**
+ * Retrieve a value from a Map, throwing if the key is missing.
+ *
+ * Replaces the need for non-null assertions (`!`) on `Map.get()` calls
+ * where the caller guarantees the key exists.
+ *
+ * @param map - The map to look up
+ * @param key - The key to retrieve
+ * @param message - Error message if the key is not present
+ * @returns The value associated with the key
+ */
+export function getOrThrow<K, V>(
+  map: Map<K, V>,
+  key: K,
+  message: MessageFormatter
+): V {
+  const value = map.get(key);
+  invariant(value !== undefined, message);
+  return value;
 }
