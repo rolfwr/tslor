@@ -3,8 +3,6 @@ import { ObjStore } from "./objstore";
 import { Storage } from "./storage";
 import { buildImportGroups } from "./runImportGroups";
 
-/* Helpers */
-
 /**
  * Build a Storage instance from a list of import edges.
  *
@@ -216,18 +214,12 @@ describe("buildImportGroups", () => {
       Both import from the same resolved path (/lib.ts), so they belong
       to the same group. The specific symbols (Foo vs Bar) don't matter.
     */
-    const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, "/dev/null", { traceId: null }, false);
-    storage.putImport("/a.ts", "/tsconfig.json", 0, "Foo", {
-      path: "/lib.ts",
-      tsconfig: "/tsconfig.json",
-    });
-    storage.putImport("/b.ts", "/tsconfig.json", 0, "Bar", {
-      path: "/lib.ts",
-      tsconfig: "/tsconfig.json",
-    });
+    const db = makeStorage([
+      { from: "/a.ts", to: "/lib.ts" },
+      { from: "/b.ts", to: "/lib.ts" },
+    ]);
 
-    const groups = buildImportGroups(storage, ["/a.ts", "/b.ts", "/lib.ts"], null);
+    const groups = buildImportGroups(db, ["/a.ts", "/b.ts", "/lib.ts"], null);
 
     assert.equal(groups.length, 1);
     const symGroup = atOrThrow(groups, 0);
@@ -394,23 +386,14 @@ describe("buildImportGroups", () => {
       /a.ts imports both Foo and Bar from /lib.ts (two putImport calls).
       The import set for /a.ts should still be [/lib.ts] (deduplicated).
     */
-    const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, "/dev/null", { traceId: null }, false);
-    storage.putImport("/a.ts", "/tsconfig.json", 0, "Foo", {
-      path: "/lib.ts",
-      tsconfig: "/tsconfig.json",
-    });
-    storage.putImport("/a.ts", "/tsconfig.json", 1, "Bar", {
-      path: "/lib.ts",
-      tsconfig: "/tsconfig.json",
-    });
-    storage.putImport("/b.ts", "/tsconfig.json", 0, "Foo", {
-      path: "/lib.ts",
-      tsconfig: "/tsconfig.json",
-    });
+    const db = makeStorage([
+      { from: "/a.ts", to: "/lib.ts" },
+      { from: "/a.ts", to: "/lib.ts" },
+      { from: "/b.ts", to: "/lib.ts" },
+    ]);
 
     const groups = buildImportGroups(
-      storage,
+      db,
       ["/a.ts", "/b.ts", "/lib.ts"],
       null
     );
