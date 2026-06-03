@@ -1,4 +1,5 @@
 import { existsSync } from 'fs';
+import { assertDefined } from './invariant';
 import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj } from './objstore';
 
 /**
@@ -6,6 +7,15 @@ import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj
  * Can be either a resolved file path or an unresolved import specifier.
  */
 export interface ExporterPath {
+  path: string;
+  tsconfig: string;
+}
+
+/**
+ * Reference to a module that imports something, with its governing tsconfig.
+ * Used for reverse-dependency queries where the returned paths are importers.
+ */
+export interface ImporterPath {
   path: string;
   tsconfig: string;
 }
@@ -156,10 +166,10 @@ export class Storage {
    * Get all modules that import the given module, along with their tsconfig.
    * Used for reverse-dependency walking with project scope filtering.
    */
-  getReverseDependencies(exporterPath: string): ExporterPath[] {
+  getReverseDependencies(exporterPath: string): ImporterPath[] {
     const importRecords = this.objStore.getGroup('exportPath|' + exporterPath);
     const seen = new Set<string>();
-    const result: ExporterPath[] = [];
+    const result: ImporterPath[] = [];
 
     for (const obj of importRecords) {
       const id = obj.id;
@@ -181,15 +191,17 @@ export class Storage {
    * Looks for a group matching the pattern `projectUse|{fromTsconfig}|{toTsconfig}`
    * and returns the `fromTsconfig` portion.
    */
-  private extractImporterTsconfig(groups: unknown): string {
-    if (!Array.isArray(groups)) {
+  private extractImporterTsconfig(groups: string[] | undefined): string {
+    if (!groups) {
       return '';
     }
     for (const group of groups) {
-      if (typeof group === 'string' && group.startsWith('projectUse|')) {
+      if (group.startsWith('projectUse|')) {
         const parts = group.split('|');
         if (parts.length >= 3) {
-          return parts.at(1) ?? '';
+          const result = parts.at(1);
+          assertDefined(result, 'parts[1] is guaranteed by length >= 3 guard');
+          return result;
         }
       }
     }
@@ -219,7 +231,7 @@ export class Storage {
     });
   }
 
-  getProjectUsesWithSymbols(fromTsconfig: string, toTsconfig: string): { importerPath: string, exporterPath: string, symbolName: string }[] {
+  getProjectUsesWithSymbols(fromTsconfig: string, toTsconfig: string): { importerPath: string; exporterPath: string; symbolName: string }[] {
     const projectUseImports = this.objStore.getGroup('projectUse|' + fromTsconfig + '|' + toTsconfig);
     const result: { importerPath: string, exporterPath: string, symbolName: string }[] = [];
     
@@ -244,14 +256,14 @@ export class Storage {
     return obj.exporter.path;
   }
 
-  private extractSymbolNamesFromGroups(groups: unknown, exporterPath: string): string[] {
+  private extractSymbolNamesFromGroups(groups: string[] | undefined, exporterPath: string): string[] {
     const prefix = 'export|' + exporterPath + '|';
     const symbols: string[] = [];
-    if (!Array.isArray(groups)) {
+    if (!groups) {
       return symbols;
     }
     for (const group of groups) {
-      if (typeof group !== 'string' || !group.startsWith(prefix)) {
+      if (!group.startsWith(prefix)) {
         continue;
       }
       const symbolName = group.split('|')[2];
