@@ -125,11 +125,14 @@ export async function runTsort(
     // Cycle detected
     const cycleNodes = findCycleNodes(moduleSet, reverseGraph);
     const cwd = process.cwd();
-    output.error('tsort: cycle detected in input modules:');
-    for (const node of cycleNodes) {
-      output.error(`  ${denormalizePath(node, cwd)}`);
+    const cyclePaths = [...cycleNodes].map((node) => denormalizePath(node, cwd));
+    for (const path of cyclePaths) {
+      output.error(`  ${path}`);
     }
-    process.exit(1);
+    throw new Error(
+      `tsort: cycle detected among ${cyclePaths.length} module${cyclePaths.length === 1 ? '' : 's'}:\n` +
+      cyclePaths.map((p) => `  ${p}`).join('\n')
+    );
   }
 
   // Output modules in sorted order (dependencies first)
