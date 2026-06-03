@@ -255,7 +255,7 @@ describe('hotChain composition', () => {
 });
 
 describe('buildHotModuleGraph with project-scope', () => {
-  test('includes all imports when tsconfigPath is null', () => {
+  test('includes all imports when moduleTsconfigMap is null', () => {
     const db = makeStorage([
       { from: '/a.ts', to: '/b.ts' },
       { from: '/a.ts', to: '/c.ts' },
@@ -265,20 +265,26 @@ describe('buildHotModuleGraph with project-scope', () => {
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts', '/c.ts']);
   });
 
-  test('excludes cross-project imports when tsconfigPath is set', () => {
+  test('excludes cross-project imports per-module when moduleTsconfigMap is set', () => {
     /*
-      /a.ts imports /b.ts (same project) and /c.ts (different project).
-      With project-scope, only /b.ts should appear in /a.ts imports.
+      /a.ts (project A) imports /b.ts (project A) and /c.ts (project B).
+      With project-scope, /a.ts should only import /b.ts (same project).
     */
     const db = makeStorage([
       { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/project/tsconfig.json' },
       { from: '/a.ts', to: '/c.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
     ]);
 
+    const moduleTsconfigMap = new Map([
+      ['/a.ts', '/project/tsconfig.json'],
+      ['/b.ts', '/project/tsconfig.json'],
+      ['/c.ts', '/other/tsconfig.json'],
+    ]);
+
     const hotMods = buildHotModuleGraph(
       db,
       ['/a.ts', '/b.ts', '/c.ts'],
-      '/project/tsconfig.json'
+      moduleTsconfigMap
     );
 
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts']);
@@ -291,10 +297,15 @@ describe('buildHotModuleGraph with project-scope', () => {
       { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
     ]);
 
+    const moduleTsconfigMap = new Map([
+      ['/a.ts', '/project/tsconfig.json'],
+      ['/b.ts', '/other/tsconfig.json'],
+    ]);
+
     const hotMods = buildHotModuleGraph(
       db,
       ['/a.ts', '/b.ts'],
-      '/project/tsconfig.json'
+      moduleTsconfigMap
     );
 
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, []);

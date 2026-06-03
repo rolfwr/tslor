@@ -5,7 +5,6 @@ import { DebugOptions } from './objstore';
 import { denormalizePath } from './pathUtils';
 import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
-import { assertDefined } from './invariant';
 
 interface HotModuleInfo {
   path: string;
@@ -179,37 +178,42 @@ function hotnessColor(hotness: number, leastHot: number, medianHot: number, most
   return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
+function isImporterInScope(
+  exporter: { path: string; tsconfig: string },
+  modulePath: string,
+  fileSet: Set<string>,
+  moduleTsconfigMap: Map<string, string> | null
+): boolean {
+  if (!fileSet.has(exporter.path)) {
+    return false;
+  }
+  if (moduleTsconfigMap !== null) {
+    const moduleTsconfig = moduleTsconfigMap.get(modulePath);
+    if (moduleTsconfig !== undefined && moduleTsconfig !== exporter.tsconfig) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function buildHotModuleGraph(
   db: Storage,
   filePaths: string[],
-  tsconfigPath: string | null
+  moduleTsconfigMap: Map<string, string> | null
 ): Record<string, HotModuleInfo> {
   const hotMods: Record<string, HotModuleInfo> = {};
   const fileSet = new Set(filePaths);
 
-  // Build the graph only for files in scope
   for (const modulePath of filePaths) {
     const hotModule = getHotModule(hotMods, modulePath);
-    
-    // Get all imports for this module
     const exporterPaths = db.getExporterPathsOfImport(modulePath);
-    const imports = new Set<string>();
-    
-    for (const exporter of exporterPaths) {
-      // Only include imports that are within our scoped files
-      if (!fileSet.has(exporter.path)) {
-        continue;
-      }
-      // When project-scope is enabled, only include imports from the same tsconfig
-      if (tsconfigPath !== null && tsconfigPath !== exporter.tsconfig) {
-        continue;
-      }
-      imports.add(exporter.path);
-    }
-    
-    hotModule.imports = Array.from(imports);
-    
-    // Build reverse relationship
+
+    hotModule.imports = exporterPaths
+      .filter((exporter) =>
+        isImporterInScope(exporter, modulePath, fileSet, moduleTsconfigMap)
+      )
+      .map((exporter) => exporter.path);
+
     for (const importPath of hotModule.imports) {
       const importedModule = getHotModule(hotMods, importPath);
       importedModule.importedBy.push(modulePath);
@@ -399,22 +403,38 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   }
 
   /*
-    Extract a representative path for repo root and tsconfig resolution.
+    Extract a representative path for repo root resolution.
     The set is guaranteed non-empty by the guard above.
   */
-  const representative = moduleSet.values().next().value;
-  assertDefined(representative, 'moduleSet is guaranteed non-empty by guard above');
+  const representativeIterator = moduleSet.values().next();
+  if (representativeIterator.done) {
+    throw new Error('Internal error: module set is empty after non-empty guard');
+  }
+  const representative = representativeIterator.value;
   const repoRoot = findGitRepoRoot(representative);
 
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
 
-  const tsconfigPath = options.projectScope === true
-    ? await getTsconfigPathForFile(repoRoot, representative, fileSystem)
-    : null;
-
   const filePaths = Array.from(moduleSet);
-  const hotMods = buildHotModuleGraph(db, filePaths, tsconfigPath);
+
+  /*
+    When project-scope is enabled, resolve each module's tsconfig so that
+    cross-project imports are filtered per-module rather than against a
+    single representative's tsconfig.
+  */
+  let moduleTsconfigMap: Map<string, string> | null = null;
+  if (options.projectScope === true) {
+    moduleTsconfigMap = new Map();
+    for (const path of filePaths) {
+      const tsconfig = await getTsconfigPathForFile(repoRoot, path, fileSystem);
+      if (tsconfig !== null) {
+        moduleTsconfigMap.set(path, tsconfig);
+      }
+    }
+  }
+
+  const hotMods = buildHotModuleGraph(db, filePaths, moduleTsconfigMap);
   const scoredMods = calculateAllScores(hotMods);
 
   const hotArray = Object.values(scoredMods);
