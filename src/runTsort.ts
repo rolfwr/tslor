@@ -6,8 +6,36 @@ import { denormalizePath } from "./pathUtils";
 import { resolveCommandScope } from "./commandScope";
 import { FileSystem } from "./filesystem";
 
+/**
+ * Output interface for tsort results and errors.
+ *
+ * Allows callers to capture or redirect output instead of writing
+ * directly to console, enabling testing without global state mutation.
+ */
+export interface TsortOutput {
+  /** Write a module path to standard output */
+  log: (msg: string) => void;
+  /** Write an error message to standard error */
+  error: (msg: string) => void;
+}
+
 export interface TsortOptions {
   projectScope?: boolean;
+  /**
+   * Repository root path. When omitted, `findGitRepoRoot` is called
+   * to derive it from the input paths.
+   */
+  repoRoot?: string;
+  /**
+   * Output handler for module paths and error messages.
+   * Defaults to `console.log` / `console.error` when omitted.
+   */
+  output?: TsortOutput;
+  /**
+   * Pre-configured storage instance. When omitted, `openStorage` is
+   * called to create one from disk.
+   */
+  storage?: Storage;
 }
 
 /**
@@ -29,6 +57,11 @@ export async function runTsort(
     return;
   }
 
+  const output = options.output ?? {
+    log: (msg: string) => console.log(msg),
+    error: (msg: string) => console.error(msg),
+  };
+
   /*
     Resolve hybrid path input: files are normalized to absolute paths,
     directories are expanded to all TypeScript modules within them.
@@ -44,9 +77,12 @@ export async function runTsort(
   if (tsPath === undefined) {
     throw new Error('No module paths provided');
   }
-  const repoRoot = findGitRepoRoot(tsPath);
-  const db = openStorage(debugOptions, false);
-  await updateStorage(repoRoot, db, true, fileSystem);
+  const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
+
+  const db = options.storage ?? openStorage(debugOptions, false);
+  if (!options.storage) {
+    await updateStorage(repoRoot, db, true, fileSystem);
+  }
 
   // Get tsconfig path for project scope filtering if needed
   const tsconfigPath = options.projectScope
@@ -63,19 +99,22 @@ export async function runTsort(
     // Cycle detected
     const cycleNodes = findCycleNodes(moduleSet, graph);
     const cwd = process.cwd();
-    console.error('tsort: cycle detected in input modules:');
+    output.error('tsort: cycle detected in input modules:');
     for (const node of cycleNodes) {
-      console.error(`  ${denormalizePath(node, cwd)}`);
+      output.error(`  ${denormalizePath(node, cwd)}`);
     }
     process.exit(1);
   }
 
   // Output modules in sorted order (dependencies first)
   for (const modulePath of sorted) {
-    console.log(modulePath);
+    output.log(modulePath);
   }
 
-  db.save();
+  // Only persist storage that we created ourselves
+  if (!options.storage) {
+    db.save();
+  }
 }
 
 /**
