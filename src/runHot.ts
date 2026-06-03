@@ -1,6 +1,6 @@
 import { assertDefined } from './invariant';
 import { findGitRepoRoot, getTsconfigPathForFile } from './project';
-import { Storage, openStorage } from './storage';
+import { ExporterPath, Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
 import { DebugOptions } from './objstore';
 import { denormalizePath } from './pathUtils';
@@ -180,7 +180,7 @@ function hotnessColor(hotness: number, leastHot: number, medianHot: number, most
 }
 
 function isExportInScope(
-  exporter: { path: string; tsconfig: string },
+  exporter: ExporterPath,
   importerPath: string,
   fileSet: Set<string>,
   moduleTsconfigMap: Map<string, string> | null
