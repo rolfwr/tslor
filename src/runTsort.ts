@@ -274,31 +274,31 @@ function processQueue(
       break;
     }
     result.push(current);
-    processDependencies(current, graph, inDegree, queue);
+    processDependents(current, graph, inDegree, queue);
   }
 
   return result;
 }
 
-function processDependencies(
+function processDependents(
   current: string,
   graph: Map<string, Set<string>>,
   inDegree: Map<string, number>,
   queue: string[]
 ): void {
-  const deps = graph.get(current);
-  if (deps === undefined) {
+  const dependents = graph.get(current);
+  if (dependents === undefined) {
     return;
   }
-  for (const dependency of deps) {
-    const depInDegree = inDegree.get(dependency);
-    if (depInDegree === undefined) {
+  for (const dependent of dependents) {
+    const dependentInDegree = inDegree.get(dependent);
+    if (dependentInDegree === undefined) {
       continue;
     }
-    const newInDegree = depInDegree - 1;
-    inDegree.set(dependency, newInDegree);
+    const newInDegree = dependentInDegree - 1;
+    inDegree.set(dependent, newInDegree);
     if (newInDegree === 0) {
-      insertSorted(queue, dependency);
+      insertSorted(queue, dependent);
     }
   }
 }

@@ -99,29 +99,29 @@ describe('tsort', () => {
         break;
       }
       result.push(current);
-      processNodeDependencies(current, graph, inDegree, queue);
+      processNodeDependents(current, graph, inDegree, queue);
     }
   }
 
-  function processNodeDependencies(
+  function processNodeDependents(
     current: string,
     graph: Map<string, Set<string>>,
     inDegree: Map<string, number>,
     queue: string[]
   ): void {
-    const deps = graph.get(current);
-    if (deps === undefined) {
+    const dependents = graph.get(current);
+    if (dependents === undefined) {
       return;
     }
-    for (const dep of deps) {
-      const depInDegree = inDegree.get(dep);
-      if (depInDegree === undefined) {
+    for (const dependent of dependents) {
+      const dependentInDegree = inDegree.get(dependent);
+      if (dependentInDegree === undefined) {
         continue;
       }
-      const newInDegree = depInDegree - 1;
-      inDegree.set(dep, newInDegree);
+      const newInDegree = dependentInDegree - 1;
+      inDegree.set(dependent, newInDegree);
       if (newInDegree === 0) {
-        insertSorted(queue, dep);
+        insertSorted(queue, dependent);
       }
     }
   }
