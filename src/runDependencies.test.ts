@@ -49,7 +49,7 @@ describe('runDependencies file input (backward compat)', () => {
     );
 
     /*
-      a.ts imports b.ts, b.ts imports c.ts. The reverse-dependency walk
+      a.ts imports b.ts, b.ts imports c.ts. The forward-import walk
       starting from a.ts reaches all three modules. The shared `seen` set
       ensures each module is printed exactly once.
     */
@@ -85,13 +85,14 @@ describe('runDependencies directory expansion', () => {
 
     /*
       Directory expansion finds a.ts, b.ts, c.ts (not d.js).
-      The reverse-dependency walk covers all three TypeScript modules.
+      The forward-import walk covers all three TypeScript modules.
     */
     const aPath = join(testDir, 'a.ts');
     const bPath = join(testDir, 'b.ts');
     const cPath = join(testDir, 'c.ts');
 
     // All three TypeScript files should appear in output
+    assert.lengthOf(logs, 3);
     assert.isTrue(logs.includes(aPath), 'a.ts should be in output');
     assert.isTrue(logs.includes(bPath), 'b.ts should be in output');
     assert.isTrue(logs.includes(cPath), 'c.ts should be in output');
