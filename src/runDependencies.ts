@@ -72,13 +72,17 @@ export async function runDependencies(
     throw new Error('No module paths provided');
   }
 
-  // Find git repo root and open storage
   const tsPath = moduleSet.values().next().value;
   assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
   const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
 
-  if (options.storage) {
-    const db = options.storage;
+  const db = options.storage ?? openStorage(debugOptions, true);
+
+  if (!options.storage) {
+    await updateStorage(repoRoot, db, true, fileSystem);
+  }
+
+  try {
     const tsconfigPath = options.projectScope
       ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
       : null;
@@ -86,18 +90,8 @@ export async function runDependencies(
     for (const path of moduleSet) {
       dumpDependenciesFor(db, path, seen, tsconfigPath, output);
     }
-  } else {
-    const db = openStorage(debugOptions, true);
-    try {
-      await updateStorage(repoRoot, db, true, fileSystem);
-      const tsconfigPath = options.projectScope
-        ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
-        : null;
-      const seen = new Set<string>();
-      for (const path of moduleSet) {
-        dumpDependenciesFor(db, path, seen, tsconfigPath, output);
-      }
-    } finally {
+  } finally {
+    if (!options.storage) {
       db.save();
     }
   }
