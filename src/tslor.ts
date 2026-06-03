@@ -317,10 +317,15 @@ program
   .command('tsort <paths...>')
   .description('Topologically sort modules by import dependencies')
   .option('-p, --project-scope', 'Only consider imports within the same project')
-  .action(async (paths: string[], opts, cmd) => {
+  .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runTsort(paths, opts, debugOptions, fileSystem);
+    await runTsort(
+      paths,
+      { projectScope: opts.projectScope === true },
+      debugOptions,
+      fileSystem
+    );
   });
 
 
