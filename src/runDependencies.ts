@@ -43,10 +43,15 @@ export interface DependenciesOptions {
 }
 
 /**
- * List transitive module imports for the given module paths.
+ * List reverse dependencies: for each input module, output the module itself
+ * and all modules that transitively import it (direct and indirect importers).
  *
  * Accepts hybrid path input: files are normalized to absolute paths,
  * directories are expanded to all TypeScript modules within them.
+ *
+ * Output is written via the `output` handler in `options` (defaults to
+ * `console.log`). Each module path is printed exactly once, even if it
+ * appears as a transitive dependency of multiple input modules.
  */
 export async function runDependencies(
   modulePaths: string[],
@@ -69,22 +74,32 @@ export async function runDependencies(
   const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
 
   if (moduleSet.size === 0) {
-    throw new Error('No module paths provided');
+    throw new Error('Input paths resolved to no TypeScript modules');
   }
 
-  const tsPath = moduleSet.values().next().value;
-  assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
-  const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
+  /*
+    Extract one representative path from the set so we can resolve the
+    repo root and tsconfig scope. The set is guaranteed non-empty by the
+    guard above; assertDefined narrows the type and provides a runtime
+    safety net.
+  */
+  const tsPathValue = moduleSet.values().next().value;
+  assertDefined(tsPathValue, 'moduleSet is guaranteed non-empty by guard above');
 
+  const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPathValue);
+
+  /*
+    Open storage before the try block so `db` is definitely assigned.
+    The try/finally below only covers the read-phase and save cleanup.
+  */
   const db = options.storage ?? openStorage(debugOptions, true);
-
   if (!options.storage) {
     await updateStorage(repoRoot, db, true, fileSystem);
   }
 
   try {
     const tsconfigPath = options.projectScope
-      ? await getTsconfigPathForFile(repoRoot, tsPath, fileSystem)
+      ? await getTsconfigPathForFile(repoRoot, tsPathValue, fileSystem)
       : null;
     const seen = new Set<string>();
     for (const path of moduleSet) {

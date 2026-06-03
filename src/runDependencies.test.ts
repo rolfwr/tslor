@@ -49,9 +49,9 @@ describe('runDependencies file input (backward compat)', () => {
     );
 
     /*
-      dumpDependenciesFor does DFS: prints the module itself, then recurses
-      into its imports. With shared `seen` set, each module prints once.
-      a.ts imports b.ts, b.ts imports c.ts, so all three appear.
+      a.ts imports b.ts, b.ts imports c.ts. The reverse-dependency walk
+      starting from a.ts reaches all three modules. The shared `seen` set
+      ensures each module is printed exactly once.
     */
     assert.lengthOf(logs, 3);
     assert.isTrue(logs.includes(aPath), 'a.ts should be in output');
@@ -84,9 +84,8 @@ describe('runDependencies directory expansion', () => {
     );
 
     /*
-      Directory expansion should find a.ts, b.ts, c.ts (not d.js).
-      dumpDependenciesFor iterates each module and does DFS.
-      With shared `seen` set, each module is printed once.
+      Directory expansion finds a.ts, b.ts, c.ts (not d.js).
+      The reverse-dependency walk covers all three TypeScript modules.
     */
     const aPath = join(testDir, 'a.ts');
     const bPath = join(testDir, 'b.ts');
@@ -144,7 +143,7 @@ describe('runDependencies empty input', () => {
       if (!(err instanceof Error)) {
         throw err;
       }
-      assert.include(err.message, 'No module paths provided');
+      assert.include(err.message, 'no TypeScript modules');
     }
   });
 });

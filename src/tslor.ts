@@ -45,7 +45,7 @@ program
 
 program
   .command('dependencies <paths...>')
-  .description('List transitive module imports')
+  .description('List modules that transitively import the given modules')
   .option('-p, --project-scope', 'Only list modules within the same project')
   .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
     const debugOptions = getDebugOptions(cmd);
