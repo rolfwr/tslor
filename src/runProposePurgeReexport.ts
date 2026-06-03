@@ -8,7 +8,7 @@
 import { openStorage, Storage } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
+import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
 import { SourceFile, ExportDeclaration } from "ts-morph";
 import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
@@ -291,7 +291,7 @@ async function createPurgeReexportPlan(
       continue;
     }
 
-    const fileChecksum = await computeFileChecksum(filePath);
+    const fileChecksum = computeStringChecksum(originalContent);
 
     // Load the file through TransformingFileSystem for proper AST analysis
     const sourceFile = await loadSourceFile(filePath, fileSystem);
