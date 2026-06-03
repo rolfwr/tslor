@@ -3,7 +3,7 @@ import { findGitRepoRoot, getTsconfigPathForFile } from './project';
 import { ExporterPath, Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
 import { DebugOptions } from './objstore';
-import { denormalizePath, normalizePath } from './pathUtils';
+import { normalizePath, denormalizePath } from './pathUtils';
 import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
 
@@ -183,12 +183,12 @@ function isExportInScope(
   exporter: ExporterPath,
   importerPath: string,
   fileSet: Set<string>,
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | undefined
 ): boolean {
   if (!fileSet.has(exporter.path)) {
     return false;
   }
-  if (moduleTsconfigMap !== null) {
+  if (moduleTsconfigMap !== undefined) {
     const importerTsconfig = moduleTsconfigMap.get(importerPath);
     if (importerTsconfig !== undefined && importerTsconfig !== exporter.tsconfig) {
       return false;
@@ -200,7 +200,7 @@ function isExportInScope(
 export function buildHotModuleGraph(
   db: Storage,
   filePaths: string[],
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | undefined
 ): Record<string, HotModuleInfo> {
   const hotMods: Record<string, HotModuleInfo> = {};
   const fileSet = new Set(filePaths);
@@ -425,7 +425,7 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
       cross-project imports are filtered per-module rather than against a
       single representative's tsconfig.
     */
-    let moduleTsconfigMap: Map<string, string> | null = null;
+    let moduleTsconfigMap: Map<string, string> | undefined;
     if (options.projectScope === true) {
       const tsconfigs = await Promise.all(
         filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
