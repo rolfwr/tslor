@@ -19,13 +19,6 @@ export function normalizePath(filePath: string): string {
 }
 
 /**
- * Normalize multiple file paths to absolute paths.
- */
-export function normalizePaths(filePaths: string[]): string[] {
-  return filePaths.map(path => resolve(path));
-}
-
-/**
  * Validate that a normalized path exists and throw a descriptive error if not.
  */
 export function validatePathExists(normalizedPath: string, description: string): void {
