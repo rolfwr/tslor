@@ -24,6 +24,11 @@ export interface TsortOutput {
  * Options for configuring the tsort topological sort operation.
  */
 export interface TsortOptions {
+  /**
+   * When true, filter dependencies so that cross-project imports are excluded.
+   * Each module is checked against its own tsconfig rather than a single
+   * representative.
+   */
   projectScope?: boolean;
   /**
    * Repository root path. When omitted, `findGitRepoRoot` is called
