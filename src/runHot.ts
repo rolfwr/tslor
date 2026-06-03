@@ -1,3 +1,4 @@
+import { assertDefined } from './invariant';
 import { findGitRepoRoot, getTsconfigPathForFile } from './project';
 import { Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
@@ -5,7 +6,6 @@ import { DebugOptions } from './objstore';
 import { denormalizePath } from './pathUtils';
 import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
-import { assertDefined } from './invariant';
 
 interface HotModuleInfo {
   path: string;
@@ -179,9 +179,9 @@ function hotnessColor(hotness: number, leastHot: number, medianHot: number, most
   return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
-function isImporterInScope(
+function isExportInScope(
   exporter: { path: string; tsconfig: string },
-  modulePath: string,
+  importerPath: string,
   fileSet: Set<string>,
   moduleTsconfigMap: Map<string, string> | null
 ): boolean {
@@ -189,8 +189,8 @@ function isImporterInScope(
     return false;
   }
   if (moduleTsconfigMap !== null) {
-    const moduleTsconfig = moduleTsconfigMap.get(modulePath);
-    if (moduleTsconfig !== undefined && moduleTsconfig !== exporter.tsconfig) {
+    const importerTsconfig = moduleTsconfigMap.get(importerPath);
+    if (importerTsconfig !== undefined && importerTsconfig !== exporter.tsconfig) {
       return false;
     }
   }
@@ -211,7 +211,7 @@ export function buildHotModuleGraph(
 
     hotModule.imports = exporterPaths
       .filter((exporter) =>
-        isImporterInScope(exporter, modulePath, fileSet, moduleTsconfigMap)
+        isExportInScope(exporter, modulePath, fileSet, moduleTsconfigMap)
       )
       .map((exporter) => exporter.path);
 
@@ -406,10 +406,12 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   /*
     Resolve the git repo root from any path in the set.
     All paths belong to the same repo, so the choice is arbitrary.
-    We take the first element; the guard above ensures the set is non-empty.
+    We take the first element; the guard above ensures the set is non-empty,
+    so the iterator is guaranteed to return a defined value.
   */
-  const [entryPath] = Array.from(moduleSet);
-  assertDefined(entryPath, 'moduleSet was empty despite size guard');
+  const entryPathValue = moduleSet.values().next().value;
+  assertDefined(entryPathValue, 'moduleSet is non-empty (guarded above)');
+  const entryPath = entryPathValue;
   const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, false);
