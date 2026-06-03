@@ -37,7 +37,10 @@ export interface TsortOptions {
   output?: TsortOutput;
   /**
    * Pre-configured storage instance. When omitted, `openStorage` is
-   * called to create one from disk.
+   * called to create one from disk, `updateStorage` is invoked to
+   * ensure freshness, and `db.save()` is called on completion.
+   * When provided, the caller is responsible for ensuring the storage
+   * is up-to-date and for persisting any changes.
    */
   storage?: Storage;
 }
@@ -184,7 +187,7 @@ function addEdgeIfInScope(
   }
   /*
     Graph edges go from dependency to dependent (exporter -> importer).
-    This way Kahn's algorithm processes zero-in-degree nodes (no dependents
+    This way Kahn's algorithm processes zero-in-degree nodes (no dependencies
     within the set) first, producing dependency-first output.
   */
   const dependents = graph.get(exporterPath);
