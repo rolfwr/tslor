@@ -295,13 +295,22 @@ program
   });
 
 program
-  .command('hot <directory>')
+  .command('hot <paths...>')
   .description('Visualize the hottest transitive import paths in a codebase')
   .option('--select <path>', 'Select a specific module to analyze instead of the hottest')
-  .action(async (directory: string, opts, cmd) => {
+  .option('-p, --project-scope', 'Only consider imports within the same project')
+  .action(async (paths: string[], opts, cmd) => {
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runHot(directory, opts, debugOptions, fileSystem);
+    await runHot(
+      paths,
+      {
+        select: typeof opts.select === 'string' ? opts.select : null,
+        projectScope: opts.projectScope === true,
+      },
+      debugOptions,
+      fileSystem
+    );
   });
 
 program

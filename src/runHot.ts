@@ -1,9 +1,11 @@
-import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
+import { findGitRepoRoot, getTsconfigPathForFile } from './project';
 import { Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
 import { DebugOptions } from './objstore';
-import { normalizePath, denormalizePath } from './pathUtils';
+import { denormalizePath } from './pathUtils';
+import { resolveCommandScope } from './commandScope';
 import { FileSystem } from './filesystem';
+import { assertDefined } from './invariant';
 
 interface HotModuleInfo {
   path: string;
@@ -33,6 +35,8 @@ interface Direction {
 
 interface Options {
   select: string | null;
+  /** Only consider imports within the same tsconfig project (default: false) */
+  projectScope?: boolean;
 }
 
 const cycleCost = 100;
@@ -175,7 +179,11 @@ function hotnessColor(hotness: number, leastHot: number, medianHot: number, most
   return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
-export function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<string, HotModuleInfo> {
+export function buildHotModuleGraph(
+  db: Storage,
+  filePaths: string[],
+  tsconfigPath: string | null
+): Record<string, HotModuleInfo> {
   const hotMods: Record<string, HotModuleInfo> = {};
   const fileSet = new Set(filePaths);
 
@@ -189,9 +197,14 @@ export function buildHotModuleGraph(db: Storage, filePaths: string[]): Record<st
     
     for (const exporter of exporterPaths) {
       // Only include imports that are within our scoped files
-      if (fileSet.has(exporter.path)) {
-        imports.add(exporter.path);
+      if (!fileSet.has(exporter.path)) {
+        continue;
       }
+      // When project-scope is enabled, only include imports from the same tsconfig
+      if (tsconfigPath !== null && tsconfigPath !== exporter.tsconfig) {
+        continue;
+      }
+      imports.add(exporter.path);
     }
     
     hotModule.imports = Array.from(imports);
@@ -366,21 +379,42 @@ function printHotChain(hotChain: ScoredHotModuleInfo[], selected: HotModuleInfo,
   console.log();
 }
 
-export async function runHot(directory: string, options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {
-  const absoluteDir = normalizePath(directory);
-  const repoRoot = findGitRepoRoot(absoluteDir);
-  const cwd = process.cwd();
-
-  const db = openStorage(debugOptions, false);
-  await updateStorage(repoRoot, db, true, fileSystem, absoluteDir);
-
-  const filePaths = await getTypeScriptFilePaths(absoluteDir, false, fileSystem);
-  if (filePaths.length === 0) {
-    console.log('No TypeScript files found in directory.');
+export async function runHot(paths: string[], options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {
+  if (paths.length === 0) {
+    console.log('No paths provided.');
     return;
   }
 
-  const hotMods = buildHotModuleGraph(db, filePaths);
+  const cwd = process.cwd();
+
+  /*
+    Resolve hybrid path input: files are normalized to absolute paths,
+    directories are expanded to all TypeScript modules within them.
+  */
+  const moduleSet = await resolveCommandScope(paths, fileSystem);
+
+  if (moduleSet.size === 0) {
+    console.log('No TypeScript files found in the given paths.');
+    return;
+  }
+
+  /*
+    Extract a representative path for repo root and tsconfig resolution.
+    The set is guaranteed non-empty by the guard above.
+  */
+  const representative = moduleSet.values().next().value;
+  assertDefined(representative, 'moduleSet is guaranteed non-empty by guard above');
+  const repoRoot = findGitRepoRoot(representative);
+
+  const db = openStorage(debugOptions, false);
+  await updateStorage(repoRoot, db, true, fileSystem);
+
+  const tsconfigPath = options.projectScope === true
+    ? await getTsconfigPathForFile(repoRoot, representative, fileSystem)
+    : null;
+
+  const filePaths = Array.from(moduleSet);
+  const hotMods = buildHotModuleGraph(db, filePaths, tsconfigPath);
   const scoredMods = calculateAllScores(hotMods);
 
   const hotArray = Object.values(scoredMods);
