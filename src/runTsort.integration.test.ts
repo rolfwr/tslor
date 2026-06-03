@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { ObjStore } from './objstore';
 import { Storage } from './storage';
 import { InMemoryFileSystem } from './filesystem';
-import { assert, test, describe, beforeAll } from 'vitest';
+import { assert, test, describe, beforeEach } from 'vitest';
 import { runTsort } from './runTsort';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -12,7 +12,7 @@ let testDir: string;
 let consoleOutput: string[];
 let storage: Storage;
 
-beforeAll(() => {
+beforeEach(() => {
   testDir = join(__dirname, '.tslor-test-tsort-tmp');
 
   consoleOutput = [];
@@ -37,14 +37,13 @@ describe('tsort directory expansion', () => {
     ]);
     const fileSystem = new InMemoryFileSystem(files);
 
-    consoleOutput = [];
     await runTsort(
       [testDir],
       {
         repoRoot: testDir,
         output: {
           log: (msg: string) => consoleOutput.push(msg),
-          error: () => {},
+          error: (msg: string) => { throw new Error(`unexpected error: ${msg}`); },
         },
         storage,
       },
@@ -70,14 +69,13 @@ describe('tsort directory expansion', () => {
     const bPath = join(testDir, 'b.ts');
     const cPath = join(testDir, 'c.ts');
 
-    consoleOutput = [];
     await runTsort(
       [aPath, bPath, cPath],
       {
         repoRoot: testDir,
         output: {
           log: (msg: string) => consoleOutput.push(msg),
-          error: () => {},
+          error: (msg: string) => { throw new Error(`unexpected error: ${msg}`); },
         },
         storage,
       },
