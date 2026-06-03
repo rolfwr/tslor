@@ -63,9 +63,9 @@ export async function runCycles(
   await updateStorage(repoRoot, db, false, fileSystem);
 
   if (options.directories) {
-    await findDirectoryCycles(db, absoluteDirectory, options);
+    await findDirectoryCycles(db, absoluteDirectory, options, fileSystem);
   } else {
-    await findModuleCycles(db, absoluteDirectory, options);
+    await findModuleCycles(db, absoluteDirectory, options, fileSystem);
   }
 
   db.save();
@@ -74,9 +74,14 @@ export async function runCycles(
 /**
  * Find cycles between individual modules (TypeScript files).
  */
-async function findModuleCycles(db: Storage, directory: string, options: CyclesOptions) {
+async function findModuleCycles(
+  db: Storage,
+  directory: string,
+  options: CyclesOptions,
+  fileSystem: FileSystem
+) {
   // First, discover all TypeScript files in the target directory
-  const filePaths = await getTypeScriptFilePaths(directory, false);
+  const filePaths = await getTypeScriptFilePaths(directory, false, fileSystem);
   const fileSet = new Set(filePaths);
   
   // Build dependency graph only for files in scope
@@ -829,9 +834,14 @@ function reportDirectoryCyclesFancy(cycles: string[][], graph: Map<string, Set<s
 /**
  * Find cycles between directories containing modules.
  */
-async function findDirectoryCycles(db: Storage, directory: string, options: CyclesOptions) {
+async function findDirectoryCycles(
+  db: Storage,
+  directory: string,
+  options: CyclesOptions,
+  fileSystem: FileSystem
+) {
   // First, discover all TypeScript files in the target directory
-  const filePaths = await getTypeScriptFilePaths(directory, false);
+  const filePaths = await getTypeScriptFilePaths(directory, false, fileSystem);
   const fileSet = new Set(filePaths);
   
   // Build directory-level dependency graph

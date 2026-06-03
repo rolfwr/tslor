@@ -6,6 +6,7 @@
  */
 
 import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
+import { FileSystem } from './filesystem';
 
 export interface RepositoryRootProvider {
   /**
@@ -16,7 +17,7 @@ export interface RepositoryRootProvider {
   /**
    * Get all TypeScript file paths within the repository
    */
-  getTypeScriptFilePaths(repoRoot: string, verbose: boolean): Promise<string[]>;
+  getTypeScriptFilePaths(repoRoot: string, verbose: boolean, fileSystem: FileSystem): Promise<string[]>;
 }
 
 /**
@@ -27,8 +28,8 @@ export class GitRepositoryRootProvider implements RepositoryRootProvider {
     return findGitRepoRoot(path);
   }
 
-  async getTypeScriptFilePaths(repoRoot: string, verbose: boolean): Promise<string[]> {
-    return getTypeScriptFilePaths(repoRoot, verbose);
+  async getTypeScriptFilePaths(repoRoot: string, verbose: boolean, fileSystem: FileSystem): Promise<string[]> {
+    return getTypeScriptFilePaths(repoRoot, verbose, fileSystem);
   }
 }
 
@@ -49,7 +50,7 @@ export class InMemoryRepositoryRootProvider implements RepositoryRootProvider {
     return this.repoRoot;
   }
 
-  async getTypeScriptFilePaths(repoRoot: string, verbose: boolean): Promise<string[]> {
+  async getTypeScriptFilePaths(_repoRoot: string, verbose: boolean, _fileSystem: FileSystem): Promise<string[]> {
     if (verbose) {
       console.log(`Found ${this.tsFiles.length} TypeScript files (in-memory).`);
     }

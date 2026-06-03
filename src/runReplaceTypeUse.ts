@@ -36,7 +36,7 @@ export async function runReplaceTypeUse(
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
   const db = openStorage(debugOptions, true);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
+  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true, fileSystem);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
   const { indexImportFromFiles } = await import('./indexing');

@@ -31,7 +31,7 @@ import { on } from 'node:events';
  * This is the main entry point for building a complete index.
  */
 export async function updateStorage(repoRoot: string, db: Storage, verbose: boolean, fileSystem: FileSystem, scopeDir?: string) {
-  const paths: string[] = await getTypeScriptFilePaths(scopeDir ?? repoRoot, verbose);
+  const paths: string[] = await getTypeScriptFilePaths(scopeDir ?? repoRoot, verbose, fileSystem);
   await indexImportFromFiles(paths, db, repoRoot, verbose, fileSystem);
 }
 

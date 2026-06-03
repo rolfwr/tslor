@@ -12,6 +12,12 @@
  */
 
 
+export interface Dirent {
+  name: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+}
+
 export interface FileSystem {
   /**
    * Get file stats (size, modification time, etc.)
@@ -27,6 +33,11 @@ export interface FileSystem {
    * Read a file's contents
    */
   readFile(filePath: string, encoding?: string): Promise<string>;
+
+  /**
+   * Read directory entries
+   */
+  readdir(dirPath: string): Promise<Dirent[]>;
 }
 
 /**
@@ -56,12 +67,27 @@ export class RealFileSystem implements FileSystem {
     const { readFile } = await import('fs/promises');
     return readFile(filePath, { encoding: encoding || 'utf-8' });
   }
+
+  async readdir(dirPath: string): Promise<Dirent[]> {
+    const { readdir } = await import('fs/promises');
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    return entries.map((e) => ({
+      name: e.name,
+      isFile: () => e.isFile(),
+      isDirectory: () => e.isDirectory(),
+    }));
+  }
 }
 
 /**
  * In-memory filesystem implementation for testing
  */
 export class InMemoryFileSystem implements FileSystem {
+  /*
+    Files are stored by absolute path. Directories are implicit — derived from
+    the path segments of stored files. This means readdir() and stat() for
+    directories compute their answer from the set of known file paths.
+  */
   private files = new Map<string, { content: string; mtimeMs: number }>();
 
   constructor(initialFiles: Map<string, string>) {
@@ -130,5 +156,37 @@ export class InMemoryFileSystem implements FileSystem {
    */
   getFilePaths(): string[] {
     return Array.from(this.files.keys());
+  }
+
+  async readdir(dirPath: string): Promise<Dirent[]> {
+    const normalizedDir = dirPath.endsWith('/') ? dirPath.slice(0, -1) : dirPath;
+    const dirPrefix = normalizedDir + '/';
+    const children = new Map<string, 'file' | 'directory'>();
+
+    for (const path of this.files.keys()) {
+      if (!path.startsWith(dirPrefix)) {
+        continue;
+      }
+
+      const remainder = path.slice(dirPrefix.length);
+      const slashIndex = remainder.indexOf('/');
+
+      if (slashIndex === -1) {
+        /* Direct child file */
+        children.set(remainder, 'file');
+      } else {
+        /* Child directory (derived from nested file paths) */
+        const dirName = remainder.slice(0, slashIndex);
+        if (!children.has(dirName)) {
+          children.set(dirName, 'directory');
+        }
+      }
+    }
+
+    return Array.from(children.entries()).map(([name, type]) => ({
+      name,
+      isFile: () => type === 'file',
+      isDirectory: () => type === 'directory',
+    }));
   }
 }

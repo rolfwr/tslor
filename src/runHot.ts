@@ -374,7 +374,7 @@ export async function runHot(directory: string, options: Options, debugOptions: 
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem, absoluteDir);
 
-  const filePaths = await getTypeScriptFilePaths(absoluteDir, false);
+  const filePaths = await getTypeScriptFilePaths(absoluteDir, false, fileSystem);
   if (filePaths.length === 0) {
     console.log('No TypeScript files found in directory.');
     return;

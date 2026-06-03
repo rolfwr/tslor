@@ -28,7 +28,7 @@ export async function runNormalizeImports(
   console.log(`Scanning for mergeable imports in ${directory}...`);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
+  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true, fileSystem);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
   const changes: ModifyFileChange[] = [];

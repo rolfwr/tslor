@@ -51,7 +51,7 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
     scanned directory are visible to the unused-import check.
   */
   const db = openStorage(debugOptions, true);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
+  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true, fileSystem);
   const { pathsToIndex } = computeIndexingPaths(allPaths, directory);
 
   const { indexImportFromFiles } = await import('./indexing');

@@ -15,9 +15,13 @@ export function findGitRepoRoot(oldPath: string) {
   return repoRoot;
 }
 
-export async function getTypeScriptFilePaths(repoRoot: string, verbose: boolean) {
+export async function getTypeScriptFilePaths(
+  repoRoot: string,
+  verbose: boolean,
+  fileSystem: FileSystem
+): Promise<string[]> {
   const paths: string[] = [];
-  await forEachTsFile(repoRoot, async (file) => {
+  await forEachTsFile(repoRoot, fileSystem, async (file) => {
     paths.push(file);
   });
 
@@ -27,28 +31,31 @@ export async function getTypeScriptFilePaths(repoRoot: string, verbose: boolean)
   return paths;
 }
 
-async function forEachTsFile(dir: string, cb: (file: string) => Promise<void>) {
-    if (dir.endsWith('/')) {
-      dir = dir.slice(0, -1);
+async function forEachTsFile(
+  dir: string,
+  fileSystem: FileSystem,
+  cb: (file: string) => Promise<void>
+): Promise<void> {
+  if (dir.endsWith('/')) {
+    dir = dir.slice(0, -1);
+  }
+  const entries = await fileSystem.readdir(dir);
+  for (const entry of entries) {
+    const name = entry.name;
+    if (name.startsWith('.') || name.startsWith('_')) {
+      continue;
     }
-    const { readdir } = await import('fs/promises');
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const name = entry.name;
-      if (name.startsWith('.') || name.startsWith('_')) {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules') {
         continue;
       }
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (entry.name === 'node_modules') {
-          continue;
-        }
-        await forEachTsFile(path, cb);
-      } else if (entry.isFile() && (path.endsWith('.ts') || path.endsWith('.vue'))) {
-        await cb(path);
-      }
+      await forEachTsFile(path, fileSystem, cb);
+    } else if (entry.isFile() && (path.endsWith('.ts') || path.endsWith('.vue'))) {
+      await cb(path);
     }
   }
+}
   
 /**
  * TODO: Add cache

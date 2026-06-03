@@ -137,7 +137,7 @@ export async function runNormalizeNamespaceImports(
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
   const db = openStorage(debugOptions, true);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true);
+  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true, fileSystem);
 
   const { indexImportFromFiles } = await import('./indexing');
   await indexImportFromFiles(allPaths, db, repoRoot, true, fileSystem);
