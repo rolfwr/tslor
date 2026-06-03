@@ -56,6 +56,6 @@ export function getOrThrow<K, V>(
   message: MessageFormatter
 ): V {
   const value = map.get(key);
-  invariant(value !== undefined, message);
+  assertDefined(value, message);
   return value;
 }
