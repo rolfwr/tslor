@@ -60,11 +60,6 @@ describe('tsort', () => {
       if (!moduleSet.has(exporter.path)) {
         continue;
       }
-      /*
-        Graph edges go from dependency to dependent (exporter -> importer).
-        This way Kahn's algorithm processes zero-in-degree nodes (no dependents
-        within the set) first, producing dependency-first output.
-      */
       const dependents = graph.get(exporter.path);
       if (dependents === undefined) {
         return;

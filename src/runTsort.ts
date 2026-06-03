@@ -102,7 +102,7 @@ export async function runTsort(
 
   if (sorted === null) {
     // Cycle detected
-    const cycleNodes = findCycleNodes(moduleSet, graph);
+    const cycleNodes = findCycleNodes(moduleSet, reverseGraph);
     const cwd = process.cwd();
     output.error('tsort: cycle detected in input modules:');
     for (const node of cycleNodes) {
@@ -124,6 +124,10 @@ export async function runTsort(
 
 /**
  * Build a dependency graph for the given set of modules.
+ *
+ * Graph edges go from dependency to dependent (exporter -> importer).
+ * This way Kahn's algorithm processes zero-in-degree nodes (no dependencies
+ * within the set) first, producing dependency-first output.
  *
  * @returns graph: Map of module -> modules that import it (within the set)
  * @returns reverseGraph: Map of module -> modules it imports (within the set)
@@ -185,11 +189,6 @@ function addEdgeIfInScope(
   if (!moduleSet.has(exporterPath)) {
     return;
   }
-  /*
-    Graph edges go from dependency to dependent (exporter -> importer).
-    This way Kahn's algorithm processes zero-in-degree nodes (no dependencies
-    within the set) first, producing dependency-first output.
-  */
   const dependents = graph.get(exporterPath);
   if (dependents === undefined) {
     return;
