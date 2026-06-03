@@ -299,7 +299,7 @@ program
   .description('Visualize the hottest transitive import paths in a codebase')
   .option('--select <path>', 'Select a specific module to analyze instead of the hottest')
   .option('-p, --project-scope', 'Only consider imports within the same project')
-  .action(async (paths: string[], opts, cmd) => {
+  .action(async (paths: string[], opts: { select?: string; projectScope?: boolean }, cmd) => {
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runHot(
