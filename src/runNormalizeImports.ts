@@ -9,8 +9,7 @@
 
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { promises as fsp } from "fs";
+import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
 import { SourceFile, ImportDeclaration, Identifier } from "ts-morph";
 import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
@@ -39,7 +38,7 @@ export async function runNormalizeImports(
   for (const filePath of filteredPaths) {
     let originalContent: string;
     try {
-      originalContent = await fsp.readFile(filePath, 'utf-8');
+      originalContent = await fileSystem.readFile(filePath);
     } catch {
       continue;
     }
@@ -60,7 +59,7 @@ export async function runNormalizeImports(
     }
 
     if (finalContent !== originalContent) {
-      const fileChecksum = await computeFileChecksum(filePath);
+      const fileChecksum = computeStringChecksum(originalContent);
       changes.push({
         type: 'modify-file',
         path: filePath,
