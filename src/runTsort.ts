@@ -122,8 +122,8 @@ export async function runTsort(
 /**
  * Build a dependency graph for the given set of modules.
  *
- * @returns graph: Map of module -> modules it imports (within the set)
- * @returns reverseGraph: Map of module -> modules that import it (within the set)
+ * @returns graph: Map of module -> modules that import it (within the set)
+ * @returns reverseGraph: Map of module -> modules it imports (within the set)
  */
 function buildDependencyGraph(
   db: Storage,
@@ -182,16 +182,21 @@ function addEdgeIfInScope(
   if (!moduleSet.has(exporterPath)) {
     return;
   }
-  const deps = graph.get(modulePath);
-  if (deps === undefined) {
+  /*
+    Graph edges go from dependency to dependent (exporter -> importer).
+    This way Kahn's algorithm processes zero-in-degree nodes (no dependents
+    within the set) first, producing dependency-first output.
+  */
+  const dependents = graph.get(exporterPath);
+  if (dependents === undefined) {
     return;
   }
-  deps.add(exporterPath);
-  const reverseDeps = reverseGraph.get(exporterPath);
-  if (reverseDeps === undefined) {
+  dependents.add(modulePath);
+  const dependencies = reverseGraph.get(modulePath);
+  if (dependencies === undefined) {
     return;
   }
-  reverseDeps.add(modulePath);
+  dependencies.add(exporterPath);
 }
 
 function insertSorted(queue: string[], item: string): void {

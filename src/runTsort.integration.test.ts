@@ -53,9 +53,9 @@ describe('tsort directory expansion', () => {
     );
 
     assert.equal(consoleOutput.length, 3, 'Should output 3 modules');
-    assert.equal(consoleOutput[0], join(testDir, 'a.ts'), 'a.ts (imports b) should come first');
+    assert.equal(consoleOutput[0], join(testDir, 'c.ts'), 'c.ts (no imports) should come first');
     assert.equal(consoleOutput[1], join(testDir, 'b.ts'), 'b.ts (imports c) should come second');
-    assert.equal(consoleOutput[2], join(testDir, 'c.ts'), 'c.ts (no imports) should come last');
+    assert.equal(consoleOutput[2], join(testDir, 'a.ts'), 'a.ts (imports b) should come last');
   });
 
   test('file input produces identical output as before', async () => {
@@ -86,8 +86,8 @@ describe('tsort directory expansion', () => {
     );
 
     assert.equal(consoleOutput.length, 3);
-    assert.equal(consoleOutput[0], aPath);
+    assert.equal(consoleOutput[0], cPath);
     assert.equal(consoleOutput[1], bPath);
-    assert.equal(consoleOutput[2], cPath);
+    assert.equal(consoleOutput[2], aPath);
   });
 });

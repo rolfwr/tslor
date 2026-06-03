@@ -60,16 +60,21 @@ describe('tsort', () => {
       if (!moduleSet.has(exporter.path)) {
         continue;
       }
-      const deps = graph.get(modulePath);
-      if (deps === undefined) {
+      /*
+        Graph edges go from dependency to dependent (exporter -> importer).
+        This way Kahn's algorithm processes zero-in-degree nodes (no dependents
+        within the set) first, producing dependency-first output.
+      */
+      const dependents = graph.get(exporter.path);
+      if (dependents === undefined) {
         throw new Error('Graph entry missing');
       }
-      deps.add(exporter.path);
-      const revDeps = reverseGraph.get(exporter.path);
-      if (revDeps === undefined) {
+      dependents.add(modulePath);
+      const dependencies = reverseGraph.get(modulePath);
+      if (dependencies === undefined) {
         throw new Error('Reverse graph entry missing');
       }
-      revDeps.add(modulePath);
+      dependencies.add(exporter.path);
     }
   }
 
@@ -163,7 +168,7 @@ describe('tsort', () => {
     const result = performTsort(storage, ['/a.ts', '/b.ts', '/c.ts']);
 
     assert.isNotNull(result);
-    assert.deepEqual(result, ['/a.ts', '/b.ts', '/c.ts']);
+    assert.deepEqual(result, ['/c.ts', '/b.ts', '/a.ts']);
 
     // Verify dependency order: C should appear before B, B before A
     if (result === null) {
@@ -173,8 +178,8 @@ describe('tsort', () => {
     const bIndex = result.indexOf('/b.ts');
     const cIndex = result.indexOf('/c.ts');
 
-    assert.isTrue(aIndex < bIndex, 'A (which imports B) should come before B');
-    assert.isTrue(bIndex < cIndex, 'B (which imports C) should come before C');
+    assert.isTrue(cIndex < bIndex, 'C (no imports) should come before B');
+    assert.isTrue(bIndex < aIndex, 'B (which imports C) should come before A');
   });
 
   test('diamond dependency outputs dependencies before dependents', () => {
@@ -190,7 +195,7 @@ describe('tsort', () => {
 
     assert.isNotNull(result);
 
-    // Verify dependency order
+    // Verify dependency order: D before B and C, B and C before A
     if (result === null) {
       throw new Error('Expected result');
     }
@@ -199,10 +204,10 @@ describe('tsort', () => {
     const cIndex = result.indexOf('/c.ts');
     const dIndex = result.indexOf('/d.ts');
 
-    assert.isTrue(aIndex < bIndex, 'A should come before B');
-    assert.isTrue(aIndex < cIndex, 'A should come before C');
-    assert.isTrue(bIndex < dIndex, 'B should come before D');
-    assert.isTrue(cIndex < dIndex, 'C should come before D');
+    assert.isTrue(dIndex < bIndex, 'D (no imports) should come before B');
+    assert.isTrue(dIndex < cIndex, 'D (no imports) should come before C');
+    assert.isTrue(bIndex < aIndex, 'B should come before A');
+    assert.isTrue(cIndex < aIndex, 'C should come before A');
   });
 
   test('independent modules output in consistent alphabetical order', () => {
@@ -250,14 +255,14 @@ describe('tsort', () => {
     const result = performTsort(storage, ['/a.ts', '/b.ts']);
 
     assert.isNotNull(result);
-    assert.deepEqual(result, ['/a.ts', '/b.ts']);
+    assert.deepEqual(result, ['/b.ts', '/a.ts']);
 
     if (result === null) {
       throw new Error('Expected result');
     }
     const aIndex = result.indexOf('/a.ts');
     const bIndex = result.indexOf('/b.ts');
-    assert.isTrue(aIndex < bIndex, 'A should come before B');
+    assert.isTrue(bIndex < aIndex, 'B (dependency) should come before A');
   });
 
   test('self-import is treated as cycle', () => {
