@@ -5,6 +5,7 @@ import { DebugOptions } from "./objstore";
 import { denormalizePath } from "./pathUtils";
 import { resolveCommandScope } from "./commandScope";
 import { FileSystem } from "./filesystem";
+import { assertDefined } from "./invariant";
 
 /**
  * Output interface for tsort results and errors.
@@ -19,6 +20,9 @@ export interface TsortOutput {
   error: (msg: string) => void;
 }
 
+/**
+ * Options for configuring the tsort topological sort operation.
+ */
 export interface TsortOptions {
   projectScope?: boolean;
   /**
@@ -74,9 +78,7 @@ export async function runTsort(
 
   // Find git repo root and open storage
   const tsPath = moduleSet.values().next().value;
-  if (tsPath === undefined) {
-    throw new Error('No module paths provided');
-  }
+  assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
   const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
 
   const db = options.storage ?? openStorage(debugOptions, false);
