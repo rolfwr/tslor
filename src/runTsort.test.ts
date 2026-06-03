@@ -1,5 +1,6 @@
 import { ObjStore } from './objstore';
 import { Storage } from './storage';
+import { getOrThrow } from './invariant';
 import { assert, test, describe, beforeEach, vi, afterEach } from 'vitest';
 
 // Mock console.log and console.error to capture output
@@ -21,14 +22,6 @@ describe('tsort', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  function mapGet<K, V>(map: Map<K, V>, key: K, msg: string): V {
-    const value = map.get(key);
-    if (value === undefined) {
-      throw new Error(msg);
-    }
-    return value;
-  }
 
   // Helper to create a storage with import relationships
   function createStorageWithImports(imports: Array<{ from: string; to: string }>) {
@@ -68,8 +61,8 @@ describe('tsort', () => {
       if (!moduleSet.has(exporter.path)) {
         continue;
       }
-      mapGet(graph, exporter.path, 'exporter.path not in graph').add(modulePath);
-      mapGet(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporter.path);
+      getOrThrow(graph, exporter.path, 'exporter.path not in graph').add(modulePath);
+      getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporter.path);
     }
   }
 
@@ -104,7 +97,7 @@ describe('tsort', () => {
     inDegree: Map<string, number>,
     queue: string[]
   ): void {
-    for (const dependent of mapGet(graph, current, 'current not in graph')) {
+    for (const dependent of getOrThrow(graph, current, 'current not in graph')) {
       const dependentInDegree = inDegree.get(dependent);
       if (dependentInDegree === undefined) {
         continue;
@@ -124,7 +117,7 @@ describe('tsort', () => {
   ): string[] | null {
     const inDegree = new Map<string, number>();
     for (const modulePath of moduleSet) {
-      inDegree.set(modulePath, mapGet(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
+      inDegree.set(modulePath, getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
     }
     const queue: string[] = [];
     for (const modulePath of moduleSet) {
