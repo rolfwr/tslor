@@ -9,7 +9,6 @@ import { openStorage, Storage } from "./storage";
 import { DebugOptions } from "./objstore";
 import { normalizeAndValidatePath } from "./pathUtils";
 import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeFileChecksum, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { promises as fsp } from "fs";
 import { SourceFile, ExportDeclaration } from "ts-morph";
 import { loadSourceFile } from "./indexing";
 import { reinsertScript } from "./transformingFileSystem";
@@ -284,7 +283,7 @@ async function createPurgeReexportPlan(
   let skippedGenerated = 0;
   for (const [filePath, fileReExports] of changesByFile) {
     // Read the original file content for Vue file reconstruction and undo
-    const originalContent = await fsp.readFile(filePath, 'utf-8');
+    const originalContent = await fileSystem.readFile(filePath, 'utf-8');
 
     // Skip files marked as @generated
     if (isGeneratedFile(originalContent)) {
