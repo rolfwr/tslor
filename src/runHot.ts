@@ -32,7 +32,7 @@ interface Direction {
   getInverseRelations(hotModule: HotModuleInfo): string[];
 }
 
-interface Options {
+export interface Options {
   select: string | null;
   /** Only consider imports within the same tsconfig project (default: false) */
   projectScope?: boolean;
@@ -246,7 +246,7 @@ export function selectHotModule(
   if (options.select) {
     const found = hotMods[options.select];
     if (!found) {
-      throw new Error('Module not found in analyzed directory: ' + options.select);
+      throw new Error('Module not found in analyzed paths: ' + options.select);
     }
     return found;
   }
@@ -403,15 +403,15 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   }
 
   /*
-    Extract a representative path for repo root resolution.
-    The set is guaranteed non-empty by the guard above.
+    Resolve the git repo root from any path in the set.
+    All paths belong to the same repo, so the choice is arbitrary.
+    We take the first element; the guard above ensures the set is non-empty.
+    Array.from(moduleSet)[0] is string | undefined, but moduleSet.size > 0 is
+    guaranteed by the guard above, so index 0 always yields a string.
   */
-  const representativeIterator = moduleSet.values().next();
-  if (representativeIterator.done) {
-    throw new Error('Internal error: module set is empty after non-empty guard');
-  }
-  const representative = representativeIterator.value;
-  const repoRoot = findGitRepoRoot(representative);
+  // ast-grep-ignore: no-type-assertion
+  const entryPath = Array.from(moduleSet)[0] as string;
+  const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, false);
   await updateStorage(repoRoot, db, true, fileSystem);
@@ -425,13 +425,20 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   */
   let moduleTsconfigMap: Map<string, string> | null = null;
   if (options.projectScope === true) {
-    moduleTsconfigMap = new Map();
-    for (const path of filePaths) {
-      const tsconfig = await getTsconfigPathForFile(repoRoot, path, fileSystem);
+    const tsconfigs = await Promise.all(
+      filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+    );
+    const entries: [string, string][] = [];
+    for (let i = 0; i < filePaths.length; i++) {
+      const tsconfig = tsconfigs[i];
       if (tsconfig !== null) {
-        moduleTsconfigMap.set(path, tsconfig);
+        // RATIONALE: i bounded by filePaths.length; tsconfig !== null checked above
+        // ast-grep-ignore: no-type-assertion
+        const entry = [filePaths[i], tsconfig] as [string, string];
+        entries.push(entry);
       }
     }
+    moduleTsconfigMap = new Map(entries);
   }
 
   const hotMods = buildHotModuleGraph(db, filePaths, moduleTsconfigMap);
