@@ -11,18 +11,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let testDir: string;
 let consoleOutput: string[];
 let storage: Storage;
+let aPath: string;
+let bPath: string;
+let cPath: string;
 
 beforeEach(() => {
   testDir = join(__dirname, '.tslor-test-tsort-tmp');
 
   consoleOutput = [];
 
+  aPath = join(testDir, 'a.ts');
+  bPath = join(testDir, 'b.ts');
+  cPath = join(testDir, 'c.ts');
+
   const objStore = new ObjStore({ traceId: null });
   storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
 
-  const aPath = join(testDir, 'a.ts');
-  const bPath = join(testDir, 'b.ts');
-  const cPath = join(testDir, 'c.ts');
   storage.putImport(aPath, '/tsconfig.json', 0, 'b', { path: bPath, tsconfig: '/tsconfig.json' });
   storage.putImport(bPath, '/tsconfig.json', 0, 'c', { path: cPath, tsconfig: '/tsconfig.json' });
 });
@@ -58,15 +62,11 @@ describe('tsort directory expansion', () => {
 
   test('explicit file paths are sorted in dependency order', async () => {
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
-      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
-      [join(testDir, 'c.ts'), 'export const c = 3;\n'],
+      [aPath, 'import { b } from "./b";\nexport const a = 1;\n'],
+      [bPath, 'import { c } from "./c";\nexport const b = 2;\n'],
+      [cPath, 'export const c = 3;\n'],
     ]);
     const fileSystem = new InMemoryFileSystem(files);
-
-    const aPath = join(testDir, 'a.ts');
-    const bPath = join(testDir, 'b.ts');
-    const cPath = join(testDir, 'c.ts');
 
     await runTsort(
       [aPath, bPath, cPath],
