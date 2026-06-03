@@ -25,6 +25,7 @@ import { runNormalizeNamespaceImports } from './runNormalizeNamespaceImports';
 import { runReplaceTypeUse } from './runReplaceTypeUse';
 import { runNormalizeImports } from './runNormalizeImports';
 import { runTypeLeafUsage } from './runTypeLeafUsage';
+import { runImportGroups } from './runImportGroups';
 import { GitRepositoryRootProvider } from './repositoryRootProvider';
 import { RealFileSystem } from './filesystem';
 import { dirname, resolve } from 'path';
@@ -321,6 +322,21 @@ program
     const debugOptions = getDebugOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runTsort(
+      paths,
+      { projectScope: opts.projectScope === true },
+      debugOptions,
+      fileSystem
+    );
+  });
+
+program
+  .command('import-groups <paths...>')
+  .description('Group modules by shared import dependencies and rank by impact')
+  .option('-p, --project-scope', 'Only consider imports within the same project')
+  .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
+    const debugOptions = getDebugOptions(cmd);
+    const fileSystem = new RealFileSystem();
+    await runImportGroups(
       paths,
       { projectScope: opts.projectScope === true },
       debugOptions,
