@@ -1,6 +1,6 @@
 import { updateStorage } from "./indexing";
 import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
-import { openStorage, Storage, ImporterPath } from "./storage";
+import { openStorage, Storage } from "./storage";
 import { DebugOptions } from "./objstore";
 import { resolveCommandScope } from "./commandScope";
 import { FileSystem } from "./filesystem";
@@ -124,7 +124,7 @@ function dumpDependenciesFor(
   }
   seen.add(tsPath);
 
-  const reverseDeps: ImporterPath[] = db.getReverseDependencies(tsPath);
+  const reverseDeps = db.getReverseDependencies(tsPath);
   for (const dep of reverseDeps) {
     if (tsconfigPathScope && tsconfigPathScope !== dep.tsconfig) {
       continue;

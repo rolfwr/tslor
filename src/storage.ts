@@ -3,19 +3,10 @@ import { assertDefined } from './invariant';
 import { loadObjStoreFromJsonl, ObjStore, saveObjStoreAsJsonl, DebugOptions, Obj } from './objstore';
 
 /**
- * Reference to a module that exports something.
- * Can be either a resolved file path or an unresolved import specifier.
+ * Reference to a module with its governing tsconfig.
+ * Used for both forward (exporter) and reverse (importer) dependency queries.
  */
 export interface ExporterPath {
-  path: string;
-  tsconfig: string;
-}
-
-/**
- * Reference to a module that imports something, with its governing tsconfig.
- * Used for reverse-dependency queries where the returned paths are importers.
- */
-export interface ImporterPath {
   path: string;
   tsconfig: string;
 }
@@ -166,10 +157,10 @@ export class Storage {
    * Get all modules that import the given module, along with their tsconfig.
    * Used for reverse-dependency walking with project scope filtering.
    */
-  getReverseDependencies(exporterPath: string): ImporterPath[] {
+  getReverseDependencies(exporterPath: string): ExporterPath[] {
     const importRecords = this.objStore.getGroup('exportPath|' + exporterPath);
     const seen = new Set<string>();
-    const result: ImporterPath[] = [];
+    const result: ExporterPath[] = [];
 
     for (const obj of importRecords) {
       const id = obj.id;
