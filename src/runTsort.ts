@@ -274,11 +274,7 @@ function processDependents(
   queue: string[]
 ): void {
   for (const dependent of getOrThrow(graph, current, 'current not in graph')) {
-    const dependentInDegree = inDegree.get(dependent);
-    if (dependentInDegree === undefined) {
-      continue;
-    }
-    const newInDegree = dependentInDegree - 1;
+    const newInDegree = getOrThrow(inDegree, dependent, 'dependent not in inDegree') - 1;
     inDegree.set(dependent, newInDegree);
     if (newInDegree === 0) {
       insertSorted(queue, dependent);
