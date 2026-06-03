@@ -1,5 +1,5 @@
 import { mkdir, writeFile, rm } from "fs/promises";
-import { join, relative } from "path";
+import { dirname, join, relative } from "path";
 import { tmpdir } from "os";
 import { assert, describe, test } from "vitest";
 import { resolveCommandScope } from "./commandScope";
@@ -20,7 +20,7 @@ async function createTempDir(
 
   for (const [relativePath, content] of Object.entries(files)) {
     const fullPath = join(dir, relativePath);
-    const parentDir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+    const parentDir = dirname(fullPath);
     await mkdir(parentDir, { recursive: true });
     await writeFile(fullPath, content);
   }
@@ -30,15 +30,8 @@ async function createTempDir(
 }
 
 describe("resolveCommandScope", () => {
-  async function setup(files: Record<string, string>) {
-    const { dir, cleanup } = await createTempDir(files);
-
-    // Clean up after the test returns
-    return { dir, cleanup };
-  }
-
   test("file-only input returns normalized paths", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
       "b.ts": "export const b = 2;",
     });
@@ -57,7 +50,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("directory-only input expands to TypeScript files", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
       "b.ts": "export const b = 2;",
       "c.js": "not typescript",
@@ -76,7 +69,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("mixed input combines files and directory expansion", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
       "sub/b.ts": "export const b = 2;",
       "sub/c.ts": "export const c = 3;",
@@ -97,7 +90,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("deduplicates files reachable via direct path and directory expansion", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
       "b.ts": "export const b = 2;",
     });
@@ -116,7 +109,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("empty directory contributes no files", async () => {
-    const { dir, cleanup } = await setup({});
+    const { dir, cleanup } = await createTempDir({});
     try {
       const result = await resolveCommandScope([dir], new RealFileSystem());
 
@@ -126,8 +119,8 @@ describe("resolveCommandScope", () => {
     }
   });
 
-  test("skips node_modules and dot-prefixed directories", async () => {
-    const { dir, cleanup } = await setup({
+  test("skips node_modules, dot-prefixed, and underscore-prefixed directories", async () => {
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
       "node_modules/lib.ts": "should be skipped",
       ".hidden/secret.ts": "should be skipped",
@@ -144,7 +137,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("includes .vue files in directory expansion", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "component.vue": "<template></template>",
       "util.ts": "export const util = 1;",
     });
@@ -160,7 +153,7 @@ describe("resolveCommandScope", () => {
   });
 
   test("relative paths are resolved to absolute", async () => {
-    const { dir, cleanup } = await setup({
+    const { dir, cleanup } = await createTempDir({
       "a.ts": "export const a = 1;",
     });
     try {
