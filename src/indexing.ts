@@ -1369,21 +1369,29 @@ function parseImportDeclaration(
 
   if (namedBindings) {
     namedBindings.forEachChild((child: Node) => {
-      const name = child.getFirstChildByKind(SyntaxKind.Identifier);
-      if (!name) {
-        throw new Error('No name found');
+      const importSpecifier = child.asKind(SyntaxKind.ImportSpecifier);
+      if (!importSpecifier) {
+        throw new Error('Expected ImportSpecifier');
       }
 
       /*
-        NOTE: Import aliases (import { foo as bar }) are intentionally not supported.
-        These will be handled by a separate `tslor normalize-imports` command.
+        getName() returns the imported symbol (e.g., 'v4' in `import { v4 as createUuid }`).
+        compilerNode.name holds the local binding (e.g., 'createUuid').
+        When no alias, both refer to the same identifier.
       */
-      const importName = name.getText();
-      const exportName = name.getText();
+      const importedName = importSpecifier.getName();
+      const localName = importSpecifier.compilerNode.name.getText();
 
-      names.push(exportName);
+      names.push(importedName);
 
-      staticModuleInfo.unresolvedExportsByImportNames.set(importName, { name: exportName, moduleSpec });
+      /*
+        Key by local name so that bare `export { localName }` can resolve
+        through this map to the original imported symbol and module.
+      */
+      staticModuleInfo.unresolvedExportsByImportNames.set(localName, {
+        name: importedName,
+        moduleSpec,
+      });
     });
   } else {
     const namespaceImport = importClause.getFirstChildByKind(SyntaxKind.NamespaceImport);
@@ -1563,7 +1571,16 @@ function parseClassDeclaration(
 }
 
 /**
- * Parse export declaration (re-exports)
+ * Parse export declaration (re-exports).
+ *
+ * Handles two forms:
+ * 1. `export { x } from 'module'` — direct re-export with module specifier
+ * 2. `export { x }` — bare re-export of a local import binding
+ *
+ * For bare exports, the local name is resolved through
+ * `unresolvedExportsByImportNames` to find the original import module.
+ * If the local binding is not from an import (e.g., a local variable),
+ * it is tracked only in `exportedNames`, not as a re-export.
  */
 function parseExportDeclaration(
   node: Node,
@@ -1574,26 +1591,51 @@ function parseExportDeclaration(
     return;
   }
 
-  const moduleSpecifier = exportDecl.getModuleSpecifier();
-  if (!moduleSpecifier) {
-    return; // Not a re-export
-  }
-
-  const moduleSpec = moduleSpecifier.getLiteralText();
   const isTypeOnly = exportDecl.isTypeOnly();
 
   // Handle named exports
   const namedExports = exportDecl.getNamedExports();
   if (namedExports) {
     namedExports.forEach((namedExport: ExportSpecifier) => {
-      const name = namedExport.getName();
-      staticModuleInfo.reExports.push({
-        name,
-        moduleSpec,
-        isTypeOnly
-      });
-      // Also mark as exported from this module
-      staticModuleInfo.exportedNames.add(name);
+      /*
+        getName() returns the local name being exported (e.g., 'foo' in
+        `export { foo as bar }`). compilerNode.name holds the exported
+        alias (e.g., 'bar'). When no alias, both refer to the same name.
+      */
+      const localName = namedExport.getName();
+      const exportedName = namedExport.compilerNode.name.getText();
+
+      // Always mark as exported from this module
+      staticModuleInfo.exportedNames.add(exportedName);
+
+      const moduleSpecifier = exportDecl.getModuleSpecifier();
+      if (moduleSpecifier) {
+        /*
+          Direct re-export: `export { x } from 'module'`
+        */
+        const moduleSpec = moduleSpecifier.getLiteralText();
+        staticModuleInfo.reExports.push({
+          name: exportedName,
+          moduleSpec,
+          isTypeOnly,
+        });
+      } else {
+        /*
+          Bare export: `export { x }` — re-export of a local binding.
+          Resolve the local name through the import map to find the
+          original import module.
+        */
+        const importInfo =
+          staticModuleInfo.unresolvedExportsByImportNames.get(localName);
+        if (importInfo) {
+          staticModuleInfo.reExports.push({
+            name: exportedName,
+            moduleSpec: importInfo.moduleSpec,
+            isTypeOnly,
+          });
+        }
+        // If not from an import, it's a local export (already in exportedNames).
+      }
     });
   } else {
     /*
