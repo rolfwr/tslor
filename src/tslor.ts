@@ -28,7 +28,8 @@ import { runTypeLeafUsage } from './runTypeLeafUsage';
 import { runImportGroups } from './runImportGroups';
 import { GitRepositoryRootProvider } from './repositoryRootProvider';
 import { RealFileSystem } from './filesystem';
-import { dirname, resolve } from 'path';
+import { dirname, extname, resolve } from 'path';
+import { CliError } from './errors';
 import { DebugOptions } from './objstore';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
@@ -117,16 +118,24 @@ program
 
 program
   .command('inspect <path>')
-  .description('Inspect a TypeScript file')
+  .description(
+    'Parse a TypeScript or Vue SFC file and print its module structure as JSON',
+  )
   .action(async (path: string) => {
     const fileSystem = new RealFileSystem();
     const absolutePath = resolve(path);
+
+    const ext = extname(absolutePath);
+    if (ext !== '.ts' && ext !== '.tsx' && ext !== '.vue') {
+      throw new CliError(
+        `${absolutePath} is not a supported file type (expected .ts, .tsx, .vue)`,
+      );
+    }
+
     const repoRoot = findGitRepoRoot(dirname(absolutePath));
     const moduleInfo = await inspectModule(repoRoot, absolutePath, fileSystem);
     if (!moduleInfo) {
-      console.error('No tsconfig found for ' + absolutePath);
-      process.exitCode = 1;
-      return;
+      throw new CliError('No tsconfig found for ' + absolutePath);
     }
     console.log(JSON.stringify(moduleInfo, null, 2));
   });
