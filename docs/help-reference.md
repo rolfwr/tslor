@@ -23,7 +23,7 @@ Commands:
   inspect <path>                                              Parse a TypeScript or Vue SFC file and print its module structure as JSON
   mv <oldPath> <newPath>                                      Move a TypeScript or Vue SFC file and update all imports that reference it
   project-use [options] <fromTsconfig> <toTsconfig>           List cross-project dependencies between two tsconfig projects
-  symbol-usage [options] <project> <symbolName>               Find all modules in a project that import a named symbol
+  symbol-usage <project> <symbolName>                         Find all modules in a project that import a named symbol
   trace-imports [options] <entryFile>                         Show all symbols imported by a file, grouped by source module
   grep [options] <directory> <symbolName>                     Find modules that export a symbol matching the given name
   cycles [options] <directory>                                Detect and report circular import dependencies
@@ -124,8 +124,7 @@ Usage: tslor symbol-usage [options] <project> <symbolName>
 Find all modules in a project that import a named symbol
 
 Options:
-  --repo <path>  Repository root to resolve relative project path against
-  -h, --help     display help for command
+  -h, --help  display help for command
 ```
 
 ### `trace-imports`

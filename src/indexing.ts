@@ -123,11 +123,7 @@ async function indexImportFromFilesSequential(
   writer: (message: string) => void,
 ) {
   let lastProgressAt = 0;
-  for (let i = 0; i < paths.length; ++i) {
-    const path = paths.at(i);
-    if (path === undefined) {
-      continue;
-    }
+  for (const [i, path] of paths.entries()) {
     if (verbose) {
       const now = Date.now();
       if (now - lastProgressAt >= 100) {
@@ -259,11 +255,8 @@ function createAsyncQueue<T>(): {
 
   const reader: AsyncQueueReader<T> = {
     take(): Promise<T | null> {
-      if (items.length > 0) {
-        const item = items.shift();
-        if (item === undefined) {
-          throw new Error('Queue underflow');
-        }
+      const item = items.shift();
+      if (item !== undefined) {
         return Promise.resolve(item);
       }
       if (closed) {
@@ -307,18 +300,12 @@ async function indexImportFromFilesParallel(
     lastProgressAt = now;
     if (!statDone) {
       writer(
-        '\rChecking ' +
-          checkedCount +
-          '/' +
-          paths.length +
-          ' | Indexing ' +
-          processedCount +
-          '\x1b[K',
+        `\rChecking ${checkedCount}/${paths.length} | Indexing ${processedCount}\x1b[K`,
       );
     } else if (changedCount > 0) {
-      writer('\rIndexing ' + processedCount + '/' + changedCount + '\x1b[K');
+      writer(`\rIndexing ${processedCount}/${changedCount}\x1b[K`);
     } else {
-      writer('\rChecked ' + paths.length + ' files (no changes)\x1b[K');
+      writer(`\rChecked ${paths.length} files (no changes)\x1b[K`);
     }
   }
 
@@ -510,19 +497,6 @@ export interface ImportUsage {
   }>;
 }
 
-function resolveReExports(
-  reExports: ReExport[],
-  resolvedPathsBySpec: Map<string, string>,
-): ReExport[] {
-  return reExports.map((reExport) => {
-    const resolvedPath = resolvedPathsBySpec.get(reExport.moduleSpec);
-    if (resolvedPath !== undefined) {
-      return { ...reExport, resolvedPath };
-    }
-    return reExport;
-  });
-}
-
 function collectImportSpecs(staticModuleInfo: StaticModuleInfo): Set<string> {
   const importSpecs = new Set<string>();
   for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
@@ -550,6 +524,19 @@ async function resolveSpecs(
     }
   }
   return resolvedPathsBySpec;
+}
+
+function resolveReExports(
+  reExports: ReExport[],
+  resolvedPathsBySpec: Map<string, string>,
+): ReExport[] {
+  return reExports.map((reExport) => {
+    const resolvedPath = resolvedPathsBySpec.get(reExport.moduleSpec);
+    if (resolvedPath !== undefined) {
+      return { ...reExport, resolvedPath };
+    }
+    return reExport;
+  });
 }
 
 async function resolveImportSpecs(
@@ -602,7 +589,6 @@ export async function inspectModule(
       return null;
     }
     const sourceFile = await loadSourceFile(tsFilePath, fileSystem);
-
     const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
 
     const resolvedPathsBySpec = await resolveImportSpecs(
@@ -646,6 +632,9 @@ export async function inspectModule(
  * and compiler options (by tsconfig path) across repeated calls. This eliminates the
  * redundant I/O that `resolveImportSpec` would otherwise perform on every import in
  * every file — the dominant overhead after TypeScript AST parsing itself.
+ *
+ * Reuses a single ts-morph Project across all files, avoiding the per-file
+ * Project creation overhead.
  *
  * Intended for use in worker threads, where one inspector is created per worker.
  * Files are processed sequentially (never concurrently), so the caches are safe.
@@ -700,6 +689,7 @@ export function createModuleInspector(
       }
       throw err;
     }
+
     /*
       Try existing source file first, then add to the shared project.
     */
