@@ -114,7 +114,7 @@ async function mvCore(db: Storage, repoRoot: string, fixupFileMove: FileMove, fi
     return;
   }
 
-  const paths: string[] = await getTypeScriptFilePaths(repoRoot, true, fileSystem);
+  const paths: string[] = await getTypeScriptFilePaths(repoRoot, fileSystem);
   for (const fixup of moveFixups) {
     await applyFixup(db, repoRoot, paths, fixup, fileSystem);
   }

@@ -81,7 +81,7 @@ async function findModuleCycles(
   fileSystem: FileSystem
 ) {
   // First, discover all TypeScript files in the target directory
-  const filePaths = await getTypeScriptFilePaths(directory, false, fileSystem);
+  const filePaths = await getTypeScriptFilePaths(directory, fileSystem);
   const fileSet = new Set(filePaths);
   
   // Build dependency graph only for files in scope
@@ -841,7 +841,7 @@ async function findDirectoryCycles(
   fileSystem: FileSystem
 ) {
   // First, discover all TypeScript files in the target directory
-  const filePaths = await getTypeScriptFilePaths(directory, false, fileSystem);
+  const filePaths = await getTypeScriptFilePaths(directory, fileSystem);
   const fileSet = new Set(filePaths);
   
   // Build directory-level dependency graph

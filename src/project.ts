@@ -1,14 +1,14 @@
-import { existsSync } from "fs";
-import { dirname } from "path";
-import { FileSystem } from "./filesystem";
-
+import { existsSync } from 'fs';
+import { dirname } from 'path';
+import { FileSystem } from './filesystem';
+import { CliError } from './errors';
 
 export function findGitRepoRoot(oldPath: string) {
   let repoRoot = oldPath;
   while (!existsSync(repoRoot + '/.git')) {
     const parent = dirname(repoRoot);
     if (parent === repoRoot) {
-      throw new Error('Git repo root not found');
+      throw new CliError('Git repo root not found');
     }
     repoRoot = parent;
   }
@@ -17,24 +17,20 @@ export function findGitRepoRoot(oldPath: string) {
 
 export async function getTypeScriptFilePaths(
   repoRoot: string,
-  verbose: boolean,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<string[]> {
   const paths: string[] = [];
   await forEachTsFile(repoRoot, fileSystem, async (file) => {
     paths.push(file);
   });
 
-  if (verbose) {
-    console.log('Found ' + paths.length + ' TypeScript files.');
-  }
   return paths;
 }
 
 async function forEachTsFile(
   dir: string,
   fileSystem: FileSystem,
-  cb: (file: string) => Promise<void>
+  cb: (file: string) => Promise<void>,
 ): Promise<void> {
   if (dir.endsWith('/')) {
     dir = dir.slice(0, -1);
@@ -51,16 +47,23 @@ async function forEachTsFile(
         continue;
       }
       await forEachTsFile(path, fileSystem, cb);
-    } else if (entry.isFile() && (path.endsWith('.ts') || path.endsWith('.vue'))) {
+    } else if (
+      entry.isFile() &&
+      (path.endsWith('.ts') || path.endsWith('.vue'))
+    ) {
       await cb(path);
     }
   }
 }
-  
+
 /**
  * TODO: Add cache
  */
-export async function getTsconfigPathForFile(root: string, file: string, fileSystem: FileSystem): Promise<string | null> {
+export async function getTsconfigPathForFile(
+  root: string,
+  file: string,
+  fileSystem: FileSystem,
+): Promise<string | null> {
   let dir = dirname(file);
   while (true) {
     const tsconfigPath = `${dir}/tsconfig.json`;
@@ -79,4 +82,3 @@ export async function getTsconfigPathForFile(root: string, file: string, fileSys
     dir = dirname(dir);
   }
 }
-

@@ -29,7 +29,7 @@ export async function resolveCommandScope(
     if (stats.isFile()) {
       resolved.add(normalized);
     } else {
-      const filePaths = await getTypeScriptFilePaths(normalized, false, fileSystem);
+      const filePaths = await getTypeScriptFilePaths(normalized, fileSystem);
       for (const filePath of filePaths) {
         resolved.add(filePath);
       }

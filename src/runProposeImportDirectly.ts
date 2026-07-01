@@ -30,7 +30,7 @@ export async function runProposeImportDirectly(directoryArg: string, debugOption
 
   // Build/update the index for files in the specified directory only
   const db = openStorage(debugOptions, true);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, true, fileSystem);
+  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
   const { indexImportFromFiles } = await import('./indexing');
