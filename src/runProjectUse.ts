@@ -1,55 +1,61 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot } from "./project";
-import { openStorage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot } from './project';
+import { openStorage } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath } from './pathUtils';
+import { FileSystem } from './filesystem';
 
 export interface ProjectUseOptions {
-  showSymbols?: boolean;
+  symbols?: boolean;
 }
 
 function displaySymbolsByExporter(
-  exportersBySymbol: Map<string, Map<string, Set<string>>>
+  exportersBySymbol: Map<string, Map<string, Set<string>>>,
+  writer: (message: string) => void,
 ): void {
-  const exporterPaths = Array.from(exportersBySymbol.keys()).sort();
-  for (const exporterPath of exporterPaths) {
-    console.log(exporterPath + ':');
-    const symbolMap = exportersBySymbol.get(exporterPath);
-    if (!symbolMap) {
-      continue;
-    }
-    const symbols = Array.from(symbolMap.keys()).sort();
-    for (const symbol of symbols) {
-      const importers = symbolMap.get(symbol);
-      if (!importers) {
-        continue;
-      }
+  if (exportersBySymbol.size === 0) {
+    writer('No cross-project dependencies found.\n');
+    return;
+  }
+
+  const exporters = Array.from(exportersBySymbol.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0]),
+  );
+  for (const [exporterPath, symbolMap] of exporters) {
+    writer(exporterPath + ':\n');
+    const symbols = Array.from(symbolMap.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
+    for (const [symbol, importers] of symbols) {
       const importerPaths = Array.from(importers).sort();
-      console.log(`  ${symbol} used by:`);
+      writer(`  ${symbol} used by:\n`);
       for (const importerPath of importerPaths) {
-        console.log(`    ${importerPath}`);
+        writer(`    ${importerPath}\n`);
       }
     }
-    console.log();
+    writer('\n');
   }
 }
 
 function displayFilesByExporter(
-  importersByExporter: Map<string, Set<string>>
+  importersByExporter: Map<string, Set<string>>,
+  writer: (message: string) => void,
 ): void {
-  const exporterPaths = Array.from(importersByExporter.keys()).sort();
-  for (const exporterPath of exporterPaths) {
-    console.log(exporterPath + ' used by:');
-    const importers = importersByExporter.get(exporterPath);
-    if (!importers) {
-      throw new Error('No importers found');
-    }
+  if (importersByExporter.size === 0) {
+    writer('No cross-project dependencies found.\n');
+    return;
+  }
+
+  const exporters = Array.from(importersByExporter.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0]),
+  );
+  for (const [exporterPath, importers] of exporters) {
+    writer(exporterPath + ' used by:\n');
     const importerPaths = Array.from(importers).sort();
     for (const importerPath of importerPaths) {
-      console.log('  ' + importerPath);
+      writer('  ' + importerPath + '\n');
     }
-    console.log();
+    writer('\n');
   }
 }
 
@@ -58,16 +64,34 @@ export async function runProjectUse(
   toTsconfig: string,
   options: ProjectUseOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ) {
-  const absoluteFromTsconfig = normalizeAndValidatePath(fromTsconfig, "From tsconfig", false);
-  const absoluteToTsconfig = normalizeAndValidatePath(toTsconfig, "To tsconfig", false);
+  const absoluteFromTsconfig = normalizeAndValidatePath(
+    fromTsconfig,
+    'From tsconfig',
+    false,
+  );
+  const absoluteToTsconfig = normalizeAndValidatePath(
+    toTsconfig,
+    'To tsconfig',
+    false,
+  );
   const repoRoot = findGitRepoRoot(absoluteFromTsconfig);
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(repoRoot, db, true, fileSystem, writer);
 
-  if (options.showSymbols) {
-    const usesWithSymbols = db.getProjectUsesWithSymbols(absoluteFromTsconfig, absoluteToTsconfig);
+  if (options.symbols) {
+    const usesWithSymbols = db.getProjectUsesWithSymbols(
+      absoluteFromTsconfig,
+      absoluteToTsconfig,
+    );
     const exportersBySymbol = new Map<string, Map<string, Set<string>>>();
     for (const use of usesWithSymbols) {
       let symbolMap = exportersBySymbol.get(use.exporterPath);
@@ -82,7 +106,7 @@ export async function runProjectUse(
       }
       importers.add(use.importerPath);
     }
-    displaySymbolsByExporter(exportersBySymbol);
+    displaySymbolsByExporter(exportersBySymbol, writer);
   } else {
     const uses = db.getProjectUses(absoluteFromTsconfig, absoluteToTsconfig);
     const importersByExporter = new Map<string, Set<string>>();
@@ -94,7 +118,7 @@ export async function runProjectUse(
       }
       importers.add(use.importerPath);
     }
-    displayFilesByExporter(importersByExporter);
+    displayFilesByExporter(importersByExporter, writer);
   }
 
   db.save();

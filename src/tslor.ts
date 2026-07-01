@@ -138,12 +138,20 @@ program
 
 program
   .command('project-use <fromTsconfig> <toTsconfig>')
-  .description('List modules from one project using modules from another project')
+  .description('List cross-project dependencies between two tsconfig projects')
   .option('--symbols', 'Show specific symbols used across projects')
   .action(async (fromTsconfig: string, toTsconfig: string, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runProjectUse(fromTsconfig, toTsconfig, opts, debugOptions, fileSystem);
+    await runProjectUse(
+      fromTsconfig,
+      toTsconfig,
+      opts,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program
@@ -229,11 +237,20 @@ program
 
 program
   .command('needs <path>')
-  .description('Detect transitive runtime requirements')
+  .description(
+    'Trace the import path from a module to a Node.js built-in dependency',
+  )
   .action(async (path: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runNeeds(path, debugOptions, fileSystem);
+    await runNeeds(
+      path,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+      isInteractive,
+    );
   });
 
 program

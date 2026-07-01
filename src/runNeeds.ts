@@ -1,28 +1,44 @@
-import { findGitRepoRoot } from "./project";
-import { openStorage, type Storage } from "./storage";
-import { updateStorage } from "./indexing";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath, denormalizePath } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { findGitRepoRoot } from './project';
+import { openStorage, type Storage } from './storage';
+import { updateStorage } from './indexing';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath, denormalizePath } from './pathUtils';
+import { FileSystem } from './filesystem';
 
-export async function runNeeds(modulePath: string, debugOptions: DebugOptions, fileSystem: FileSystem) {
-  const absolutePath = normalizeAndValidatePath(modulePath, "Module path", false);
+export async function runNeeds(
+  modulePath: string,
+  debugOptions: DebugOptions,
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  verbose: boolean,
+) {
+  const absolutePath = normalizeAndValidatePath(
+    modulePath,
+    'Module path',
+    false,
+  );
   const repoRoot = findGitRepoRoot(absolutePath);
 
-  // Only show progress in interactive terminals (not when piped or run by automation tools)
-  const isInteractive = process.stdout.isTTY && !process.env.CI;
-  const db = openStorage(debugOptions, { verbose: isInteractive, inMemory: false });
-  await updateStorage(repoRoot, db, isInteractive, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(repoRoot, db, verbose, fileSystem, writer);
   db.save();
 
   // Find transitive Node.js requirements
   const nodejsPath = findNodejsRequirement(db, absolutePath, new Set());
 
   if (nodejsPath) {
-    console.log(modulePath + ' needs nodejs:');
-    for (const path of nodejsPath) {
-      console.log('  ' + denormalizePath(path, process.cwd()));
+    writer(modulePath + ' needs nodejs:\n');
+    for (const p of nodejsPath) {
+      writer('  ' + denormalizePath(p, repoRoot) + '\n');
     }
+  } else {
+    writer('No Node.js requirements found.\n');
   }
 }
 
@@ -34,7 +50,7 @@ export async function runNeeds(modulePath: string, debugOptions: DebugOptions, f
 function findNodejsRequirement(
   db: Storage,
   modulePath: string,
-  visited: Set<string>
+  visited: Set<string>,
 ): string[] | null {
   // Avoid cycles
   if (visited.has(modulePath)) {
