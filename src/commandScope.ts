@@ -1,6 +1,6 @@
-import { normalizePath } from "./pathUtils";
-import { getTypeScriptFilePaths } from "./project";
-import { FileSystem } from "./filesystem";
+import { normalizePath } from './pathUtils';
+import { getTypeScriptFilePaths } from './project';
+import { FileSystem, isEnoentError } from './filesystem';
 
 /**
  * Resolve hybrid path input (files and/or directories) to a deduplicated set
@@ -14,24 +14,32 @@ import { FileSystem } from "./filesystem";
  *
  * Directories that contain no TypeScript files contribute nothing to the
  * result (they are silently skipped, matching the behaviour of
- * `getTypeScriptFilePaths` which returns an empty array).
+ * `getTypeScriptFilePaths` which returns an empty array). Non-existent
+ * paths are silently skipped.
  */
 export async function resolveCommandScope(
   paths: string[],
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<Set<string>> {
   const resolved = new Set<string>();
 
   for (const inputPath of paths) {
     const normalized = normalizePath(inputPath);
-    const stats = await fileSystem.stat(normalized);
 
-    if (stats.isFile()) {
-      resolved.add(normalized);
-    } else {
-      const filePaths = await getTypeScriptFilePaths(normalized, fileSystem);
-      for (const filePath of filePaths) {
-        resolved.add(filePath);
+    try {
+      const stats = await fileSystem.stat(normalized);
+      if (stats.isFile()) {
+        resolved.add(normalized);
+      } else {
+        const filePaths = await getTypeScriptFilePaths(normalized, fileSystem);
+        for (const filePath of filePaths) {
+          resolved.add(filePath);
+        }
+      }
+    } catch (err) {
+      // Non-existent paths are silently skipped; rethrow unexpected errors
+      if (!isEnoentError(err)) {
+        throw err;
       }
     }
   }
