@@ -1,6 +1,14 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync, Dirent } from "node:fs";
-import { mkdir, writeFile, stat, readFile } from "node:fs/promises";
-import type { FileSystemHost, RuntimeDirEntry } from "ts-morph";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  readdirSync,
+  realpathSync,
+  Dirent,
+} from 'node:fs';
+import { mkdir, writeFile, stat, readFile } from 'node:fs/promises';
+import type { FileSystemHost, RuntimeDirEntry } from 'ts-morph';
 
 export class TransformingFileSystem implements FileSystemHost {
   constructor() {}
@@ -8,10 +16,10 @@ export class TransformingFileSystem implements FileSystemHost {
     return true;
   }
   delete(_path: string): Promise<void> {
-    throw new Error("delete not implemented.");
+    throw new Error('delete not implemented.');
   }
   deleteSync(_path: string): void {
-    throw new Error("deleteSync not implemented.");
+    throw new Error('deleteSync not implemented.');
   }
   readDirSync(dirPath: string): RuntimeDirEntry[] {
     try {
@@ -27,34 +35,34 @@ export class TransformingFileSystem implements FileSystemHost {
     }
   }
   async readFile(filePath: string, encoding?: string): Promise<string> {
-    if (encoding && encoding !== "utf-8") {
-      throw new Error("Encoding " + encoding + " not supported.");
+    if (encoding && encoding !== 'utf-8') {
+      throw new Error('Encoding ' + encoding + ' not supported.');
     }
-    
-    let content = await readFile(filePath, "utf-8");
 
-    if (filePath.endsWith(".vue")) {
+    let content = await readFile(filePath, 'utf-8');
+
+    if (filePath.endsWith('.vue')) {
       content = extractScript(content);
     }
 
     return content;
   }
   readFileSync(filePath: string, encoding?: string): string {
-    if (encoding && encoding !== "utf-8") {
-      throw new Error("Encoding " + encoding + " not supported.");
+    if (encoding && encoding !== 'utf-8') {
+      throw new Error('Encoding ' + encoding + ' not supported.');
     }
-    let content = readFileSync(filePath, "utf-8");
+    let content = readFileSync(filePath, 'utf-8');
 
-    if (filePath.endsWith(".vue")) {
+    if (filePath.endsWith('.vue')) {
       content = extractScript(content);
     }
 
     return content;
   }
   async writeFile(filePath: string, fileText: string): Promise<void> {
-    if (filePath.endsWith(".vue")) {
+    if (filePath.endsWith('.vue')) {
       // For Vue files, we need to reinsert the TypeScript into the original Vue structure
-      const originalContent = readFileSync(filePath, "utf-8");
+      const originalContent = readFileSync(filePath, 'utf-8');
       const modifiedContent = reinsertScript(originalContent, fileText);
       await writeFile(filePath, modifiedContent);
     } else {
@@ -62,11 +70,11 @@ export class TransformingFileSystem implements FileSystemHost {
       await writeFile(filePath, fileText);
     }
   }
-  
+
   writeFileSync(filePath: string, fileText: string): void {
-    if (filePath.endsWith(".vue")) {
+    if (filePath.endsWith('.vue')) {
       // For Vue files, we need to reinsert the TypeScript into the original Vue structure
-      const originalContent = readFileSync(filePath, "utf-8");
+      const originalContent = readFileSync(filePath, 'utf-8');
       const modifiedContent = reinsertScript(originalContent, fileText);
       writeFileSync(filePath, modifiedContent);
     } else {
@@ -77,21 +85,21 @@ export class TransformingFileSystem implements FileSystemHost {
   async mkdir(dirPath: string): Promise<void> {
     await mkdir(dirPath, { recursive: true });
   }
-  
+
   mkdirSync(dirPath: string): void {
     mkdirSync(dirPath, { recursive: true });
   }
   move(_srcPath: string, _destPath: string): Promise<void> {
-    throw new Error("move not implemented.");
+    throw new Error('move not implemented.');
   }
   moveSync(_srcPath: string, _destPath: string): void {
-    throw new Error("moveSync not implemented.");
+    throw new Error('moveSync not implemented.');
   }
   copy(_srcPath: string, _destPath: string): Promise<void> {
-    throw new Error("copy not implemented.");
+    throw new Error('copy not implemented.');
   }
   copySync(_srcPath: string, _destPath: string): void {
-    throw new Error("copySync not implemented.");
+    throw new Error('copySync not implemented.');
   }
   async fileExists(filePath: string): Promise<boolean> {
     try {
@@ -101,7 +109,7 @@ export class TransformingFileSystem implements FileSystemHost {
       return false;
     }
   }
-  
+
   fileExistsSync(filePath: string): boolean {
     try {
       const stats = statSync(filePath);
@@ -110,7 +118,7 @@ export class TransformingFileSystem implements FileSystemHost {
       return false;
     }
   }
-  
+
   async directoryExists(dirPath: string): Promise<boolean> {
     try {
       const stats = await stat(dirPath);
@@ -119,7 +127,7 @@ export class TransformingFileSystem implements FileSystemHost {
       return false;
     }
   }
-  
+
   directoryExistsSync(dirPath: string): boolean {
     try {
       const stats = statSync(dirPath);
@@ -135,31 +143,31 @@ export class TransformingFileSystem implements FileSystemHost {
     return process.cwd();
   }
   glob(_patterns: ReadonlyArray<string>): Promise<string[]> {
-    throw new Error("glob not implemented.");
+    throw new Error('glob not implemented.');
   }
   globSync(_patterns: ReadonlyArray<string>): string[] {
-    throw new Error("globSync not implemented.");
+    throw new Error('globSync not implemented.');
   }
 }
 
 export function extractScript(code: string): string {
-  const pos = code.indexOf("<script");
+  const pos = code.indexOf('<script');
   if (pos === -1) {
-    return "";
+    return '';
   }
-  const start = code.indexOf(">", pos);
+  const start = code.indexOf('>', pos);
   if (start === -1) {
-    throw new Error("Script tag not closed");
+    throw new Error('Script tag not closed');
   }
-  const end = code.indexOf("</script>", start);
+  const end = code.indexOf('</script>', start);
   if (end === -1) {
-    throw new Error("Script tag not closed");
+    throw new Error('Script tag not closed');
   }
 
   const scriptPart = code.slice(start + 1, end);
   const verify = reinsertScript(code, scriptPart);
   if (verify !== code) {
-    throw new Error("Safe script extraction failed");
+    throw new Error('Safe script extraction failed');
   }
 
   return scriptPart;
