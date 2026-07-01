@@ -2,13 +2,17 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { assert, describe, test } from 'vitest';
-import { parseClassCoupling, parseModuleCoupling, runCoupling } from './runCoupling';
+import {
+  parseClassCoupling,
+  parseModuleCoupling,
+  runCoupling,
+} from './runCoupling';
 import type { CouplingGraph } from './runCoupling';
 
 function withTemporarySourceFile(
   fileName: string,
   sourceCode: string,
-  testBody: (filePath: string) => void
+  testBody: (filePath: string) => void,
 ): void {
   const tempDirectory = mkdtempSync(join(tmpdir(), 'tslor-coupling-'));
   const filePath = join(tempDirectory, fileName);
@@ -80,7 +84,7 @@ class Example {
           onTick: ['compute', 'count'],
           untouched: [],
         });
-      }
+      },
     );
   });
 
@@ -95,14 +99,17 @@ class FieldInitializerDependencies {
 }
 `,
       (filePath) => {
-        const graph = parseClassCoupling(filePath, 'FieldInitializerDependencies');
+        const graph = parseClassCoupling(
+          filePath,
+          'FieldInitializerDependencies',
+        );
 
         assert.deepEqual(normalizeGraph(graph), {
           base: [],
           doubled: ['base'],
           tripled: ['base', 'doubled'],
         });
-      }
+      },
     );
   });
 
@@ -141,7 +148,7 @@ class AccessorMembers {
           mutableState: [],
           timed: ['mutableState'],
         });
-      }
+      },
     );
   });
 
@@ -165,7 +172,7 @@ class ConciseArrowBody {
           trigger: ['read'],
           value: [],
         });
-      }
+      },
     );
   });
 
@@ -206,7 +213,7 @@ class NestedScopes {
           count: [],
           wrapper: [],
         });
-      }
+      },
     );
   });
 });
@@ -273,7 +280,7 @@ function recursive(): number {
           second: ['makeShared'],
           shared: [],
         });
-      }
+      },
     );
   });
 
@@ -304,7 +311,7 @@ class Worker {
           makeShared: ['shared'],
           shared: [],
         });
-      }
+      },
     );
   });
 
@@ -333,7 +340,7 @@ function readRenamedBeta(): number {
           renamedBeta: ['source'],
           source: [],
         });
-      }
+      },
     );
   });
 });
@@ -371,11 +378,17 @@ class ClassOutput {
         });
 
         const output = chunks.join('');
-        assert.include(output, `Coupling analysis for ${filePath} (class scope (ClassOutput))`);
+        assert.include(
+          output,
+          `Coupling analysis for ${filePath} (class scope (ClassOutput))`,
+        );
         assert.include(output, 'Dependents -> Dependencies:');
         assert.include(output, 'Dependencies -> Dependents:');
         assert.include(output, 'Leaf clustering (max cross-cluster distance):');
-        assert.include(output, 'Metric: minimum edge count between depth-0 groups, traversing edges in either direction.');
+        assert.include(
+          output,
+          'Metric: minimum edge count between depth-0 groups, traversing edges in either direction.',
+        );
         assert.include(output, 'Depth 0-1 subset weakly connected components:');
         assert.match(output, /^Group-1-\d+: first, second:$/m);
         assert.match(output, /^  Group-0-\d+: left\.$/m);
@@ -386,7 +399,7 @@ class ClassOutput {
         assert.match(output, /^Cluster A: (left|right)$/m);
         assert.match(output, /^Cluster B: (left|right)$/m);
         assert.match(output, /^Component 1: first, second, left, right$/m);
-      }
+      },
     );
   });
 
@@ -427,7 +440,10 @@ function root(): number {
 
         const output = chunks.join('');
 
-        assert.include(output, `Coupling analysis for ${filePath} (module scope)`);
+        assert.include(
+          output,
+          `Coupling analysis for ${filePath} (module scope)`,
+        );
         assert.include(output, 'Dependents -> Dependencies:');
         assert.include(output, 'Dependencies -> Dependents:');
         assert.include(output, 'Leaf clustering (max cross-cluster distance):');
@@ -447,7 +463,7 @@ function root(): number {
         assert.match(output, /^Cluster A: leaf$/m);
         assert.match(output, /^Cluster B: \(none\)$/m);
         assert.match(output, /^Component 1: leaf, middle$/m);
-      }
+      },
     );
   });
 
@@ -483,7 +499,7 @@ function beta(): number {
         assert.match(output, /scc_\d+ -> scc_\d+;/);
         assert.include(output, 'Depth 0');
         assert.equal(/\\\\n/.test(output), false);
-      }
+      },
     );
   });
 
@@ -521,14 +537,58 @@ function root(): number {
 
         const output = chunks.join('');
         assert.match(output, /^digraph Coupling \{/);
-        const edgeLines = output.split('\n').filter((line) => line.includes('->'));
+        const edgeLines = output
+          .split('\n')
+          .filter((line) => line.includes('->'));
 
         assert.include(output, 'middleA');
         assert.include(output, 'middleB');
         assert.include(output, 'leaf');
         assert.notInclude(output, 'root');
         assert.lengthOf(edgeLines, 2);
-      }
+      },
+    );
+  });
+
+  test('handles class with disconnected dependency chains without crashing', () => {
+    withTemporarySourceFile(
+      'DisconnectedChains.ts',
+      `
+class DisconnectedChains {
+  private leafA = 0;
+  private leafB = 0;
+
+  private middleA(): number {
+    return this.leafA;
+  }
+
+  private middleB(): number {
+    return this.leafB;
+  }
+
+  private root(): number {
+    return this.middleA() + this.middleB();
+  }
+}
+`,
+      (filePath) => {
+        const chunks: string[] = [];
+
+        runCoupling(filePath, {
+          class: 'DisconnectedChains',
+          output: {
+            write: (text) => {
+              chunks.push(text);
+            },
+          },
+        });
+
+        const output = chunks.join('');
+        assert.include(output, 'Leaf clustering (max cross-cluster distance):');
+        assert.include(output, 'Cluster A:');
+        assert.include(output, 'Cluster B:');
+        assert.include(output, 'Depth 0-1 subset weakly connected components:');
+      },
     );
   });
 });
