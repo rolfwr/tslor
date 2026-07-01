@@ -7,6 +7,7 @@ import {
   selectHotModule,
   buildImportedByChain,
   buildImportChain,
+  printHotChain,
 } from './runHot';
 
 /* Helpers */
@@ -25,22 +26,20 @@ function makeStorage(
     to: string;
     fromTsconfig?: string;
     toTsconfig?: string;
-  }>
+  }>,
 ): Storage {
   const objStore = new ObjStore({ traceId: null });
-  const storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
+  const storage = new Storage(objStore, {
+    jsonlPath: '/dev/null',
+    verbose: false,
+    inMemory: true,
+  });
   let idx = 0;
   for (const { from, to, fromTsconfig, toTsconfig } of edges) {
-    storage.putImport(
-      from,
-      fromTsconfig ?? '/tsconfig.json',
-      idx++,
-      'sym',
-      {
-        path: to,
-        tsconfig: toTsconfig ?? '/tsconfig.json',
-      }
-    );
+    storage.putImport(from, fromTsconfig ?? '/tsconfig.json', idx++, 'sym', {
+      path: to,
+      tsconfig: toTsconfig ?? '/tsconfig.json',
+    });
   }
   return storage;
 }
@@ -88,7 +87,11 @@ describe('calculateAllScores', () => {
       { from: '/a.ts', to: '/b.ts' },
       { from: '/b.ts', to: '/c.ts' },
     ]);
-    const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts', '/c.ts'], undefined);
+    const hotMods = buildHotModuleGraph(
+      db,
+      ['/a.ts', '/b.ts', '/c.ts'],
+      undefined,
+    );
     const scored = calculateAllScores(hotMods);
 
     for (const path of ['/a.ts', '/b.ts', '/c.ts']) {
@@ -103,11 +106,21 @@ describe('calculateAllScores', () => {
       { from: '/a.ts', to: '/b.ts' },
       { from: '/b.ts', to: '/c.ts' },
     ]);
-    const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts', '/c.ts'], undefined);
+    const hotMods = buildHotModuleGraph(
+      db,
+      ['/a.ts', '/b.ts', '/c.ts'],
+      undefined,
+    );
     const scored = calculateAllScores(hotMods);
 
-    assert.isAbove(mustGet(scored, '/b.ts').badness, mustGet(scored, '/a.ts').badness);
-    assert.isAbove(mustGet(scored, '/b.ts').badness, mustGet(scored, '/c.ts').badness);
+    assert.isAbove(
+      mustGet(scored, '/b.ts').badness,
+      mustGet(scored, '/a.ts').badness,
+    );
+    assert.isAbove(
+      mustGet(scored, '/b.ts').badness,
+      mustGet(scored, '/c.ts').badness,
+    );
   });
 });
 
@@ -115,7 +128,7 @@ describe('selectHotModule', () => {
   test('throws when hotArray is empty', () => {
     assert.throws(
       () => selectHotModule({}, [], { select: null }),
-      /No modules in hot array/
+      /No modules in hot array/,
     );
   });
 
@@ -123,7 +136,9 @@ describe('selectHotModule', () => {
     const db = makeStorage([{ from: '/a.ts', to: '/b.ts' }]);
     const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts'], undefined);
     const scored = calculateAllScores(hotMods);
-    const hotArray = Object.values(scored).sort((a, b) => b.badness - a.badness);
+    const hotArray = Object.values(scored).sort(
+      (a, b) => b.badness - a.badness,
+    );
 
     const result = selectHotModule(scored, hotArray, { select: null });
     assert.strictEqual(result, hotArray.at(0));
@@ -141,7 +156,7 @@ describe('selectHotModule', () => {
   test('throws when options.select names a module not in the graph', () => {
     assert.throws(
       () => selectHotModule({}, [], { select: '/missing.ts' }),
-      /Module not found/
+      /Module not found/,
     );
   });
 });
@@ -156,7 +171,11 @@ describe('buildImportedByChain', () => {
       { from: '/x.ts', to: '/a.ts' },
       { from: '/a.ts', to: '/b.ts' },
     ]);
-    const hotMods = buildHotModuleGraph(db, ['/x.ts', '/a.ts', '/b.ts'], undefined);
+    const hotMods = buildHotModuleGraph(
+      db,
+      ['/x.ts', '/a.ts', '/b.ts'],
+      undefined,
+    );
     const scored = calculateAllScores(hotMods);
 
     const selected = mustGet(scored, '/a.ts');
@@ -164,7 +183,7 @@ describe('buildImportedByChain', () => {
 
     assert.deepEqual(
       chain.map((m) => m.path),
-      ['/x.ts']
+      ['/x.ts'],
     );
   });
 
@@ -186,7 +205,7 @@ describe('buildImportedByChain', () => {
     assert.notInclude(
       chain.map((m) => m.path),
       '/a.ts',
-      'selected should not appear in its own up-chain'
+      'selected should not appear in its own up-chain',
     );
   });
 });
@@ -200,7 +219,11 @@ describe('buildImportChain', () => {
       { from: '/x.ts', to: '/a.ts' },
       { from: '/a.ts', to: '/b.ts' },
     ]);
-    const hotMods = buildHotModuleGraph(db, ['/x.ts', '/a.ts', '/b.ts'], undefined);
+    const hotMods = buildHotModuleGraph(
+      db,
+      ['/x.ts', '/a.ts', '/b.ts'],
+      undefined,
+    );
     const scored = calculateAllScores(hotMods);
 
     const selected = mustGet(scored, '/a.ts');
@@ -208,7 +231,7 @@ describe('buildImportChain', () => {
 
     assert.deepEqual(
       chain.map((m) => m.path),
-      ['/b.ts']
+      ['/b.ts'],
     );
   });
 
@@ -226,7 +249,7 @@ describe('buildImportChain', () => {
     assert.notInclude(
       chain.map((m) => m.path),
       '/a.ts',
-      'selected should not appear in its own down-chain'
+      'selected should not appear in its own down-chain',
     );
   });
 });
@@ -250,7 +273,71 @@ describe('hotChain composition', () => {
 
     const paths = hotChain.map((m) => m.path);
     const uniquePaths = [...new Set(paths)];
-    assert.deepEqual(paths, uniquePaths, 'hotChain should have no duplicate entries');
+    assert.deepEqual(
+      paths,
+      uniquePaths,
+      'hotChain should have no duplicate entries',
+    );
+  });
+});
+
+describe('printHotChain', () => {
+  function makeFixture() {
+    const hotChain = [
+      {
+        path: '/a.ts',
+        imports: [],
+        importedBy: [],
+        upward: null,
+        downward: null,
+        badness: 10,
+      },
+      {
+        path: '/b.ts',
+        imports: [],
+        importedBy: ['/a.ts'],
+        upward: null,
+        downward: null,
+        badness: 5,
+      },
+    ];
+    // biome-ignore lint/style/noNonNullAssertion: literal array has 2 elements
+    return { hotChain, selected: hotChain[1]! };
+  }
+
+  test('omits ANSI escape codes when useColor is false', () => {
+    const { hotChain, selected } = makeFixture();
+    const logs: string[] = [];
+
+    printHotChain(hotChain, selected, '/cwd', {
+      useColor: false,
+      writer: (m) => logs.push(m),
+    });
+
+    const output = logs.join('\n');
+    assert.include(output, 'Hot import chain:');
+    assert.include(output, 'a.ts');
+    assert.include(output, 'b.ts');
+    assert.include(output, '\u2191');
+    assert.notInclude(
+      output,
+      '\x1b[',
+      'should not contain ANSI escape sequences when useColor is false',
+    );
+  });
+
+  test('includes ANSI escape codes when useColor is true', () => {
+    const { hotChain, selected } = makeFixture();
+    const logs: string[] = [];
+
+    printHotChain(hotChain, selected, '/cwd', {
+      useColor: true,
+      writer: (m) => logs.push(m),
+    });
+
+    const output = logs.join('\n');
+    assert.include(output, 'Hot import chain:');
+    assert.include(output, '\x1b[48;2;');
   });
 });
 
@@ -260,7 +347,11 @@ describe('buildHotModuleGraph with project-scope', () => {
       { from: '/a.ts', to: '/b.ts' },
       { from: '/a.ts', to: '/c.ts' },
     ]);
-    const hotMods = buildHotModuleGraph(db, ['/a.ts', '/b.ts', '/c.ts'], undefined);
+    const hotMods = buildHotModuleGraph(
+      db,
+      ['/a.ts', '/b.ts', '/c.ts'],
+      undefined,
+    );
 
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts', '/c.ts']);
   });
@@ -271,8 +362,18 @@ describe('buildHotModuleGraph with project-scope', () => {
       With project-scope, /a.ts should only import /b.ts (same project).
     */
     const db = makeStorage([
-      { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/project/tsconfig.json' },
-      { from: '/a.ts', to: '/c.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
+      {
+        from: '/a.ts',
+        to: '/b.ts',
+        fromTsconfig: '/project/tsconfig.json',
+        toTsconfig: '/project/tsconfig.json',
+      },
+      {
+        from: '/a.ts',
+        to: '/c.ts',
+        fromTsconfig: '/project/tsconfig.json',
+        toTsconfig: '/other/tsconfig.json',
+      },
     ]);
 
     const moduleTsconfigMap = new Map([
@@ -284,7 +385,7 @@ describe('buildHotModuleGraph with project-scope', () => {
     const hotMods = buildHotModuleGraph(
       db,
       ['/a.ts', '/b.ts', '/c.ts'],
-      moduleTsconfigMap
+      moduleTsconfigMap,
     );
 
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, ['/b.ts']);
@@ -294,7 +395,12 @@ describe('buildHotModuleGraph with project-scope', () => {
 
   test('excludes all imports when none share the tsconfig', () => {
     const db = makeStorage([
-      { from: '/a.ts', to: '/b.ts', fromTsconfig: '/project/tsconfig.json', toTsconfig: '/other/tsconfig.json' },
+      {
+        from: '/a.ts',
+        to: '/b.ts',
+        fromTsconfig: '/project/tsconfig.json',
+        toTsconfig: '/other/tsconfig.json',
+      },
     ]);
 
     const moduleTsconfigMap = new Map([
@@ -305,7 +411,7 @@ describe('buildHotModuleGraph with project-scope', () => {
     const hotMods = buildHotModuleGraph(
       db,
       ['/a.ts', '/b.ts'],
-      moduleTsconfigMap
+      moduleTsconfigMap,
     );
 
     assert.deepEqual(mustGet(hotMods, '/a.ts').imports, []);

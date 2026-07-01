@@ -1,4 +1,5 @@
-import { assertDefined } from './invariant';
+import { invariant } from './invariant';
+import { CliError } from './errors';
 import { findGitRepoRoot, getTsconfigPathForFile } from './project';
 import { ExporterPath, Storage, openStorage } from './storage';
 import { updateStorage } from './indexing';
@@ -33,11 +34,32 @@ interface Direction {
   getInverseRelations(hotModule: HotModuleInfo): string[];
 }
 
-export interface Options {
+/**
+ * Options shared by pure helper functions (selectHotModule).
+ * Does not include I/O-related fields.
+ */
+export interface HotSelectOptions {
   /** Module path to analyze instead of the hottest module */
   select: string | null;
+}
+
+/**
+ * Full options for the runHot command.
+ */
+export interface Options extends HotSelectOptions {
   /** Only consider imports within the same tsconfig project (default: false) */
   projectScope?: boolean;
+  /** When true, delete the existing index database before opening storage */
+  fresh?: boolean;
+  /**
+   * Callback for indexing progress messages. Tests can supply a stub to
+   * suppress output.
+   */
+  writer: (message: string) => void;
+  /** Whether to use ANSI color codes in output */
+  color: boolean;
+  /** Working directory for path denormalization */
+  cwd: string;
 }
 
 const cycleCost = 100;
@@ -57,7 +79,10 @@ const downwardsDir: Direction = {
   getInverseRelations: (hotModule) => hotModule.importedBy,
 };
 
-function getHotModule(hotMods: Record<string, HotModuleInfo>, modulePath: string): HotModuleInfo {
+function getHotModule(
+  hotMods: Record<string, HotModuleInfo>,
+  modulePath: string,
+): HotModuleInfo {
   let moduleInfo = hotMods[modulePath];
   if (!moduleInfo) {
     moduleInfo = {
@@ -77,7 +102,7 @@ function calcDirection(
   hotMods: Record<string, HotModuleInfo>,
   hotModule: HotModuleInfo,
   seen: Set<string>,
-  direction: Direction
+  direction: Direction,
 ): Score {
   const existing = direction.getScore(hotModule);
   if (existing !== null) {
@@ -102,12 +127,16 @@ function calcDirection(
   const score: Score = { weight: 0, sum: 0 };
   for (const relation of relations) {
     const hotRelation = hotMods[relation];
-    if (!hotRelation) {
-      throw new Error('No hot module for ' + relation);
-    }
-    const hotRelationScore = calcDirection(hotMods, hotRelation, seen, direction);
+    invariant(hotRelation, 'No hot module for ' + relation);
+    const hotRelationScore = calcDirection(
+      hotMods,
+      hotRelation,
+      seen,
+      direction,
+    );
     const inverseRelations = direction.getInverseRelations(hotRelation);
-    score.weight += hotRelationScore.weight / inverseRelations.length + internalWeight;
+    score.weight +=
+      hotRelationScore.weight / inverseRelations.length + internalWeight;
     score.sum += hotRelationScore.sum + internalWeight;
   }
 
@@ -118,7 +147,7 @@ function calcDirection(
 function calcUpwards(
   hotMods: Record<string, HotModuleInfo>,
   hotModule: HotModuleInfo,
-  seen: Set<string>
+  seen: Set<string>,
 ): Score {
   return calcDirection(hotMods, hotModule, seen, upwardsDir);
 }
@@ -126,7 +155,7 @@ function calcUpwards(
 function calcDownwards(
   hotMods: Record<string, HotModuleInfo>,
   hotModule: HotModuleInfo,
-  seen: Set<string>
+  seen: Set<string>,
 ): Score {
   return calcDirection(hotMods, hotModule, seen, downwardsDir);
 }
@@ -167,31 +196,43 @@ function lerpColor(a: Color, b: Color, t: number): Color {
   };
 }
 
-function hotnessColor(hotness: number, leastHot: number, medianHot: number, mostHot: number): Color {
+function hotnessColor(
+  hotness: number,
+  leastHot: number,
+  medianHot: number,
+  mostHot: number,
+): Color {
   if (medianHot === leastHot && mostHot === medianHot) {
     return coolColor;
   }
   if (hotness < medianHot) {
     const range = medianHot - leastHot;
-    return range === 0 ? coolColor : lerpColor(coolColor, warmColor, (hotness - leastHot) / range);
+    return range === 0
+      ? coolColor
+      : lerpColor(coolColor, warmColor, (hotness - leastHot) / range);
   }
 
   const range = mostHot - medianHot;
-  return range === 0 ? warmColor : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
+  return range === 0
+    ? warmColor
+    : lerpColor(warmColor, hotColor, (hotness - medianHot) / range);
 }
 
 function isExportInScope(
   exporter: ExporterPath,
   importerPath: string,
   fileSet: Set<string>,
-  moduleTsconfigMap: Map<string, string> | undefined
+  moduleTsconfigMap: Map<string, string> | undefined,
 ): boolean {
   if (!fileSet.has(exporter.path)) {
     return false;
   }
   if (moduleTsconfigMap !== undefined) {
     const importerTsconfig = moduleTsconfigMap.get(importerPath);
-    if (importerTsconfig !== undefined && importerTsconfig !== exporter.tsconfig) {
+    if (
+      importerTsconfig !== undefined &&
+      importerTsconfig !== exporter.tsconfig
+    ) {
       return false;
     }
   }
@@ -212,7 +253,7 @@ function isExportInScope(
 export function buildHotModuleGraph(
   db: Storage,
   filePaths: string[],
-  moduleTsconfigMap: Map<string, string> | undefined
+  moduleTsconfigMap: Map<string, string> | undefined,
 ): Record<string, HotModuleInfo> {
   const hotMods: Record<string, HotModuleInfo> = {};
   const fileSet = new Set(filePaths);
@@ -223,7 +264,7 @@ export function buildHotModuleGraph(
 
     hotModule.imports = exporterPaths
       .filter((exporter) =>
-        isExportInScope(exporter, modulePath, fileSet, moduleTsconfigMap)
+        isExportInScope(exporter, modulePath, fileSet, moduleTsconfigMap),
       )
       .map((exporter) => exporter.path);
 
@@ -237,7 +278,7 @@ export function buildHotModuleGraph(
 }
 
 export function calculateAllScores(
-  hotMods: Record<string, HotModuleInfo>
+  hotMods: Record<string, HotModuleInfo>,
 ): Record<string, ScoredHotModuleInfo> {
   const scored: Record<string, ScoredHotModuleInfo> = {};
   for (const [path, hotModule] of Object.entries(hotMods)) {
@@ -254,39 +295,44 @@ export function calculateAllScores(
 export function selectHotModule(
   hotMods: Record<string, ScoredHotModuleInfo>,
   hotArray: ScoredHotModuleInfo[],
-  options: Options
+  options: HotSelectOptions,
 ): ScoredHotModuleInfo {
   if (options.select) {
     const normalizedSelect = normalizePath(options.select);
     const found = hotMods[normalizedSelect];
     if (!found) {
-      throw new Error('Module not found in analyzed paths: ' + options.select);
+      throw new CliError(
+        'Module not found in analyzed paths: ' + options.select,
+      );
     }
     return found;
   }
   const first = hotArray.at(0);
-  if (first === undefined) {
-    throw new Error('No modules in hot array');
-  }
+  invariant(first !== undefined, 'No modules in hot array');
   return first;
 }
 
-function printTopModules(hotArray: ScoredHotModuleInfo[], cwd: string): void {
-  console.log();
-  console.log('Top 10 hottest modules:');
-  for (let i = 0; i < 10 && i < hotArray.length; i++) {
-    const hotModule = hotArray.at(i);
-    if (hotModule === undefined) {
-      continue;
-    }
-    console.log(String(Math.round(hotModule.badness)).padStart(10), denormalizePath(hotModule.path, cwd));
+function printTopModules(
+  hotArray: ScoredHotModuleInfo[],
+  cwd: string,
+  writer: (message: string) => void,
+): void {
+  writer('\n');
+  writer('Top 10 hottest modules:\n');
+  for (const hotModule of hotArray.slice(0, 10)) {
+    writer(
+      String(Math.round(hotModule.badness)).padStart(10) +
+        ' ' +
+        denormalizePath(hotModule.path, cwd) +
+        '\n',
+    );
   }
-  console.log();
+  writer('\n');
 }
 
 export function buildImportedByChain(
   hotMods: Record<string, ScoredHotModuleInfo>,
-  selected: HotModuleInfo
+  selected: HotModuleInfo,
 ): ScoredHotModuleInfo[] {
   const chain: ScoredHotModuleInfo[] = [];
   const seen = new Set<string>([selected.path]);
@@ -296,9 +342,7 @@ export function buildImportedByChain(
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const importedBy of current.importedBy) {
       const hotImporter = hotMods[importedBy];
-      if (!hotImporter) {
-        throw new Error('No hot module for ' + importedBy);
-      }
+      invariant(hotImporter, 'No hot module for ' + importedBy);
       const upward = hotImporter.upward;
       if (upward === null) {
         continue;
@@ -320,7 +364,7 @@ export function buildImportedByChain(
 
 export function buildImportChain(
   hotMods: Record<string, ScoredHotModuleInfo>,
-  selected: HotModuleInfo
+  selected: HotModuleInfo,
 ): ScoredHotModuleInfo[] {
   const chain: ScoredHotModuleInfo[] = [];
   const seen = new Set<string>([selected.path]);
@@ -330,9 +374,7 @@ export function buildImportChain(
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const imported of current.imports) {
       const hotImport = hotMods[imported];
-      if (!hotImport) {
-        throw new Error('No hot module for ' + imported);
-      }
+      invariant(hotImport, 'No hot module for ' + imported);
       const downward = hotImport.downward;
       if (downward === null) {
         continue;
@@ -352,7 +394,18 @@ export function buildImportChain(
   return chain;
 }
 
-function printHotChain(hotChain: ScoredHotModuleInfo[], selected: HotModuleInfo, cwd: string): void {
+export interface PrintHotChainOptions {
+  useColor: boolean;
+  writer: (message: string) => void;
+}
+
+export function printHotChain(
+  hotChain: ScoredHotModuleInfo[],
+  selected: HotModuleInfo,
+  cwd: string,
+  options: PrintHotChainOptions,
+): void {
+  const { writer, useColor } = options;
   const badnessArr = hotChain.map((m) => m.badness).sort((a, b) => a - b);
   const len = badnessArr.length;
   if (len === 0) {
@@ -361,49 +414,64 @@ function printHotChain(hotChain: ScoredHotModuleInfo[], selected: HotModuleInfo,
   const leastHot = badnessArr.at(0);
   const medianHot = badnessArr.at(Math.floor(len / 2));
   const mostHot = badnessArr.at(-1);
-  if (leastHot === undefined || medianHot === undefined || mostHot === undefined) {
+  if (
+    leastHot === undefined ||
+    medianHot === undefined ||
+    mostHot === undefined
+  ) {
     return;
   }
 
-  console.log('Hot import chain:');
+  writer('Hot import chain:\n');
   for (const hotModule of hotChain) {
-    const dim = '\x1b[2m';
-    const bright = '\x1b[1m';
-    const selectColor = hotModule === selected ? bright : dim;
-    const reset = '\x1b[0m';
     const up = hotModule.importedBy.length;
     const down = hotModule.imports.length;
     const arrowUp = up > 0 ? up + '\u2191' : '';
     const arrowDown = down > 0 ? down + '\u2193' : '';
     const prefix = arrowUp.padStart(6) + arrowDown.padStart(6);
-    const rgb = hotnessColor(hotModule.badness, leastHot, medianHot, mostHot);
-    console.log(
-      dim +
-        prefix +
-        '  \x1b[48;2;' +
-        rgb.red +
-        ';' +
-        rgb.green +
-        ';' +
-        rgb.blue +
-        'm ' +
-        reset +
-        '  ' +
-        selectColor +
-        denormalizePath(hotModule.path, cwd) +
-        reset
-    );
+    const pathText = denormalizePath(hotModule.path, cwd);
+
+    if (useColor) {
+      const dim = '\x1b[2m';
+      const bright = '\x1b[1m';
+      const selectColor = hotModule === selected ? bright : dim;
+      const reset = '\x1b[0m';
+      const rgb = hotnessColor(hotModule.badness, leastHot, medianHot, mostHot);
+      writer(
+        dim +
+          prefix +
+          '  \x1b[48;2;' +
+          rgb.red +
+          ';' +
+          rgb.green +
+          ';' +
+          rgb.blue +
+          'm ' +
+          reset +
+          '  ' +
+          selectColor +
+          pathText +
+          reset +
+          '\n',
+      );
+    } else {
+      writer(prefix + '  ' + pathText + '\n');
+    }
   }
-  console.log();
+  writer('\n');
 }
 
-export async function runHot(paths: string[], options: Options, debugOptions: DebugOptions, fileSystem: FileSystem): Promise<void> {
+export async function runHot(
+  paths: string[],
+  options: Options,
+  debugOptions: DebugOptions,
+  fileSystem: FileSystem,
+): Promise<void> {
+  const { writer, cwd } = options;
   if (paths.length === 0) {
-    console.log('No paths provided.');
+    writer('No paths provided.\n');
     return;
   }
-
-  const cwd = process.cwd();
 
   /*
     Resolve hybrid path input: files are normalized to absolute paths,
@@ -412,24 +480,27 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   const moduleSet = await resolveCommandScope(paths, fileSystem);
 
   if (moduleSet.size === 0) {
-    console.log('No TypeScript files found in the given paths.');
+    writer('No TypeScript files found in the given paths.\n');
     return;
   }
 
   /*
     Resolve the git repo root from any path in the set.
     All paths belong to the same repo, so the choice is arbitrary.
-    We take the first element; the guard above ensures the set is non-empty,
-    so the iterator is guaranteed to return a defined value.
   */
-  const entryPath = moduleSet.values().next().value;
-  assertDefined(entryPath, 'moduleSet is non-empty (guarded above)');
+  // biome-ignore lint/style/noNonNullAssertion: moduleSet.size > 0 guard ensures values().next().value is defined
+  const entryPath = moduleSet.values().next().value!;
   const repoRoot = findGitRepoRoot(entryPath);
 
-  const db = openStorage(debugOptions, { verbose: false, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: false,
+    fresh: options.fresh ?? false,
+    basePath: repoRoot,
+    inMemory: false,
+  });
 
   try {
+    await updateStorage(repoRoot, db, true, fileSystem, writer);
     const filePaths = Array.from(moduleSet);
 
     /*
@@ -440,7 +511,9 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
     let moduleTsconfigMap: Map<string, string> | undefined;
     if (options.projectScope === true) {
       const tsconfigs = await Promise.all(
-        filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+        filePaths.map((path) =>
+          getTsconfigPathForFile(repoRoot, path, fileSystem),
+        ),
       );
       const entries: [string, string][] = filePaths.flatMap((path, i) => {
         const tsconfig = tsconfigs[i];
@@ -460,13 +533,13 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
 
     const selected = selectHotModule(scoredMods, hotArray, options);
 
-    printTopModules(hotArray, cwd);
+    printTopModules(hotArray, cwd, writer);
 
     const importedByChain = buildImportedByChain(scoredMods, selected);
     const importChain = buildImportChain(scoredMods, selected);
     const hotChain = [...importedByChain.reverse(), selected, ...importChain];
 
-    printHotChain(hotChain, selected, cwd);
+    printHotChain(hotChain, selected, cwd, { useColor: options.color, writer });
   } finally {
     db.save();
   }

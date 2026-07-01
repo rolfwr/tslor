@@ -33,6 +33,9 @@ import { DebugOptions } from './objstore';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
 const isInteractive = process.stdout.isTTY && !process.env.CI;
+const forceColor = process.env.FORCE_COLOR;
+const colorOutput =
+  forceColor !== '0' && (forceColor !== undefined || process.stdout.isTTY);
 const currentCwd = process.cwd();
 
 /**
@@ -384,22 +387,40 @@ program
 
 program
   .command('hot <paths...>')
-  .description('Visualize the hottest transitive import paths in a codebase')
-  .option('--select <path>', 'Select a specific module to analyze instead of the hottest')
-  .option('-p, --project-scope', 'Only consider imports within the same project')
-  .action(async (paths: string[], opts: { select?: string; projectScope?: boolean }, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const fileSystem = new RealFileSystem();
-    await runHot(
-      paths,
-      {
-        select: typeof opts.select === 'string' ? opts.select : null,
-        projectScope: opts.projectScope === true,
-      },
-      debugOptions,
-      fileSystem
-    );
-  });
+  .description(
+    'Rank modules by how heavily they are imported across a codebase',
+  )
+  .option(
+    '--select <path>',
+    'Select a specific module to analyze instead of the hottest',
+  )
+  .option(
+    '-p, --project-scope',
+    'Only consider imports within the same project',
+  )
+  .action(
+    async (
+      paths: string[],
+      opts: { select?: string; projectScope?: boolean },
+      cmd,
+    ) => {
+      const { traceId, fresh } = getGlobalOptions(cmd);
+      const fileSystem = new RealFileSystem();
+      await runHot(
+        paths,
+        {
+          select: typeof opts.select === 'string' ? opts.select : null,
+          projectScope: opts.projectScope === true,
+          fresh,
+          writer: writeStderr,
+          color: colorOutput,
+          cwd: currentCwd,
+        },
+        { traceId },
+        fileSystem,
+      );
+    },
+  );
 
 program
   .command('tsort <paths...>')
