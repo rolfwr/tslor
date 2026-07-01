@@ -28,7 +28,7 @@ function makeStorage(
   }>
 ): Storage {
   const objStore = new ObjStore({ traceId: null });
-  const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
+  const storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
   let idx = 0;
   for (const { from, to, fromTsconfig, toTsconfig } of edges) {
     storage.putImport(

@@ -86,7 +86,7 @@ export async function runTsort(
   assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
   const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
 
-  const db = options.storage ?? openStorage(debugOptions, false);
+  const db = options.storage ?? openStorage(debugOptions, { verbose: false, inMemory: false });
   if (!options.storage) {
     await updateStorage(repoRoot, db, true, fileSystem);
   }

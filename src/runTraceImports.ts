@@ -85,7 +85,7 @@ export async function runTraceImports(
 ) {
   const absoluteEntryFile = normalizeAndValidatePath(entryFile, "Entry file", false);
   const repoRoot = findGitRepoRoot(absoluteEntryFile);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
 
   console.log(`Tracing imports from: ${absoluteEntryFile}`);

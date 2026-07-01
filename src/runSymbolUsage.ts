@@ -29,7 +29,7 @@ export async function runSymbolUsage(
 ) {
   const absoluteProjectPath = normalizePath(projectPath);
   const repoRoot = findGitRepoRoot(absoluteProjectPath);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
 
   console.log('⚠️  WARNING: This command uses loose symbol name matching and may return');

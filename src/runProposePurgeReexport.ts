@@ -49,7 +49,7 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
     Build/update the index — index ALL repo files so that consumers outside the
     scanned directory are visible to the unused-import check.
   */
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
   const { pathsToIndex } = computeIndexingPaths(allPaths, directory);
 

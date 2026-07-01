@@ -97,7 +97,7 @@ export async function runGrep(
 ) {
   const absoluteDirectory = normalizePath(directory);
   const repoRoot = findGitRepoRoot(absoluteDirectory);
-  const db = openStorage(debugOptions, options.verbose || false);
+  const db = openStorage(debugOptions, { verbose: options.verbose || false, inMemory: false });
   await updateStorage(repoRoot, db, options.verbose || false, fileSystem);
 
   const symbolImports = db.getSymbolImports(symbolName);

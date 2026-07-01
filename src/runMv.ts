@@ -60,7 +60,7 @@ export async function runMv(oldPathArg: string, newPathArg: string, debugOptions
     newPath,
   };
 
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await mvCore(db, repoRoot, fixupFileMove, fileSystem);
   db.save();
 }

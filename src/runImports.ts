@@ -8,7 +8,7 @@ import { FileSystem } from "./filesystem";
 export async function runImports(exportPathArg: string, debugOptions: DebugOptions, fileSystem: FileSystem) {
   const exportPath = normalizeAndValidatePath(exportPathArg, "Export path", false);
   let repoRoot = findGitRepoRoot(exportPath);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
   db.save();
   const importers = db.getImportersOfExportPath(exportPath);

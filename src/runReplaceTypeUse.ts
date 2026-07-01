@@ -35,7 +35,7 @@ export async function runReplaceTypeUse(
   console.log(`Scanning for ${options.sourceType} usages in ${directory}...`);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 

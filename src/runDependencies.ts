@@ -92,7 +92,7 @@ export async function runDependencies(
     Open storage before the try block so `db` is definitely assigned.
     The try/finally below only covers the read-phase and save cleanup.
   */
-  const db = options.storage ?? openStorage(debugOptions, true);
+  const db = options.storage ?? openStorage(debugOptions, { verbose: true, inMemory: false });
   if (!options.storage) {
     await updateStorage(repoRoot, db, true, fileSystem);
   }

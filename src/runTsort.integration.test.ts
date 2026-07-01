@@ -25,7 +25,7 @@ beforeEach(() => {
   cPath = join(testDir, 'c.ts');
 
   const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
+  storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
 
   storage.putImport(aPath, '/tsconfig.json', 0, 'b', { path: bPath, tsconfig: '/tsconfig.json' });
   storage.putImport(bPath, '/tsconfig.json', 0, 'c', { path: cPath, tsconfig: '/tsconfig.json' });

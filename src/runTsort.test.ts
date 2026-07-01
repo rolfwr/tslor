@@ -7,7 +7,7 @@ describe('tsort', () => {
   // Helper to create a storage with import relationships
   function createStorageWithImports(imports: Array<{ from: string; to: string }>) {
     const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
+    const storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
 
     let index = 0;
     for (const { from, to } of imports) {

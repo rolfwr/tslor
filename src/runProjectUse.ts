@@ -63,7 +63,7 @@ export async function runProjectUse(
   const absoluteFromTsconfig = normalizeAndValidatePath(fromTsconfig, "From tsconfig", false);
   const absoluteToTsconfig = normalizeAndValidatePath(toTsconfig, "To tsconfig", false);
   const repoRoot = findGitRepoRoot(absoluteFromTsconfig);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
 
   if (options.showSymbols) {

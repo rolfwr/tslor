@@ -15,7 +15,7 @@ beforeEach(() => {
   testDir = join(__dirname, '.tslor-test-deps-tmp');
 
   const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, '/dev/null', { traceId: null }, false);
+  storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
 
   const aPath = join(testDir, 'a.ts');
   const bPath = join(testDir, 'b.ts');

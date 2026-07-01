@@ -18,7 +18,7 @@ export async function runTypeLeafUsage(
 ): Promise<void> {
   const directory = normalizeAndValidatePath(directoryArg, "Directory", false);
   const repoRoot = findGitRepoRoot(directory);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
   db.save();
 

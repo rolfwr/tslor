@@ -11,7 +11,7 @@ export async function runNeeds(modulePath: string, debugOptions: DebugOptions, f
 
   // Only show progress in interactive terminals (not when piped or run by automation tools)
   const isInteractive = process.stdout.isTTY && !process.env.CI;
-  const db = openStorage(debugOptions, isInteractive);
+  const db = openStorage(debugOptions, { verbose: isInteractive, inMemory: false });
   await updateStorage(repoRoot, db, isInteractive, fileSystem);
   db.save();
 

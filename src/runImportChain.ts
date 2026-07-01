@@ -17,7 +17,7 @@ export async function runImportChain(fromPath: string, toPath: string, debugOpti
       throw new Error('From and to paths are in different repositories');
     }
 
-    const db = openStorage(debugOptions, true);
+    const db = openStorage(debugOptions, { verbose: true, inMemory: false });
     await updateStorage(repoRoot, db, true, fileSystem);
     db.save();
 

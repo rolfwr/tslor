@@ -136,7 +136,7 @@ export async function runNormalizeNamespaceImports(
   const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
 
   const { indexImportFromFiles } = await import('./indexing');

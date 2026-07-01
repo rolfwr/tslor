@@ -29,7 +29,7 @@ export async function runProposeImportDirectly(directoryArg: string, debugOption
   const repoRoot = repoProvider.findRepositoryRoot(directory);
 
   // Build/update the index for files in the specified directory only
-  const db = openStorage(debugOptions, true);
+  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 

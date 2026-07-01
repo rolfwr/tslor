@@ -426,7 +426,7 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   assertDefined(entryPath, 'moduleSet is non-empty (guarded above)');
   const repoRoot = findGitRepoRoot(entryPath);
 
-  const db = openStorage(debugOptions, false);
+  const db = openStorage(debugOptions, { verbose: false, inMemory: false });
   await updateStorage(repoRoot, db, true, fileSystem);
 
   try {
