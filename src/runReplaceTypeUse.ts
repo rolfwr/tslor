@@ -529,8 +529,8 @@ function analyzeImports(
   );
   const importPattern =
     /^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/;
+  // biome-ignore lint/style/noNonNullAssertion: split() always returns at least one element. ast-grep-ignore: no-split-index-assertion
   const normalizeName = (n: string) =>
-    // biome-ignore lint/style/noNonNullAssertion: split() always returns at least one element. ast-grep-ignore: no-split-index-assertion
     n.split(/\s+as\s+/)[0]!.replace(/^type\s+/, '');
 
   // First pass: scan all lines for re-exports (must complete before import break)
