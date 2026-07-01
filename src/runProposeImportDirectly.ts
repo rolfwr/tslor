@@ -5,98 +5,130 @@
  * changing them to point directly to the original export location.
  */
 
-import { openStorage, Storage } from "./storage";
-import { DebugOptions, Obj } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { SourceFile, ImportDeclaration } from "ts-morph";
-import { loadSourceFile, parseModule, resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from "./indexing";
-import { reinsertScript } from "./transformingFileSystem";
-import { isGeneratedFile } from "./generatedFileDetection";
-import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem } from "./filesystem";
+import { openStorage, Storage, ReExportItem } from './storage';
+import { DebugOptions, Obj } from './objstore';
+import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
+import { groupBy } from './collections';
+import {
+  TslorPlan,
+  PLAN_VERSION,
+  PLAN_FILE_NAME,
+  computeStringChecksum,
+  writePlan,
+  displayPlan,
+  ModifyFileChange,
+  createEmptyPlan,
+} from './plan';
+import { SourceFile, ImportDeclaration } from 'ts-morph';
+import {
+  loadSourceFile,
+  parseModule,
+  resolveImportSpec as resolveImportSpecFromIndexing,
+  resolveImportSpecAlias,
+} from './indexing';
+import { reinsertScript } from './transformingFileSystem';
+import { isGeneratedFile } from './generatedFileDetection';
+import {
+  RepositoryRootProvider,
+  InMemoryRepositoryRootProvider,
+} from './repositoryRootProvider';
+import { FileSystem } from './filesystem';
 
 /**
  * Propose changing imports of re-exported symbols to point directly to original exports.
+ *
+ * @param writer - Callback for progress messages; tests can supply a stub to capture output
  */
-export async function runProposeImportDirectly(directoryArg: string, debugOptions: DebugOptions, repoProvider: RepositoryRootProvider, fileSystem: FileSystem): Promise<TslorPlan> {
+export async function runProposeImportDirectly(
+  directoryArg: string,
+  debugOptions: DebugOptions,
+  fresh: boolean,
+  repoProvider: RepositoryRootProvider,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  cwd: string,
+): Promise<TslorPlan> {
   const isInMemory = repoProvider instanceof InMemoryRepositoryRootProvider;
 
-  const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
-  console.log(`Scanning codebase in ${directory} for imports of re-exported symbols...`);
+  const directory = normalizeAndValidatePath(
+    directoryArg,
+    'Directory',
+    isInMemory,
+  );
+  writer(
+    `Scanning codebase in ${directory} for imports of re-exported symbols...\n`,
+  );
 
   // Find repository root
   const repoRoot = repoProvider.findRepositoryRoot(directory);
 
   // Build/update the index for files in the specified directory only
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
-  const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: isInMemory,
+  });
+  const allPaths = await repoProvider.getTypeScriptFilePaths(
+    repoRoot,
+    fileSystem,
+  );
+  const filteredPaths = allPaths.filter((path: string) =>
+    isPathWithinDirectory(path, directory),
+  );
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
+  await indexImportFromFiles(
+    filteredPaths,
+    db,
+    repoRoot,
+    true,
+    fileSystem,
+    writer,
+  );
   db.save();
 
   // Find all re-exports in the codebase
-  const reExports = findAllReExports(db);
+  const reExports = db.findAllReExports();
 
   if (reExports.length === 0) {
-    console.log('No re-exports found in the codebase.');
-    return createEmptyPlan();
+    writer('No re-exports found in the codebase.\n');
+    return createEmptyPlan('propose-import-directly');
   }
 
-  console.log(`Found ${reExports.length} re-exported symbols`);
+  writer(`Found ${reExports.length} re-exported symbols\n`);
 
   // Find imports that use these re-exported symbols
-  const importChanges = await findImportChangesForReExports(db, reExports, repoRoot, fileSystem);
+  const importChanges = await findImportChangesForReExports(
+    db,
+    reExports,
+    repoRoot,
+    fileSystem,
+    writer,
+  );
 
   if (importChanges.length === 0) {
-    console.log('No imports found that can be changed to point directly to original exports.');
-    return createEmptyPlan();
+    writer(
+      'No imports found that can be changed to point directly to original exports.\n',
+    );
+    return createEmptyPlan('propose-import-directly');
   }
 
-  console.log(`Found ${importChanges.length} imports that can be updated`);
+  writer(`Found ${importChanges.length} imports that can be updated\n`);
 
   // Create plan with the changes
-  const plan = await createImportDirectlyPlan(importChanges, repoRoot, fileSystem);
+  const plan = await createImportDirectlyPlan(
+    importChanges,
+    repoRoot,
+    fileSystem,
+    writer,
+  );
 
   // Write and display plan
   await writePlan(plan, PLAN_FILE_NAME);
-  await displayPlan(plan, {});
+  await displayPlan(plan, {}, cwd, writer);
 
   return plan;
-}
-
-/**
- * Find all re-exports in the codebase
- */
-function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> {
-  const reExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }> = [];
-
-  const allReExportObjs = db.getAllReExports();
-
-  for (const reExportObj of allReExportObjs) {
-    // Extract symbol name from groups
-    const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
-    if (symbolNameGroup) {
-      const [_prefix, symbolName] = symbolNameGroup.split('|');
-      if (symbolName === undefined) {
-        continue;
-      }
-      const [reExporterPath] = reExportObj.id.split('|').slice(1);
-      if (reExporterPath === undefined) {
-        continue;
-      }
-      reExports.push({
-        reExporterPath,
-        symbolName,
-        originalModuleSpec: reExportObj.reExport.moduleSpec,
-        isTypeOnly: reExportObj.reExport.isTypeOnly
-      });
-    }
-  }
-
-  return reExports;
 }
 
 /**
@@ -105,14 +137,19 @@ function findAllReExports(db: Storage): Array<{ reExporterPath: string; symbolNa
 async function buildLiteralSpecMap(
   importerPath: string,
   repoRoot: string,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<Map<string, string>> {
   const specMap = new Map<string, string>();
   try {
     const sf = await loadSourceFile(importerPath, fileSystem);
     for (const decl of sf.getImportDeclarations()) {
       const literal = decl.getModuleSpecifierValue();
-      const resolved = await resolveImportSpecFromIndexing(repoRoot, importerPath, literal, fileSystem);
+      const resolved = await resolveImportSpecFromIndexing(
+        repoRoot,
+        importerPath,
+        literal,
+        fileSystem,
+      );
       if (resolved) {
         specMap.set(resolved, literal);
       }
@@ -128,7 +165,7 @@ async function getLiteralModuleSpec(
   exporterPath: string,
   cache: Map<string, Map<string, string>>,
   repoRoot: string,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<string | undefined> {
   let specMap = cache.get(importerPath);
   if (specMap === undefined) {
@@ -143,63 +180,150 @@ async function resolveNewModuleSpec(
   importerPath: string,
   originalModulePath: string,
   repoRoot: string,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<string | undefined> {
   if (currentModuleSpec.startsWith('.')) {
     const { relative, dirname } = await import('path');
-    const relPath = relative(dirname(importerPath), originalModulePath.replace(/\.ts$/, ''));
+    const relPath = relative(
+      dirname(importerPath),
+      originalModulePath.replace(/\.ts$/, ''),
+    );
     return relPath.startsWith('.') ? relPath : './' + relPath;
   }
-  return await resolveImportSpecAlias(repoRoot, importerPath, originalModulePath, fileSystem) ?? undefined;
+  return (
+    (await resolveImportSpecAlias(
+      repoRoot,
+      importerPath,
+      originalModulePath,
+      fileSystem,
+    )) ?? undefined
+  );
 }
 
-async function buildImportChange(
-  importerPath: string,
-  exporterPath: string,
-  symbolName: string,
-  reExportInfo: { originalModuleSpec: string; isTypeOnly: boolean },
-  literalSpecCache: Map<string, Map<string, string>>,
-  repoRoot: string,
-  fileSystem: FileSystem
-): Promise<ImportChange & { importerPath: string } | null> {
-  const currentModuleSpec = await getLiteralModuleSpec(importerPath, exporterPath, literalSpecCache, repoRoot, fileSystem);
+async function buildImportChange({
+  importerPath,
+  exporterPath,
+  symbolName,
+  reExportInfo,
+  literalSpecCache,
+  repoRoot,
+  fileSystem,
+  writer,
+}: {
+  importerPath: string;
+  exporterPath: string;
+  symbolName: string;
+  reExportInfo: { originalModuleSpec: string; isTypeOnly: boolean };
+  literalSpecCache: Map<string, Map<string, string>>;
+  repoRoot: string;
+  fileSystem: FileSystem;
+  writer: (message: string) => void;
+}): Promise<(ImportChange & { importerPath: string }) | null> {
+  const currentModuleSpec = await getLiteralModuleSpec(
+    importerPath,
+    exporterPath,
+    literalSpecCache,
+    repoRoot,
+    fileSystem,
+  );
   if (!currentModuleSpec) {
     return null;
   }
-  const originalModulePath = await resolveImportSpecFromIndexing(repoRoot, exporterPath, reExportInfo.originalModuleSpec, fileSystem);
-  if (!originalModulePath) {
-    return null;
-  }
-  const newModuleSpec = await resolveNewModuleSpec(currentModuleSpec, importerPath, originalModulePath, repoRoot, fileSystem);
-  if (!newModuleSpec || currentModuleSpec === newModuleSpec) {
-    return null;
-  }
-  try {
-    const originalSourceFile = await loadSourceFile(originalModulePath, fileSystem);
-    const originalModuleInfo = parseModule(originalSourceFile);
-    if (!originalModuleInfo.exportedNames.has(symbolName)) {
+  const originalModuleSpec = reExportInfo.originalModuleSpec;
+  const isBarePackage =
+    !originalModuleSpec.startsWith('.') && !originalModuleSpec.startsWith('/');
+
+  let newModuleSpec: string | undefined;
+
+  if (isBarePackage) {
+    /*
+      Bare package imports (e.g., 'vue', 'lodash/es') cannot be resolved to
+      absolute paths — they live in node_modules. Use the original module spec
+      directly as the new import target. The consumer should import from the
+      same bare package.
+    */
+    newModuleSpec = originalModuleSpec;
+  } else {
+    const originalModulePath = await resolveImportSpecFromIndexing(
+      repoRoot,
+      exporterPath,
+      originalModuleSpec,
+      fileSystem,
+    );
+    if (!originalModulePath) {
       return null;
     }
-  } catch {
-    console.warn(`Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}`);
+    newModuleSpec = await resolveNewModuleSpec(
+      currentModuleSpec,
+      importerPath,
+      originalModulePath,
+      repoRoot,
+      fileSystem,
+    );
+    if (!newModuleSpec) {
+      return null;
+    }
+
+    try {
+      const originalSourceFile = await loadSourceFile(
+        originalModulePath,
+        fileSystem,
+      );
+      const originalModuleInfo = parseModule(originalSourceFile);
+      if (!originalModuleInfo.exportedNames.has(symbolName)) {
+        return null;
+      }
+    } catch {
+      writer(
+        `Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}\n`,
+      );
+      return null;
+    }
+  }
+
+  if (currentModuleSpec === newModuleSpec) {
     return null;
   }
-  return { importerPath, symbolName, currentModuleSpec, newModuleSpec, isTypeOnly: reExportInfo.isTypeOnly };
+  return {
+    importerPath,
+    symbolName,
+    currentModuleSpec,
+    newModuleSpec,
+    isTypeOnly: reExportInfo.isTypeOnly,
+  };
 }
 
 async function findImportChangesForReExports(
   db: Storage,
-  reExports: Array<{ reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
+  reExports: ReExportItem[],
   repoRoot: string,
-  fileSystem: FileSystem
-): Promise<Array<{ importerPath: string; symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }>> {
-  const changes: Array<{ importerPath: string; symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }> = [];
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+): Promise<
+  Array<{
+    importerPath: string;
+    symbolName: string;
+    currentModuleSpec: string;
+    newModuleSpec: string;
+    isTypeOnly: boolean;
+  }>
+> {
+  const changes: Array<{
+    importerPath: string;
+    symbolName: string;
+    currentModuleSpec: string;
+    newModuleSpec: string;
+    isTypeOnly: boolean;
+  }> = [];
 
-  const reExportMap = new Map<string, { originalModuleSpec: string; isTypeOnly: boolean }>();
+  const reExportMap = new Map<
+    string,
+    { originalModuleSpec: string; isTypeOnly: boolean }
+  >();
   for (const reExport of reExports) {
     reExportMap.set(`${reExport.reExporterPath}:${reExport.symbolName}`, {
       originalModuleSpec: reExport.originalModuleSpec,
-      isTypeOnly: reExport.isTypeOnly
+      isTypeOnly: reExport.isTypeOnly,
     });
   }
 
@@ -217,10 +341,16 @@ async function findImportChangesForReExports(
     if (parsed === null) {
       continue;
     }
-    const change = await buildImportChange(
-      parsed.importerPath, parsed.exporterPath, parsed.symbolName,
-      parsed.reExportInfo, literalSpecCache, repoRoot, fileSystem
-    );
+    const change = await buildImportChange({
+      importerPath: parsed.importerPath,
+      exporterPath: parsed.exporterPath,
+      symbolName: parsed.symbolName,
+      reExportInfo: parsed.reExportInfo,
+      literalSpecCache,
+      repoRoot,
+      fileSystem,
+      writer,
+    });
     if (change) {
       changes.push(change);
     }
@@ -231,7 +361,7 @@ async function findImportChangesForReExports(
 
 function parseImportObj(
   importObj: Obj,
-  reExportMap: Map<string, { originalModuleSpec: string; isTypeOnly: boolean }>
+  reExportMap: Map<string, { originalModuleSpec: string; isTypeOnly: boolean }>,
 ): {
   importerPath: string;
   exporterPath: string;
@@ -243,7 +373,9 @@ function parseImportObj(
   if (importerPath === undefined) {
     return null;
   }
-  const exportGroup = importObj.groups?.find((g: string) => g.startsWith('export|'));
+  const exportGroup = importObj.groups?.find((g: string) =>
+    g.startsWith('export|'),
+  );
   if (!exportGroup) {
     return null;
   }
@@ -263,31 +395,28 @@ function parseImportObj(
   return { importerPath, exporterPath, symbolName, reExportInfo };
 }
 
-
-
 /**
  * Create a plan with import changes
  */
 async function createImportDirectlyPlan(
-  importChanges: Array<{ importerPath: string; symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean }>,
+  importChanges: Array<{
+    importerPath: string;
+    symbolName: string;
+    currentModuleSpec: string;
+    newModuleSpec: string;
+    isTypeOnly: boolean;
+  }>,
   repoRoot: string,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<TslorPlan> {
   const changes: ModifyFileChange[] = [];
-  const undo: ModifyFileChange[] = []; // Undo operations to rollback changes if verification fails
+  const undo: ModifyFileChange[] = [];
   const sourceFiles = new Set<string>();
   const checksums: { [filePath: string]: string } = {};
 
   // Group changes by file
-  const changesByFile = new Map<string, typeof importChanges>();
-  for (const change of importChanges) {
-    let group = changesByFile.get(change.importerPath);
-    if (!group) {
-      group = [];
-      changesByFile.set(change.importerPath, group);
-    }
-    group.push(change);
-  }
+  const changesByFile = groupBy(importChanges, (change) => change.importerPath);
 
   // Process each file
   let skippedGenerated = 0;
@@ -325,7 +454,7 @@ async function createImportDirectlyPlan(
         type: 'modify-file',
         path: filePath,
         content: finalContent,
-        originalChecksum: fileChecksum
+        originalChecksum: fileChecksum,
       });
 
       /*
@@ -337,7 +466,7 @@ async function createImportDirectlyPlan(
         type: 'modify-file',
         path: filePath,
         content: originalContent,
-        originalChecksum: computeStringChecksum(finalContent)
+        originalChecksum: computeStringChecksum(finalContent),
       });
 
       sourceFiles.add(filePath);
@@ -346,7 +475,7 @@ async function createImportDirectlyPlan(
   }
 
   if (skippedGenerated > 0) {
-    console.log(`Skipped ${skippedGenerated} @generated file(s)`);
+    writer(`Skipped ${skippedGenerated} @generated file(s)\n`);
   }
 
   return {
@@ -357,11 +486,16 @@ async function createImportDirectlyPlan(
     targetFiles: [],
     checksums,
     changes,
-    undo
+    undo,
   };
 }
 
-type ImportChange = { symbolName: string; currentModuleSpec: string; newModuleSpec: string; isTypeOnly: boolean };
+type ImportChange = {
+  symbolName: string;
+  currentModuleSpec: string;
+  newModuleSpec: string;
+  isTypeOnly: boolean;
+};
 
 function splitImportDeclaration(
   sourceFile: SourceFile,
@@ -369,26 +503,21 @@ function splitImportDeclaration(
   namedImports: ReturnType<ImportDeclaration['getNamedImports']>,
   specChanges: ImportChange[],
   importedSymbolNames: Set<string>,
-  changedSymbols: Set<string>
+  changedSymbols: Set<string>,
 ): void {
   const isDeclarationTypeOnly = importDecl.isTypeOnly();
   const perSymbolTypeOnly = new Map<string, boolean>();
   for (const ni of namedImports) {
-    perSymbolTypeOnly.set(ni.getName(), isDeclarationTypeOnly || ni.isTypeOnly());
+    perSymbolTypeOnly.set(
+      ni.getName(),
+      isDeclarationTypeOnly || ni.isTypeOnly(),
+    );
   }
 
-  const byNewSpec = new Map<string, ImportChange[]>();
-  for (const change of specChanges) {
-    if (!importedSymbolNames.has(change.symbolName)) {
-      continue;
-    }
-    let group = byNewSpec.get(change.newModuleSpec);
-    if (!group) {
-      group = [];
-      byNewSpec.set(change.newModuleSpec, group);
-    }
-    group.push(change);
-  }
+  const byNewSpec = groupBy(
+    specChanges.filter((change) => importedSymbolNames.has(change.symbolName)),
+    (change) => change.newModuleSpec,
+  );
 
   for (const namedImport of namedImports) {
     if (changedSymbols.has(namedImport.getName())) {
@@ -397,8 +526,8 @@ function splitImportDeclaration(
   }
 
   for (const [newSpec, newSpecChanges] of byNewSpec) {
-    const newNamedImports = newSpecChanges.map(c => c.symbolName);
-    const allTypeOnly = newNamedImports.every(n => perSymbolTypeOnly.get(n));
+    const newNamedImports = newSpecChanges.map((c) => c.symbolName);
+    const allTypeOnly = newNamedImports.every((n) => perSymbolTypeOnly.get(n));
     sourceFile.addImportDeclaration({
       moduleSpecifier: newSpec,
       namedImports: newNamedImports,
@@ -411,7 +540,7 @@ function processImportDecl(
   importDecl: ImportDeclaration,
   changesBySpec: Map<string, ImportChange[]>,
   sourceFile: SourceFile,
-  filePath: string
+  filePath: string,
 ): void {
   try {
     const moduleSpec = importDecl.getModuleSpecifierValue();
@@ -420,65 +549,54 @@ function processImportDecl(
       return;
     }
     const namedImports = importDecl.getNamedImports();
-    const importedSymbolNames = new Set(namedImports.map(ni => ni.getName()));
-    const changedSymbols = new Set(specChanges.map(change => change.symbolName));
-    const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every(s => changedSymbols.has(s));
+    const importedSymbolNames = new Set(namedImports.map((ni) => ni.getName()));
+    const changedSymbols = new Set(
+      specChanges.map((change) => change.symbolName),
+    );
+    const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every((s) =>
+      changedSymbols.has(s),
+    );
 
-    if (allSymbolsCanBeChanged) {
-      const firstChange = specChanges.at(0);
-      if (firstChange === undefined) {
-        return;
-      }
-      importDecl.setModuleSpecifier(firstChange.newModuleSpec);
+    if (importedSymbolNames.size > 0 && allSymbolsCanBeChanged) {
+      // biome-ignore lint/style/noNonNullAssertion: groupBy never produces empty arrays as map values.
+      importDecl.setModuleSpecifier(specChanges[0]!.newModuleSpec);
     } else {
-      splitImportDeclaration(sourceFile, importDecl, namedImports, specChanges, importedSymbolNames, changedSymbols);
+      splitImportDeclaration(
+        sourceFile,
+        importDecl,
+        namedImports,
+        specChanges,
+        importedSymbolNames,
+        changedSymbols,
+      );
     }
   } catch (importError) {
     const importText = importDecl.getText().trim();
-    const errorMessage = importError instanceof Error ? importError.message : String(importError);
-    throw new Error(`Failed to process import statement in ${filePath}: ${errorMessage}\nImport statement: ${importText}`);
+    const errorMessage =
+      importError instanceof Error ? importError.message : String(importError);
+    throw new Error(
+      `Failed to process import statement in ${filePath}: ${errorMessage}\nImport statement: ${importText}`,
+    );
   }
 }
 
-/**
- * Apply import changes to a source file
- */
 export function applyImportChangesToFile(
   sourceFile: SourceFile,
   changes: ImportChange[],
-  filePath: string
+  filePath: string,
 ): void {
   try {
-    const changesBySpec = new Map<string, ImportChange[]>();
-    for (const change of changes) {
-      let group = changesBySpec.get(change.currentModuleSpec);
-      if (!group) {
-        group = [];
-        changesBySpec.set(change.currentModuleSpec, group);
-      }
-      group.push(change);
-    }
+    const changesBySpec = groupBy(
+      changes,
+      (change) => change.currentModuleSpec,
+    );
     for (const importDecl of sourceFile.getImportDeclarations()) {
       processImportDecl(importDecl, changesBySpec, sourceFile, filePath);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to apply import changes to ${filePath}: ${errorMessage}`);
+    throw new Error(
+      `Failed to apply import changes to ${filePath}: ${errorMessage}`,
+    );
   }
-}
-
-/**
- * Create an empty plan when no changes are needed
- */
-function createEmptyPlan(): TslorPlan {
-  return {
-    version: PLAN_VERSION,
-    command: 'propose-import-directly',
-    timestamp: new Date().toISOString(),
-    sourceFiles: [],
-    targetFiles: [],
-    checksums: {},
-    changes: [],
-    undo: []
-  };
 }

@@ -1,19 +1,15 @@
 /**
  * Diff Command
- * 
+ *
  * Shows unified diff of proposed changes in a plan file.
  */
 
-import { DebugOptions } from "./objstore";
-import {
-  PLAN_FILE_NAME,
-  readPlan,
-  displayPlanDiff
-} from "./plan";
+import { resolve } from 'path';
+import { PLAN_FILE_NAME, readPlan, displayPlanDiff } from './plan';
 
 export interface DiffOptions {
-  stats?: boolean;      // Show statistics instead of full diff
-  namesOnly?: boolean;  // Show only file names
+  stats?: boolean;
+  namesOnly?: boolean;
 }
 
 /**
@@ -22,21 +18,21 @@ export interface DiffOptions {
 export async function runDiff(
   planFileArg: string | undefined,
   options: DiffOptions,
-  _debugOptions: DebugOptions
+  writer: (message: string) => void,
+  cwd: string,
 ): Promise<void> {
-  const planFile = planFileArg || PLAN_FILE_NAME;
+  const planFile = resolve(cwd, planFileArg || PLAN_FILE_NAME);
 
-  console.log(`Reading plan from: ${planFile}`);
-  console.log('');
-  
+  writer(`Reading plan from: ${planFile}\n`);
+
   // Read the plan
   const plan = await readPlan(planFile);
-  
-  console.log(`Plan command: ${plan.command}`);
-  console.log(`Plan created: ${plan.timestamp}`);
-  console.log(`Changes: ${plan.changes.length}`);
-  console.log('');
-  
+
+  writer(`Plan command: ${plan.command}\n`);
+  writer(`Plan created: ${plan.timestamp}\n`);
+  writer(`Changes: ${plan.changes.length}\n`);
+  writer('\n');
+
   // Display diff
-  await displayPlanDiff(plan, options);
+  await displayPlanDiff(plan, options, cwd, writer);
 }

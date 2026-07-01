@@ -1,129 +1,174 @@
 /**
  * Apply Command
- * 
+ *
  * Applies a proposed refactoring plan.
  * This is the "apply" half of the propose/apply pattern.
  */
 
-import { DebugOptions } from "./objstore";
+import { spawn } from 'child_process';
+import { stderr } from 'process';
+import { resolve } from 'path';
+import { CliError, reThrowAsCliError } from './errors';
 import {
-  PLAN_FILE_NAME,
-  readPlan,
-  validateChecksums,
+  archivePlan as defaultArchivePlan,
   executeChanges,
   executeUndo,
-  archivePlan
-} from "./plan";
-import { spawn } from 'child_process';
+  PLAN_FILE_NAME,
+  readPlan,
+  TslorPlan,
+  validateChecksums,
+} from './plan';
 
 export interface ApplyOptions {
-  force?: boolean;     // Apply even if checksums don't match
-  verify?: string;     // Shell command to run for verification
+  force?: boolean; // Apply even if checksums don't match
+  verify?: string; // Shell command to run for verification
+  warn?: (message: string) => void; // Warning callback (defaults to process.stderr.write)
+  writer?: (message: string) => void; // Output callback (defaults to process.stderr.write)
+  archivePlan?: (planFile: string) => Promise<string>; // Archive function (defaults to plan.archivePlan)
 }
 
-/**
- * Apply a proposed refactoring plan.
- */
 export async function runApply(
   planFileArg: string | undefined,
   options: ApplyOptions,
-  _debugOptions: DebugOptions
+  cwd: string,
 ): Promise<void> {
-  const planFile = planFileArg || PLAN_FILE_NAME;
+  const planFile = resolve(cwd, planFileArg || PLAN_FILE_NAME);
   const force = options.force || false;
+  const warn = options.warn || stderr.write.bind(stderr);
+  const writer = options.writer || stderr.write.bind(stderr);
+  const archiveFn = options.archivePlan || defaultArchivePlan;
 
-  console.log(`Reading plan from: ${planFile}`);
-  
+  writer(`Reading plan from: ${planFile}\n`);
+
   // Read the plan
   const plan = await readPlan(planFile);
-  
-  console.log(`Plan command: ${plan.command}`);
-  console.log(`Plan created: ${plan.timestamp}`);
-  console.log(`Changes: ${plan.changes.length}`);
-  console.log('');
-  
+
+  writer(`Plan command: ${plan.command}\n`);
+  writer(`Plan created: ${plan.timestamp}\n`);
+  writer(`Changes: ${plan.changes.length}\n`);
+  writer('\n');
+
   // Validate checksums
-  console.log('Validating checksums...');
+  writer('Validating checksums...\n');
   try {
-    await validateChecksums(plan, force);
-    console.log('✓ Checksums valid');
+    await validateChecksums(plan, force, warn);
+    writer('✓ Checksums valid\n');
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Checksum validation failed:\n${errorMessage}`);
+    reThrowAsCliError(error, 'Checksum validation failed');
   }
-  
+
   // Execute changes
-  console.log('');
-  console.log('Applying changes...');
+  writer('\n');
+  writer('Applying changes...\n');
   try {
     await executeChanges(plan.changes);
-    console.log('✓ Changes applied');
+    writer('✓ Changes applied\n');
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to apply changes:\n${errorMessage}`);
+    reThrowAsCliError(error, 'Failed to apply changes');
   }
-  
+
   // If verification command is provided, run it
-  if (options.verify) {
-    console.log('');
-    console.log('Running verification command...');
-    const verifySuccess = await runVerificationCommand(options.verify);
-    
-    if (!verifySuccess) {
-      // Verification failed - rollback changes
-      console.log('');
-      console.log('✗ Verification failed');
-      
-      if (plan.undo) {
-        await executeUndo(plan);
-        console.log('');
-        console.error('Error: Verification command failed. Changes have been rolled back.');
-        process.exit(1);
-      } else {
-        console.error('Error: Verification command failed, but plan has no undo information.');
-        console.error('Changes cannot be automatically rolled back.');
-        process.exit(1);
-      }
-    }
-    
-    console.log('✓ Verification passed');
-  }
-  
+  await runVerificationAndRollback(plan, options.verify, writer);
+
   // Archive the plan file
-  const appliedFile = await archivePlan(planFile);
-  console.log('');
-  console.log(`✓ Plan archived to: ${appliedFile}`);
-  
-  console.log('');
-  console.log('Apply completed successfully');
+  await archivePlanWithFallback(planFile, warn, archiveFn, writer);
+
+  writer('\n');
+  writer('Apply completed successfully\n');
+}
+
+/**
+ * Run verification if requested; throw (with rollback) on failure.
+ */
+async function runVerificationAndRollback(
+  plan: TslorPlan,
+  verify: string | undefined,
+  writer: (message: string) => void,
+): Promise<void> {
+  if (!verify) {
+    return;
+  }
+
+  writer('\n');
+  writer('Running verification command...\n');
+  const verifySuccess = await runVerificationCommand(verify, writer);
+
+  if (verifySuccess) {
+    writer('✓ Verification passed\n');
+    return;
+  }
+
+  // Verification failed — rollback changes
+  writer('\n');
+  writer('✗ Verification failed\n');
+
+  if (plan.undo) {
+    await executeUndo(plan, writer);
+    writer('\n');
+    throw new CliError(
+      'Verification command failed. Changes have been rolled back.',
+    );
+  }
+
+  throw new CliError(
+    'Verification command failed, but plan has no undo information. Changes cannot be automatically rolled back.',
+  );
+}
+
+/**
+ * Archive the plan file after application, tolerating failures.
+ *
+ * If archivePlan fails (e.g., read-only filesystem, cross-device issues),
+ * warn the user but do not throw — changes have already been applied,
+ * and the original plan file serves as a fallback record.
+ */
+async function archivePlanWithFallback(
+  planFile: string,
+  warn: (message: string) => void,
+  archiveFn: (planFile: string) => Promise<string>,
+  writer: (message: string) => void,
+): Promise<void> {
+  try {
+    const appliedFile = await archiveFn(planFile);
+    writer('\n');
+    writer(`✓ Plan archived to: ${appliedFile}\n`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writer('\n');
+    warn(`Warning: Could not archive plan file: ${message}\n`);
+    warn(`Original plan file ${planFile} is preserved for manual archival.\n`);
+  }
 }
 
 /**
  * Run a verification command (shell-interpreted) and return whether it succeeded.
  */
-async function runVerificationCommand(command: string): Promise<boolean> {
-  console.log(`Running: ${command}`);
-  console.log('');
-  
-  return new Promise((resolve) => {
+function runVerificationCommand(
+  command: string,
+  writer: (message: string) => void,
+): Promise<boolean> {
+  writer(`Running: ${command}\n`);
+  writer('\n');
+
+  return new Promise(function (resolve) {
     const child = spawn(command, [], {
-      stdio: 'inherit',  // Inherit stdin, stdout, stderr so output is visible
-      shell: true        // Use shell to interpret the command
+      stdio: 'inherit',
+      shell: true,
     });
-    
-    child.on('close', (code) => {
+
+    child.on('close', function (code) {
       if (code === 0) {
         resolve(true);
-      } else {
-        console.log('');
-        console.log(`Verification command exited with code ${code}`);
-        resolve(false);
+        return;
       }
+      writer('\n');
+      writer(`Verification command exited with code ${code}\n`);
+      resolve(false);
     });
-    
-    child.on('error', (error) => {
-      console.error('');
-      console.error(`Failed to run verification command: ${error.message}`);
+
+    child.on('error', function (error) {
+      writer('\n');
+      writer(`Failed to run verification command: ${error.message}\n`);
       resolve(false);
     });
   });

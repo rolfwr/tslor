@@ -1,19 +1,33 @@
 /**
  * Replace Type Use Command
  *
- * Replaces all usages of a source type with a target type across the codebase.
+ * Proposes replacing all usages of a source type with a target type across the
+ * codebase. Produces a `.tslor-plan.json` file that can be reviewed with `diff`
+ * and applied with `apply`.
  * Does not verify compilation — a separate tool can handle that concern.
  */
 
-import { openStorage, isObjWithExporterPath } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { promises as fsp } from "fs";
-import { extractScript, reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem } from "./filesystem";
-import { Project, SyntaxKind } from "ts-morph";
-import { dirname, resolve } from "path";
+import { openStorage, isObjWithExporterPath, Storage } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
+import {
+  TslorPlan,
+  PLAN_VERSION,
+  PLAN_FILE_NAME,
+  computeStringChecksum,
+  writePlan,
+  displayPlan,
+  ModifyFileChange,
+  createEmptyPlan,
+} from './plan';
+import { extractScript, reinsertScript } from './transformingFileSystem';
+import {
+  RepositoryRootProvider,
+  InMemoryRepositoryRootProvider,
+} from './repositoryRootProvider';
+import { FileSystem } from './filesystem';
+import { Node, Project, SyntaxKind } from 'ts-morph';
+import { dirname, resolve } from 'path';
 
 export interface ReplaceTypeUseOptions {
   sourceType: string;
@@ -22,71 +36,157 @@ export interface ReplaceTypeUseOptions {
   targetModule: string;
 }
 
+/**
+ * Runtime configuration for runReplaceTypeUse.
+ */
+interface RunReplaceTypeUseConfig {
+  debugOptions: DebugOptions;
+  fresh: boolean;
+  repoProvider: RepositoryRootProvider;
+  fileSystem: FileSystem;
+  writer: (message: string) => void;
+  cwd: string;
+}
+
+/**
+ * Propose replacing all usages of a source type with a target type.
+ *
+ * @param config - Runtime dependencies injected at the CLI boundary
+ */
 export async function runReplaceTypeUse(
   directoryArg: string,
   options: ReplaceTypeUseOptions,
-  debugOptions: DebugOptions,
-  repoProvider: RepositoryRootProvider,
-  fileSystem: FileSystem
-): Promise<void> {
+  config: RunReplaceTypeUseConfig,
+): Promise<TslorPlan> {
+  const { debugOptions, fresh, repoProvider, fileSystem, writer, cwd } = config;
   const isInMemory = repoProvider instanceof InMemoryRepositoryRootProvider;
-  const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
+  const directory = normalizeAndValidatePath(
+    directoryArg,
+    'Directory',
+    isInMemory,
+  );
 
-  console.log(`Scanning for ${options.sourceType} usages in ${directory}...`);
+  writer(`Scanning for ${options.sourceType} usages in ${directory}...\n`);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
-  const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: isInMemory,
+  });
+  const allPaths = await repoProvider.getTypeScriptFilePaths(
+    repoRoot,
+    fileSystem,
+  );
+  const filteredPaths = allPaths.filter((path: string) =>
+    isPathWithinDirectory(path, directory),
+  );
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
+  await indexImportFromFiles(
+    filteredPaths,
+    db,
+    repoRoot,
+    true,
+    fileSystem,
+    writer,
+  );
   db.save();
 
-  const importingFiles = findFilesImportingType(db, options.sourceType, options.sourceModule, directory);
+  const importingFiles = findFilesImportingType(
+    db,
+    options.sourceType,
+    options.sourceModule,
+    directory,
+  );
 
   if (importingFiles.size === 0) {
-    console.log(`No files found importing ${options.sourceType}.`);
-    return;
+    writer(`No files found importing ${options.sourceType}.\n`);
+    return createEmptyPlan('replace-type-use');
   }
 
-  console.log(`Found ${importingFiles.size} files importing ${options.sourceType}`);
+  writer(
+    `Found ${importingFiles.size} files importing ${options.sourceType}\n`,
+  );
 
-  let modifiedCount = 0;
+  const changes: ModifyFileChange[] = [];
+  const undo: ModifyFileChange[] = [];
+  const sourceFiles = new Set<string>();
+  const checksums: { [filePath: string]: string } = {};
+
   for (const [filePath, exporterPath] of importingFiles) {
     let originalContent: string;
     try {
-      originalContent = await fsp.readFile(filePath, 'utf-8');
+      originalContent = await fileSystem.readFile(filePath);
     } catch {
-      console.log(`  Skipped (not found): ${filePath}`);
+      writer(`  Skipped (not found): ${filePath}\n`);
       continue;
     }
     const modified = replaceTypeInFile(
-      filePath, originalContent,
-      options.sourceType, options.targetType,
-      options.sourceModule, options.targetModule,
-      exporterPath
+      filePath,
+      originalContent,
+      options.sourceType,
+      options.targetType,
+      options.sourceModule,
+      options.targetModule,
+      exporterPath,
     );
     if (modified !== null && modified !== originalContent) {
-      await fsp.writeFile(filePath, modified, 'utf-8');
-      console.log(`  Modified: ${filePath}`);
-      modifiedCount++;
+      const fileChecksum = computeStringChecksum(originalContent);
+      changes.push({
+        type: 'modify-file',
+        path: filePath,
+        content: modified,
+        originalChecksum: fileChecksum,
+      });
+      undo.push({
+        type: 'modify-file',
+        path: filePath,
+        content: originalContent,
+        originalChecksum: computeStringChecksum(modified),
+      });
+      sourceFiles.add(filePath);
+      checksums[filePath] = fileChecksum;
     }
   }
 
-  console.log(`\nDone. Modified ${modifiedCount} files.`);
+  const plan: TslorPlan = {
+    version: PLAN_VERSION,
+    command: 'replace-type-use',
+    timestamp: new Date().toISOString(),
+    sourceFiles: Array.from(sourceFiles),
+    targetFiles: [],
+    checksums,
+    changes,
+    undo,
+  };
+
+  if (changes.length === 0) {
+    writer('No replacements needed.\n');
+  } else {
+    writer(`Found ${changes.length} files to modify.\n`);
+    await writePlan(plan, PLAN_FILE_NAME);
+    await displayPlan(plan, {}, cwd, writer);
+  }
+
+  return plan;
 }
 
-function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: string, sourceModule: string, directory: string): Map<string, string> {
+function findFilesImportingType(
+  db: Storage,
+  sourceType: string,
+  sourceModule: string,
+  directory: string,
+): Map<string, string> {
   const symbolImports = db.getSymbolImports(sourceType);
   const files = new Map<string, string>();
-  const directoryPrefix = directory.endsWith('/') ? directory : directory + '/';
 
   for (const obj of symbolImports) {
     const id = obj.id;
     const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
 
-    if (!importerPath.startsWith(directoryPrefix)) {
+    if (!isPathWithinDirectory(importerPath, directory)) {
       continue;
     }
 
@@ -103,12 +203,15 @@ function findFilesImportingType(db: ReturnType<typeof openStorage>, sourceType: 
 }
 
 function shouldReplaceTypeNode(
-  node: import("ts-morph").Node,
+  node: Node,
   sourceType: string,
   lineIndex: number,
-  spliced: boolean
+  spliced: boolean,
 ): boolean {
-  if (node.getKind() !== SyntaxKind.Identifier || node.getText() !== sourceType) {
+  if (
+    node.getKind() !== SyntaxKind.Identifier ||
+    node.getText() !== sourceType
+  ) {
     return false;
   }
   const parent = node.getParent();
@@ -116,7 +219,10 @@ function shouldReplaceTypeNode(
     return false;
   }
   const parentKind = parent.getKind();
-  if (parentKind !== SyntaxKind.TypeReference && parentKind !== SyntaxKind.ExpressionWithTypeArguments) {
+  if (
+    parentKind !== SyntaxKind.TypeReference &&
+    parentKind !== SyntaxKind.ExpressionWithTypeArguments
+  ) {
     return false;
   }
   const lineNum = node.getStartLineNumber() - 1;
@@ -134,9 +240,12 @@ function replaceTypeReferences(
   sourceType: string,
   targetType: string,
   lineIndex: number,
-  spliced: boolean
+  spliced: boolean,
 ): { changed: boolean; fullText: string } {
-  const project = new Project({ useInMemoryFileSystem: true, skipLoadingLibFiles: true });
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipLoadingLibFiles: true,
+  });
   const sourceFile = project.createSourceFile('temp.ts', scriptText);
   let changed = false;
   sourceFile.forEachDescendant((node) => {
@@ -151,18 +260,137 @@ function replaceTypeReferences(
 function applyImportLineChange(
   lines: string[],
   importInfo: ImportAnalysis,
+  sourceType: string,
   targetType: string,
-  targetSpec: string
+  targetSpec: string,
 ): void {
   if (importInfo.hasReExport) {
-    lines.splice(importInfo.lineIndex + 1, 0, `import type { ${targetType} } from '${targetSpec}';`);
+    applyReExportChange(lines, importInfo, sourceType, targetType, targetSpec);
   } else if (importInfo.otherNames.length > 0) {
-    const typePrefix = importInfo.isTypeOnly ? 'type ' : '';
-    lines[importInfo.lineIndex] = `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${importInfo.actualModuleSpec}';`;
-    lines.splice(importInfo.lineIndex + 1, 0, `import type { ${targetType} } from '${targetSpec}';`);
+    const typePrefix = importInfo.importIsTypeOnly ? 'type ' : '';
+    lines[importInfo.lineIndex] =
+      `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${importInfo.actualModuleSpec}';`;
+    lines.splice(
+      importInfo.lineIndex + 1,
+      0,
+      `import type { ${targetType} } from '${targetSpec}';`,
+    );
   } else {
-    lines[importInfo.lineIndex] = `import type { ${targetType} } from '${targetSpec}';`;
+    lines[importInfo.lineIndex] =
+      `import type { ${targetType} } from '${targetSpec}';`;
   }
+}
+
+/**
+ * Update the re-export line (symbol name + module path) and handle the
+ * original import: remove it if it carried only the source type, or
+ * strip the source type from it if other names are still needed.
+ */
+function applyReExportChange(
+  lines: string[],
+  importInfo: ImportAnalysis,
+  sourceType: string,
+  targetType: string,
+  targetSpec: string,
+): void {
+  // biome-ignore lint/style/noNonNullAssertion: reExportLineIndex is provably in bounds — set during the first-pass scan when hasReExport was flagged.
+  const reExportLine = lines[importInfo.reExportLineIndex]!;
+
+  if (importInfo.otherNames.length > 0) {
+    /*
+      Import is replaced in-place (no splice), so indices don't shift.
+      Safe to write re-export first.
+    */
+    lines[importInfo.reExportLineIndex] = updateReExportLine(
+      reExportLine,
+      importInfo.actualModuleSpec,
+      sourceType,
+      targetType,
+      targetSpec,
+    );
+    const typePrefix = importInfo.importIsTypeOnly ? 'type ' : '';
+    lines[importInfo.lineIndex] =
+      `import ${typePrefix}{ ${importInfo.otherNames.join(', ')} } from '${importInfo.actualModuleSpec}';`;
+  } else if (importInfo.lineIndex < importInfo.reExportLineIndex) {
+    /*
+      Import is removed via splice and sits before the re-export.
+      Splice first so the re-export index shifts down, then write.
+    */
+    lines.splice(importInfo.lineIndex, 1);
+    lines[importInfo.reExportLineIndex - 1] = updateReExportLine(
+      reExportLine,
+      importInfo.actualModuleSpec,
+      sourceType,
+      targetType,
+      targetSpec,
+    );
+  } else {
+    /*
+      Import is removed via splice but sits at or after the re-export.
+      Write re-export first, then splice — indices of lines before the
+      splice point are unaffected.
+    */
+    lines[importInfo.reExportLineIndex] = updateReExportLine(
+      reExportLine,
+      importInfo.actualModuleSpec,
+      sourceType,
+      targetType,
+      targetSpec,
+    );
+    lines.splice(importInfo.lineIndex, 1);
+  }
+}
+
+function updateReExportLine(
+  line: string,
+  actualModuleSpec: string,
+  sourceType: string,
+  targetType: string,
+  targetSpec: string,
+): string {
+  /*
+    Split the line at the `from` clause so the sourceType replacement
+    cannot match inside the module spec string literal (e.g.,
+    `export { Foo } from './Foo'` must not become `export { Bar } from './Bar'`
+    before the module spec is replaced).
+  */
+  const fromIdx = line.search(/\bfrom\b\s+['"]/);
+  if (fromIdx < 0) {
+    return line;
+  }
+  const prefix = line.slice(0, fromIdx);
+  const fromClause = line.slice(fromIdx);
+
+  const prefixUpdated = prefix.replace(
+    new RegExp(`\\b${escapeRegex(sourceType)}\\b`),
+    () => targetType,
+  );
+
+  /*
+    Replace the module spec string literal. Use indexOf + concatenation
+    instead of String.replace(str, str) to avoid $-injection: String.replace
+    interprets '$&', '$1', etc. in the replacement string as back-references,
+    which would corrupt the output if targetSpec contains a '$' character.
+  */
+  let fromUpdated = fromClause;
+  const actualSQ = `'${actualModuleSpec}'`;
+  const sqIdx = fromUpdated.indexOf(actualSQ);
+  if (sqIdx >= 0) {
+    fromUpdated =
+      fromUpdated.slice(0, sqIdx) +
+      `'${targetSpec}'` +
+      fromUpdated.slice(sqIdx + actualSQ.length);
+  } else {
+    const actualDQ = `"${actualModuleSpec}"`;
+    const dqIdx = fromUpdated.indexOf(actualDQ);
+    if (dqIdx >= 0) {
+      fromUpdated =
+        fromUpdated.slice(0, dqIdx) +
+        `"${targetSpec}"` +
+        fromUpdated.slice(dqIdx + actualDQ.length);
+    }
+  }
+  return prefixUpdated + fromUpdated;
 }
 
 export function replaceTypeInFile(
@@ -172,63 +400,84 @@ export function replaceTypeInFile(
   targetType: string,
   sourceModule: string,
   targetModule: string,
-  resolvedExporterPath?: string
+  resolvedExporterPath?: string,
 ): string | null {
   const isVue = filePath.endsWith('.vue');
-  let scriptContent: string;
-  if (isVue) {
-    scriptContent = extractScript(originalContent);
-    if (!scriptContent.trim()) {
-      return null;
-    }
-  } else {
-    scriptContent = originalContent;
+  const scriptContent = isVue
+    ? extractScript(originalContent)
+    : originalContent;
+  if (isVue && !scriptContent.trim()) {
+    return null;
   }
 
-  const importInfo = analyzeImports(scriptContent, sourceType, sourceModule, filePath, resolvedExporterPath);
+  const importInfo = analyzeImports(
+    scriptContent,
+    sourceType,
+    sourceModule,
+    filePath,
+    resolvedExporterPath,
+  );
   if (!importInfo.hasImport) {
     return null;
   }
 
   const lines = scriptContent.split('\n');
-  let changed = false;
 
   // Replace the import line
-  if (importInfo.lineIndex >= 0) {
-    const actualSpec = importInfo.actualModuleSpec;
-    const targetSpec = computeTargetModuleSpec(actualSpec, sourceModule, targetModule);
-    applyImportLineChange(lines, importInfo, targetType, targetSpec);
-    changed = true;
+  let lineIndex = importInfo.lineIndex;
+  if (lineIndex >= 0) {
+    const targetSpec = computeTargetModuleSpec(
+      importInfo.actualModuleSpec,
+      sourceModule,
+      targetModule,
+    );
+    applyImportLineChange(
+      lines,
+      importInfo,
+      sourceType,
+      targetType,
+      targetSpec,
+    );
+  }
+
+  /*
+    When hasReExport is true, applyReExportChange either removes the import
+    line (splice shifts subsequent lines) or replaces it in-place (sourceType
+    is no longer present). Either way, resetting lineIndex prevents
+    replaceTypeReferences from skipping the wrong line in the modified content.
+  */
+  if (importInfo.hasReExport) {
+    lineIndex = -1;
   }
 
   // Replace type references using AST to avoid touching strings/comments
-  const spliced = changed && (importInfo.otherNames.length > 0 || importInfo.hasReExport);
-  const scriptText = lines.join('\n');
-  const { changed: refChanged, fullText } = replaceTypeReferences(scriptText, sourceType, targetType, importInfo.lineIndex, spliced);
+  const spliced = lineIndex >= 0 && importInfo.otherNames.length > 0;
+  const { changed: refChanged, fullText } = replaceTypeReferences(
+    lines.join('\n'),
+    sourceType,
+    targetType,
+    lineIndex,
+    spliced,
+  );
   if (refChanged) {
-    changed = true;
     lines.length = 0;
     lines.push(...fullText.split('\n'));
   }
 
-  if (!changed) {
+  const result = lines.join('\n');
+  if (result === scriptContent) {
     return null;
   }
-
-  const result = lines.join('\n');
-  if (isVue) {
-    return reinsertScript(originalContent, result);
-  }
-  return result;
+  return isVue ? reinsertScript(originalContent, result) : result;
 }
 
 interface ImportAnalysis {
   hasImport: boolean;
-  isTypeOnly: boolean;
+  importIsTypeOnly: boolean;
   otherNames: string[];
-  importLine: string;
   lineIndex: number;
   hasReExport: boolean;
+  reExportLineIndex: number;
   actualModuleSpec: string;
 }
 
@@ -236,7 +485,7 @@ function checkModuleSpecMatch(
   moduleSpec: string,
   sourceModule: string,
   importerPath: string | undefined,
-  resolvedExporterPath: string | undefined
+  resolvedExporterPath: string | undefined,
 ): boolean {
   if (moduleSpecMatches(moduleSpec, sourceModule)) {
     return true;
@@ -252,53 +501,76 @@ function checkModuleSpecMatch(
   return resolved === exporterBase || resolved === resolvedExporterPath;
 }
 
-function analyzeImports(script: string, sourceType: string, sourceModule: string, importerPath?: string, resolvedExporterPath?: string): ImportAnalysis {
+function analyzeImports(
+  script: string,
+  sourceType: string,
+  sourceModule: string,
+  importerPath?: string,
+  resolvedExporterPath?: string,
+): ImportAnalysis {
   const lines = script.split('\n');
   const result: ImportAnalysis = {
     hasImport: false,
-    isTypeOnly: false,
+    importIsTypeOnly: false,
     otherNames: [],
-    importLine: '',
     lineIndex: -1,
     hasReExport: false,
+    reExportLineIndex: -1,
     actualModuleSpec: '',
   };
+  /*
+    Match re-exports: export { X } from '...' or export type { X } from '...'.
+    Require { or * after export (with optional type keyword) and a quote after
+    from. This avoids false positives on lines like:
+      export type ItemFromSource = { from: string };
+  */
+  const reExportPattern = new RegExp(
+    `export\\s+(type\\s+)?(\\{[^}]*\\b${escapeRegex(sourceType)}\\b[^}]*\\}|\\*)\\s+from\\s+['"]`,
+  );
+  const importPattern =
+    /^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/;
+  const normalizeName = (n: string) =>
+    // biome-ignore lint/style/noNonNullAssertion: split() always returns at least one element. ast-grep-ignore: no-split-index-assertion
+    n.split(/\s+as\s+/)[0]!.replace(/^type\s+/, '');
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines.at(i);
-    if (line === undefined) {
-      continue;
-    }
-    if (line.match(new RegExp(`export\\s+.*\\b${escapeRegex(sourceType)}\\b.*from\\s`))) {
+  // First pass: scan all lines for re-exports (must complete before import break)
+  for (const [i, line] of lines.entries()) {
+    if (line.match(reExportPattern)) {
       result.hasReExport = true;
+      result.reExportLineIndex = i;
     }
-    const importMatch = line.match(/^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/);
+  }
+
+  // Second pass: find the import line and break early
+  for (const [i, line] of lines.entries()) {
+    const importMatch = line.match(importPattern);
     if (!importMatch) {
       continue;
     }
     const [, typeOnlyMatch, namesStr, moduleSpec] = importMatch;
-    if (namesStr === undefined || moduleSpec === undefined) {
+    if (!namesStr || !moduleSpec) {
       continue;
     }
-    const isTypeOnly = Boolean(typeOnlyMatch);
-    if (!checkModuleSpecMatch(moduleSpec, sourceModule, importerPath, resolvedExporterPath)) {
+    if (
+      !checkModuleSpecMatch(
+        moduleSpec,
+        sourceModule,
+        importerPath,
+        resolvedExporterPath,
+      )
+    ) {
       continue;
     }
-    const names = namesStr.split(',').map(n => n.trim()).filter(Boolean);
-    const hasSourceType = names.some(n => {
-      const [original] = n.split(/\s+as\s+/);
-      return original === sourceType;
-    });
-    if (hasSourceType) {
+    const names = namesStr
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (names.some((n) => normalizeName(n) === sourceType)) {
       result.hasImport = true;
-      result.isTypeOnly = isTypeOnly;
-      result.importLine = line;
+      result.importIsTypeOnly = Boolean(typeOnlyMatch);
       result.lineIndex = i;
       result.actualModuleSpec = moduleSpec;
-      result.otherNames = names.filter(n => {
-        const [original] = n.split(/\s+as\s+/);
-        return original !== sourceType;
-      });
+      result.otherNames = names.filter((n) => normalizeName(n) !== sourceType);
       break;
     }
   }
@@ -307,16 +579,18 @@ function analyzeImports(script: string, sourceType: string, sourceModule: string
 }
 
 function moduleSpecMatches(actual: string, expected: string): boolean {
-  if (actual === expected) {
-    return true;
-  }
-  if (actual.endsWith('/' + expected) || actual.endsWith(expected)) {
-    return true;
-  }
-  return false;
+  return (
+    actual === expected ||
+    actual.endsWith('/' + expected) ||
+    actual.endsWith(expected)
+  );
 }
 
-function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targetModule: string): string {
+function computeTargetModuleSpec(
+  actualSpec: string,
+  sourceModule: string,
+  targetModule: string,
+): string {
   if (sourceModule === targetModule) {
     return actualSpec;
   }
@@ -326,13 +600,19 @@ function computeTargetModuleSpec(actualSpec: string, sourceModule: string, targe
   const sourceBare = sourceModule.replace(/^\.\//, '');
   const targetBare = targetModule.replace(/^\.\//, '');
   if (actualSpec.endsWith(sourceBare)) {
-    const prefix = actualSpec.slice(0, -sourceBare.length);
+    let prefix = actualSpec.slice(0, -sourceBare.length);
+    if (prefix === '' && actualSpec.startsWith('./')) {
+      prefix = './';
+    }
     return prefix + targetBare;
   }
   return targetModule;
 }
 
-function exporterMatchesSourceModule(exporterPath: string, sourceModule: string): boolean {
+function exporterMatchesSourceModule(
+  exporterPath: string,
+  sourceModule: string,
+): boolean {
   if (sourceModule.startsWith('.')) {
     return true;
   }
@@ -341,7 +621,9 @@ function exporterMatchesSourceModule(exporterPath: string, sourceModule: string)
   if (firstPart === undefined) {
     return false;
   }
-  const pathPortion = firstPart.startsWith('@') ? parts.slice(2).join('/') : parts.slice(1).join('/');
+  const pathPortion = firstPart.startsWith('@')
+    ? parts.slice(2).join('/')
+    : parts.slice(1).join('/');
   if (!pathPortion) {
     return true;
   }

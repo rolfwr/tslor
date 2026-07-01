@@ -102,7 +102,9 @@ export { MyInterface } from "./target";
   const analysis = analyzeSplit(deps, 'MyInterface');
 
   if (!analysis.canSplit) {
-    throw new Error(`Cannot split MyInterface: ${analysis.circularDependencies.join(', ')}`);
+    throw new Error(
+      `Cannot split MyInterface: ${analysis.circularDependencies.join(', ')}`,
+    );
   }
 
   // Add transitive dependencies
@@ -118,11 +120,21 @@ export { MyInterface } from "./target";
   // THIS IS THE KEY: Use the same code path as runProposeSplit
   const staticModuleInfo = parseModule(sourceFile);
   const importUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
+  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(
+    importUsages,
+    symbolsToMove,
+  );
+
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
 
   // Generate target module
-  const actualTarget = generateNewModuleSource(symbolDefinitions, requiredImports);
+  const actualTarget = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
 
   console.log('=== ACTUAL TARGET ===');
   console.log(actualTarget);
@@ -155,11 +167,7 @@ export { MyInterface } from "./target";
     `temp-after-removal-${Date.now()}.ts`,
     actualSource,
   );
-  actualSource = removeUnusedImports(
-    sourceFileAfterRemoval,
-    symbolsToMove,
-    onlyUsedByTarget,
-  );
+  actualSource = removeUnusedImports(sourceFileAfterRemoval, onlyUsedByTarget);
 
   const sourceFileAfterCleanup = project.createSourceFile(
     `temp-after-cleanup-${Date.now()}.ts`,
@@ -167,7 +175,9 @@ export { MyInterface } from "./target";
   );
 
   // Only re-export symbols that were actually moved (have definitions), not external dependencies
-  const actuallyMovedSymbols = new Set(symbolDefinitions.map((def) => def.name));
+  const actuallyMovedSymbols = new Set(
+    symbolDefinitions.map((def) => def.name),
+  );
   actualSource = addImportForMovedSymbols(
     sourceFileAfterCleanup,
     actuallyMovedSymbols,
@@ -182,7 +192,11 @@ export { MyInterface } from "./target";
 
   // Source should keep helperFunc and re-export MyInterface
   assert.include(actualSource, 'helperFunc', 'Source should keep helperFunc');
-  assert.include(actualSource, 'from "./target"', 'Source should import from target');
+  assert.include(
+    actualSource,
+    'from "./target"',
+    'Source should import from target',
+  );
   assert.include(
     actualSource,
     'export { MyInterface }',
@@ -251,7 +265,11 @@ export default value;
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
-  assert.equal(initialDiagnostics.length, 0, 'Should have no type errors initially');
+  assert.equal(
+    initialDiagnostics.length,
+    0,
+    'Should have no type errors initially',
+  );
 
   // Parse and split
   const moduleInfo = parseIsolatedSourceCode(sourceInput);
@@ -267,10 +285,20 @@ export default value;
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
   const staticModuleInfo = parseModule(sourceFile);
   const importUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
+  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(
+    importUsages,
+    symbolsToMove,
+  );
 
-  const actualTarget = generateNewModuleSource(symbolDefinitions, requiredImports);
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+
+  const actualTarget = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
 
   console.log('=== ACTUAL TARGET (regular import) ===');
   console.log(actualTarget);
@@ -292,18 +320,16 @@ export default value;
     `temp-after-removal-${Date.now()}.ts`,
     actualSource,
   );
-  actualSource = removeUnusedImports(
-    sourceFileAfterRemoval,
-    symbolsToMove,
-    onlyUsedByTarget,
-  );
+  actualSource = removeUnusedImports(sourceFileAfterRemoval, onlyUsedByTarget);
   const sourceFileAfterCleanup = project.createSourceFile(
     `temp-after-cleanup-${Date.now()}.ts`,
     actualSource,
   );
 
   // Only re-export symbols that were actually moved (have definitions), not external dependencies
-  const actuallyMovedSymbols = new Set(symbolDefinitions.map((def) => def.name));
+  const actuallyMovedSymbols = new Set(
+    symbolDefinitions.map((def) => def.name),
+  );
   actualSource = addImportForMovedSymbols(
     sourceFileAfterCleanup,
     actuallyMovedSymbols,

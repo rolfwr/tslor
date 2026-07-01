@@ -1,32 +1,347 @@
 /**
  * Split Module Refactoring Primitives
- * 
+ *
  * This module provides the core functionality for splitting TypeScript modules
  * by extracting symbols and their dependencies into new modules.
  */
 
 import path from 'node:path';
-import { StaticModuleInfo } from './indexing';
-import { assertDefined } from './invariant';
 import {
+  ClassDeclaration,
+  FunctionDeclaration,
+  InterfaceDeclaration,
+  JSDoc,
+  Node,
   Project,
   SourceFile,
   SyntaxKind,
-  FunctionDeclaration,
-  VariableStatement,
   TypeAliasDeclaration,
-  InterfaceDeclaration,
-  ClassDeclaration,
-  JSDoc,
-  Node,
+  VariableStatement,
 } from 'ts-morph';
+import { StaticModuleInfo } from './indexing';
+import { assertDefined } from './invariant';
+
+/*
+  Monotonically increasing counter for generating unique temporary filenames
+  in ts-morph in-memory projects. Replaces Date.now() + Math.random() which
+  can collide when multiple copy() calls happen within the same millisecond.
+*/
+let tempFileCounter = 0;
+
+/**
+ * JavaScript/TypeScript built-in global identifiers that must not be treated
+ * as local module definitions. These are standalone identifiers from the
+ * ECMAScript standard library (lib.es*.d.ts) and the DOM lib (lib.dom.d.ts).
+ * Window instance properties (e.g. `length`, `cookie`, `onabort`) are NOT
+ * included because they are not accessible as bare identifiers.
+ */
+const BUILTIN_GLOBALS = new Set([
+  // ECMAScript intrinsics
+  'Object',
+  'Function',
+  'Boolean',
+  'Symbol',
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'DecodeError',
+  'InternalError',
+  'AggregateError',
+  'Number',
+  'BigInt',
+  'Math',
+  'Date',
+  'String',
+  'RegExp',
+  'Array',
+  'Int8Array',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'Int16Array',
+  'Uint16Array',
+  'Int32Array',
+  'Uint32Array',
+  'Float32Array',
+  'Float64Array',
+  'BigInt64Array',
+  'BigUint64Array',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'WeakRef',
+  'FinalizationRegistry',
+  'ArrayBuffer',
+  'SharedArrayBuffer',
+  'Atomics',
+  'DataView',
+  'JSON',
+  'Promise',
+  'Generator',
+  'AsyncGenerator',
+  'AsyncGeneratorFunction',
+  'AsyncFunction',
+  'Reflect',
+  'Proxy',
+  'Iterator',
+  'Iterable',
+  'AsyncIterator',
+  'AsyncIterable',
+  'TypedArray',
+  'Int8',
+  'Uint8',
+  'Int16',
+  'Uint16',
+  'Int32',
+  'Uint32',
+  'Float32',
+  'Float64',
+  'BigInt64',
+  'BigUint64',
+  // ECMAScript globals (not constructors)
+  'globalThis',
+  'Infinity',
+  'NaN',
+  'undefined',
+  'eval',
+  'isFinite',
+  'isNaN',
+  'parseFloat',
+  'parseInt',
+  'decodeURI',
+  'decodeURIComponent',
+  'encodeURI',
+  'encodeURIComponent',
+  'escape',
+  'unescape',
+  // Built-in functions
+  'queueMicrotask',
+  'structuredClone',
+  'atob',
+  'btoa',
+  'confirm',
+  'alert',
+  'prompt',
+  'getComputedStyle',
+  'matchMedia',
+  'reportError',
+  'setTimeout',
+  'setInterval',
+  'setImmediate',
+  'clearTimeout',
+  'clearInterval',
+  'clearImmediate',
+  // Console
+  'console',
+  // Intl
+  'Intl',
+  // WebAssembly
+  'WebAssembly',
+  // DOM globals accessible as bare identifiers
+  'window',
+  'document',
+  'navigator',
+  'location',
+  'history',
+  'screen',
+  'parent',
+  'top',
+  'frames',
+  'self',
+  // CSS/DOM types
+  'CSSRuleList',
+  'CSSStyleDeclaration',
+  'DOMMatrix',
+  'DOMParser',
+  'Element',
+  'HTMLElement',
+  'HTMLDocument',
+  'XMLDocument',
+  'NodeList',
+  'NamedNodeMap',
+  'Attr',
+  'CharacterData',
+  'Comment',
+  'Text',
+  'CDATASection',
+  'DocumentType',
+  'DocumentFragment',
+  'Document',
+  'XMLSerializer',
+  'XPathResult',
+  'XPathExpression',
+  'XPathEvaluator',
+  'XPathNSResolver',
+  'MutationObserver',
+  'MutationRecord',
+  'TreeWalker',
+  'NodeIterator',
+  'Range',
+  'StaticRange',
+  'AbstractRange',
+  'Selection',
+  'Slotable',
+  'ShadowRoot',
+  'SVGElement',
+  'SVGSVGElement',
+  'SVGGraphicsElement',
+  'Event',
+  'EventTarget',
+  'EventModifierInit',
+  'UIEvent',
+  'FocusEvent',
+  'InputEvent',
+  'KeyboardEvent',
+  'MouseEvent',
+  'PointerEvent',
+  'Touch',
+  'TouchEvent',
+  'WheelEvent',
+  'CompositionEvent',
+  'DragEvent',
+  'ClipboardEvent',
+  'Clipboard',
+  'Blob',
+  'File',
+  'FileList',
+  'FileReader',
+  'URL',
+  'URLSearchParams',
+  'Headers',
+  'Request',
+  'Response',
+  'FetchEvent',
+  'AbortSignal',
+  'AbortController',
+  'DOMException',
+  'DOMError',
+  'DOMStringList',
+  'DOMStringMap',
+  'DOMTokenList',
+  'BarProp',
+  'External',
+  'Plugin',
+  'PluginArray',
+  'MimeType',
+  'MimeTypeArray',
+  'ImageBitmap',
+  'ImageBitmapRenderingContext',
+  'OffscreenCanvas',
+  'CanvasGradient',
+  'CanvasPattern',
+  'CanvasRenderingContext2D',
+  'OffscreenCanvasRenderingContext2D',
+  'WebGLRenderingContext',
+  'WebGL2RenderingContext',
+  'WebGLBuffer',
+  'WebGLFramebuffer',
+  'WebGLProgram',
+  'WebGLRenderbuffer',
+  'WebGLShader',
+  'WebGLTexture',
+  'WebGLActiveInfo',
+  'WebGLQuery',
+  'WebGLSampler',
+  'WebGLSync',
+  'WebGLTransformFeedback',
+  'WebGLVertexArrayObject',
+  'WebGLContextEvent',
+  'WebGLUniformLocation',
+  'WebGLVertexArrayObjectOES',
+  'AnimationEvent',
+  'BeforeUnloadEvent',
+  'HashChangeEvent',
+  'MessageEvent',
+  'PageTransitionEvent',
+  'PopStateEvent',
+  'ProgressEvent',
+  'StorageEvent',
+  'SubmitEvent',
+  'WebSocket',
+  'XMLHttpRequest',
+  'XMLHttpRequestEventTarget',
+  'XMLHttpRequestUpload',
+  'FormData',
+  'ReadableStream',
+  'WritableStream',
+  'TransformStream',
+  'ByteLengthQueuingStrategy',
+  'CountQueuingStrategy',
+  'ReadableStreamBYOBRequest',
+  'ReadableStreamDefaultController',
+  'ReadableByteStreamController',
+  'WritableStreamDefaultController',
+  'TransformStreamDefaultController',
+  'ReadableStreamDefaultReader',
+  'ReadableStreamBYOBReader',
+  'WritableStreamDefaultWriter',
+  'ReadableStreamGenericReader',
+  'MessageChannel',
+  'MessagePort',
+  'BroadcastChannel',
+  'ServiceWorker',
+  'ServiceWorkerContainer',
+  'ServiceWorkerRegistration',
+  'PeriodicWork',
+  'Work',
+  'Worklet',
+  'Worker',
+  'WorkerGlobalScope',
+  'WorkerLocation',
+  'WorkerNavigator',
+  'SharedWorker',
+  'Notification',
+  'PeriodicSyncManager',
+  'PushManager',
+  'PushSubscription',
+  'PushSubscriptionOptions',
+  'SyncManager',
+  'Cache',
+  'CacheStorage',
+  'Crypto',
+  'CryptoKey',
+  'SubtleCrypto',
+  'KeyAlgorithm',
+  'KeyUsage',
+  'AesCbcParams',
+  'AesCtrParams',
+  'AesGcmParams',
+  'AesKeyAlgorithm',
+  'AesKeyGenParams',
+  'CryptoKeyPair',
+  'EcKeyAlgorithm',
+  'EcKeyGenParams',
+  'EcKeyImportParams',
+  'HkdfParams',
+  'HmacImportParams',
+  'HmacKeyAlgorithm',
+  'HmacKeyGenParams',
+  'Pbkdf2Params',
+  'RsaHashedImportParams',
+  'RsaHashedKeyAlgorithm',
+  'RsaHashedKeyGenParams',
+  'RsaKeyAlgorithm',
+  'RsaKeyGenParams',
+  'RsaOaepParams',
+  'RsaPssParams',
+  'RsaOtherPrimesInfo',
+  // Common utility globals
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+]);
 
 /**
  * Represents the dependency relationships within a module
  */
 export interface IntraModuleDependencies {
-  exports: Set<string>;              // Exported symbols
-  definitions: Set<string>;          // All defined symbols (exported + internal)
+  exports: Set<string>; // Exported symbols
+  definitions: Set<string>; // All defined symbols (exported + internal)
   dependencies: Map<string, Set<string>>; // symbol -> set of symbols it depends on
 }
 
@@ -35,9 +350,9 @@ export interface IntraModuleDependencies {
  */
 export interface SplitAnalysis {
   symbolToMove: string;
-  requiredDependencies: Set<string>;    // Internal symbols that must move with it
-  circularDependencies: string[];       // Symbols involved in circular deps
-  canSplit: boolean;                    // Whether split is possible
+  requiredDependencies: Set<string>; // Internal symbols that must move with it
+  circularDependencies: string[]; // Symbols involved in circular deps
+  canSplit: boolean; // Whether split is possible
 }
 
 /**
@@ -46,10 +361,15 @@ export interface SplitAnalysis {
 export interface SymbolDefinition {
   name: string;
   kind: 'function' | 'variable' | 'type' | 'class' | 'interface' | 'const';
-  node: FunctionDeclaration | VariableStatement | TypeAliasDeclaration | InterfaceDeclaration | ClassDeclaration;
+  node:
+    | FunctionDeclaration
+    | VariableStatement
+    | TypeAliasDeclaration
+    | InterfaceDeclaration
+    | ClassDeclaration;
   jsDocs?: JSDoc[];
   isExported: boolean;
-  startPos: number;         // For debugging/verification
+  startPos: number; // For debugging/verification
   endPos: number;
 }
 
@@ -61,8 +381,8 @@ export interface ImportUsage {
   usesImports: Array<{
     moduleSpec: string;
     importedName: string;
-    isDefault: boolean;      // Whether this is a default import
-    isTypeOnly: boolean;     // Whether this is a type-only import
+    isDefault: boolean; // Whether this is a default import
+    isTypeOnly: boolean; // Whether this is a type-only import
   }>;
 }
 
@@ -70,93 +390,112 @@ export interface ImportUsage {
  * Required import for the new module
  */
 export interface RequiredImport {
-  moduleSpec: string;        // './utils' or 'lodash'
-  importedNames: string[];   // ['helper', 'validator'] (empty for default imports)
+  moduleSpec: string; // './utils' or 'lodash'
+  importedNames: string[]; // ['helper', 'validator'] (empty for default imports)
   isTypeOnly: boolean;
-  defaultImport?: string;    // If present, this is a default import with this local name
+  defaultImport?: string; // If present, this is a default import with this local name
 }
 
 /**
- * Build a clean dependency graph from parseIsolatedSourceCode output
+ * Filter a symbol reference: returns true if it should be tracked as a local
+ * dependency (not a built-in global and not an import).
  */
-export function buildIntraModuleDependencies(moduleInfo: StaticModuleInfo): IntraModuleDependencies {
+function isLocalDependency(
+  usedSymbol: string,
+  moduleInfo: StaticModuleInfo,
+): boolean {
+  if (BUILTIN_GLOBALS.has(usedSymbol)) {
+    return false;
+  }
+  if (moduleInfo.unresolvedExportsByImportNames.has(usedSymbol)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Build a clean dependency graph from parseIsolatedSourceCode output.
+ */
+export function buildIntraModuleDependencies(
+  moduleInfo: StaticModuleInfo,
+): IntraModuleDependencies {
   const exports = new Set<string>(moduleInfo.exports.keys());
-  
+
   /*
     Collect all symbols defined in this module:
     1. All symbols that use other symbols (keys of identifierUses)
     2. All exported symbols (from exports)
-    Note: We explicitly exclude imported symbols.
+    Note: We explicitly exclude imported symbols and built-in globals.
   */
   const allDefinedSymbols = new Set<string>();
-  
-  // Add all symbols that use other symbols (these are locally defined)
+
   for (const symbol of moduleInfo.identifierUses.keys()) {
-    allDefinedSymbols.add(symbol);
+    if (isLocalDependency(symbol, moduleInfo)) {
+      allDefinedSymbols.add(symbol);
+    }
   }
-  
-  // Add all exported symbols (these are locally defined)
   for (const symbol of moduleInfo.exports.keys()) {
     allDefinedSymbols.add(symbol);
   }
-  
+
   const dependencies = new Map<string, Set<string>>();
-  
+
   for (const [symbol, uses] of moduleInfo.identifierUses) {
+    if (!isLocalDependency(symbol, moduleInfo)) {
+      continue;
+    }
     const cleanDeps = new Set<string>();
-    
+
     for (const usedSymbol of uses) {
-      cleanDeps.add(usedSymbol);
-      /*
-        Only add the used symbol to our definitions if it's NOT an import.
-        Check if this symbol is imported (appears in unresolvedExportsByImportNames).
-      */
-      if (!moduleInfo.unresolvedExportsByImportNames.has(usedSymbol)) {
-        // It's a locally defined symbol, add it
+      if (isLocalDependency(usedSymbol, moduleInfo)) {
+        cleanDeps.add(usedSymbol);
         allDefinedSymbols.add(usedSymbol);
       }
     }
-    
+
     dependencies.set(symbol, cleanDeps);
   }
-  
+
   // Ensure all defined symbols have dependency entries, even if they have no dependencies
   for (const symbol of allDefinedSymbols) {
     if (!dependencies.has(symbol)) {
       dependencies.set(symbol, new Set<string>());
     }
   }
-  
+
   return {
     exports,
     definitions: allDefinedSymbols,
-    dependencies
+    dependencies,
   };
 }
 
 /**
  * Compute transitive closure of dependencies for a given symbol
  */
-export function computeTransitiveDependencies(deps: IntraModuleDependencies, symbol: string): Set<string> {
+export function computeTransitiveDependencies(
+  deps: IntraModuleDependencies,
+  symbol: string,
+): Set<string> {
   const result = new Set<string>();
   const visiting = new Set<string>();
-  
+
   function visit(sym: string): void {
     if (result.has(sym) || visiting.has(sym)) {
       return;
     }
-    
+
     visiting.add(sym);
     const directDeps = deps.dependencies.get(sym) || new Set();
-    
+
     for (const dep of directDeps) {
       visit(dep);
       result.add(dep);
     }
-    
+
     visiting.delete(sym);
   }
-  
+
   visit(symbol);
   return result;
 }
@@ -164,11 +503,13 @@ export function computeTransitiveDependencies(deps: IntraModuleDependencies, sym
 /**
  * Detect circular dependencies in the module
  */
-export function detectCircularDependencies(deps: IntraModuleDependencies): string[][] {
+export function detectCircularDependencies(
+  deps: IntraModuleDependencies,
+): string[][] {
   const visited = new Set<string>();
   const recursionStack = new Set<string>();
   const cycles: string[][] = [];
-  
+
   function dfs(symbol: string, path: string[]): void {
     if (recursionStack.has(symbol)) {
       // Found a cycle
@@ -178,41 +519,44 @@ export function detectCircularDependencies(deps: IntraModuleDependencies): strin
       }
       return;
     }
-    
+
     if (visited.has(symbol)) {
       return;
     }
-    
+
     visited.add(symbol);
     recursionStack.add(symbol);
-    
+
     const directDeps = deps.dependencies.get(symbol) || new Set();
     for (const dep of directDeps) {
       dfs(dep, [...path, dep]);
     }
-    
+
     recursionStack.delete(symbol);
   }
-  
+
   for (const symbol of deps.definitions) {
     if (!visited.has(symbol)) {
       dfs(symbol, [symbol]);
     }
   }
-  
+
   return cycles;
 }
 
 /**
  * Analyze what needs to be moved when splitting out a symbol
  */
-export function analyzeSplit(deps: IntraModuleDependencies, targetSymbol: string): SplitAnalysis {
+export function analyzeSplit(
+  deps: IntraModuleDependencies,
+  targetSymbol: string,
+): SplitAnalysis {
   if (!deps.exports.has(targetSymbol)) {
     throw new Error(`Symbol '${targetSymbol}' is not exported`);
   }
-  
+
   const allTransitiveDeps = computeTransitiveDependencies(deps, targetSymbol);
-  
+
   /*
     Filter to only include dependencies that are actually defined in this module
     (exclude imported symbols).
@@ -223,9 +567,9 @@ export function analyzeSplit(deps: IntraModuleDependencies, targetSymbol: string
       requiredDeps.add(dep);
     }
   }
-  
+
   const cycles = detectCircularDependencies(deps);
-  
+
   // Check if any of the required dependencies are involved in cycles
   const involvedInCycle: string[] = [];
   for (const cycle of cycles) {
@@ -235,23 +579,26 @@ export function analyzeSplit(deps: IntraModuleDependencies, targetSymbol: string
       }
     }
   }
-  
+
   return {
     symbolToMove: targetSymbol,
     requiredDependencies: requiredDeps,
     circularDependencies: involvedInCycle,
-    canSplit: involvedInCycle.length === 0  // Can only split if no circular deps
+    canSplit: involvedInCycle.length === 0, // Can only split if no circular deps
   };
 }
 
 /**
  * Extract symbol definitions from TypeScript source using AST nodes
  */
-export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Set<string>): SymbolDefinition[] {
+export function extractSymbolDefinitions(
+  sourceFile: SourceFile,
+  symbolNames: Set<string>,
+): SymbolDefinition[] {
   const definitions: SymbolDefinition[] = [];
-  
+
   // Find function declarations
-  sourceFile.getFunctions().forEach(func => {
+  sourceFile.getFunctions().forEach((func) => {
     const name = func.getName();
     if (name && symbolNames.has(name)) {
       definitions.push({
@@ -261,14 +608,14 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         jsDocs: func.getJsDocs(),
         isExported: func.isExported(),
         startPos: func.getStart(),
-        endPos: func.getEnd()
+        endPos: func.getEnd(),
       });
     }
   });
-  
+
   // Find variable declarations (const, let, var)
-  sourceFile.getVariableStatements().forEach(stmt => {
-    stmt.getDeclarations().forEach(decl => {
+  sourceFile.getVariableStatements().forEach((stmt) => {
+    stmt.getDeclarations().forEach((decl) => {
       const name = decl.getName();
       if (symbolNames.has(name)) {
         definitions.push({
@@ -278,14 +625,14 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
           jsDocs: stmt.getJsDocs(),
           isExported: stmt.isExported(),
           startPos: stmt.getStart(),
-          endPos: stmt.getEnd()
+          endPos: stmt.getEnd(),
         });
       }
     });
   });
-  
+
   // Find type aliases
-  sourceFile.getTypeAliases().forEach(type => {
+  sourceFile.getTypeAliases().forEach((type) => {
     const name = type.getName();
     if (symbolNames.has(name)) {
       definitions.push({
@@ -295,13 +642,13 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         jsDocs: type.getJsDocs(),
         isExported: type.isExported(),
         startPos: type.getStart(),
-        endPos: type.getEnd()
+        endPos: type.getEnd(),
       });
     }
   });
-  
+
   // Find interfaces
-  sourceFile.getInterfaces().forEach(iface => {
+  sourceFile.getInterfaces().forEach((iface) => {
     const name = iface.getName();
     if (symbolNames.has(name)) {
       definitions.push({
@@ -311,13 +658,13 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         jsDocs: iface.getJsDocs(),
         isExported: iface.isExported(),
         startPos: iface.getStart(),
-        endPos: iface.getEnd()
+        endPos: iface.getEnd(),
       });
     }
   });
-  
+
   // Find classes
-  sourceFile.getClasses().forEach(cls => {
+  sourceFile.getClasses().forEach((cls) => {
     const name = cls.getName();
     if (name && symbolNames.has(name)) {
       definitions.push({
@@ -327,30 +674,35 @@ export function extractSymbolDefinitions(sourceFile: SourceFile, symbolNames: Se
         jsDocs: cls.getJsDocs(),
         isExported: cls.isExported(),
         startPos: cls.getStart(),
-        endPos: cls.getEnd()
+        endPos: cls.getEnd(),
       });
     }
   });
-  
+
   return definitions;
 }
 
 /**
  * Analyze which imports are used by which symbols
  */
-export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[] {
+export function analyzeImportUsageBySymbol(
+  sourceFile: SourceFile,
+): ImportUsage[] {
   const result: ImportUsage[] = [];
-  const importMap = new Map<string, {
-    moduleSpec: string;
-    isDefault: boolean;
-    isTypeOnly: boolean;
-  }>(); // imported name -> import details
-  
+  const importMap = new Map<
+    string,
+    {
+      moduleSpec: string;
+      isDefault: boolean;
+      isTypeOnly: boolean;
+    }
+  >(); // imported name -> import details
+
   // Build map of imports (both named and default)
-  sourceFile.getImportDeclarations().forEach(importDecl => {
+  sourceFile.getImportDeclarations().forEach((importDecl) => {
     const moduleSpec = importDecl.getModuleSpecifierValue();
     const isTypeOnly = importDecl.isTypeOnly();
-    
+
     // Handle default imports
     const defaultImport = importDecl.getDefaultImport();
     if (defaultImport) {
@@ -358,52 +710,52 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
       importMap.set(importedName, {
         moduleSpec,
         isDefault: true,
-        isTypeOnly
+        isTypeOnly,
       });
     }
-    
+
     // Handle named imports
-    importDecl.getNamedImports().forEach(namedImport => {
+    importDecl.getNamedImports().forEach((namedImport) => {
       const importedName = namedImport.getName();
       importMap.set(importedName, {
         moduleSpec,
         isDefault: false,
-        isTypeOnly: isTypeOnly || namedImport.isTypeOnly()
+        isTypeOnly: isTypeOnly || namedImport.isTypeOnly(),
       });
     });
   });
-  
+
   // Find all symbols (functions, variables, interfaces, types, classes, etc.)
   const allSymbols = new Map<string, Node>();
-  
-  sourceFile.getFunctions().forEach(func => {
+
+  sourceFile.getFunctions().forEach((func) => {
     const name = func.getName();
     if (name) {
       allSymbols.set(name, func);
     }
   });
-  
-  sourceFile.getVariableStatements().forEach(stmt => {
-    stmt.getDeclarations().forEach(decl => {
+
+  sourceFile.getVariableStatements().forEach((stmt) => {
+    stmt.getDeclarations().forEach((decl) => {
       allSymbols.set(decl.getName(), decl);
     });
   });
-  
-  sourceFile.getInterfaces().forEach(iface => {
+
+  sourceFile.getInterfaces().forEach((iface) => {
     allSymbols.set(iface.getName(), iface);
   });
-  
-  sourceFile.getTypeAliases().forEach(typeAlias => {
+
+  sourceFile.getTypeAliases().forEach((typeAlias) => {
     allSymbols.set(typeAlias.getName(), typeAlias);
   });
-  
-  sourceFile.getClasses().forEach(cls => {
+
+  sourceFile.getClasses().forEach((cls) => {
     const name = cls.getName();
     if (name) {
       allSymbols.set(name, cls);
     }
   });
-  
+
   // For each symbol, find what imports it uses
   for (const [symbolName, symbolNode] of allSymbols.entries()) {
     const usesImports: Array<{
@@ -412,43 +764,55 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
       isDefault: boolean;
       isTypeOnly: boolean;
     }> = [];
-    
+
     // Find all identifiers in this symbol's node
-    symbolNode.getDescendantsOfKind(SyntaxKind.Identifier).forEach(identifier => {
-      const idName = identifier.getText();
+    symbolNode
+      .getDescendantsOfKind(SyntaxKind.Identifier)
+      .forEach((identifier) => {
+        const idName = identifier.getText();
 
-      // Skip property names in object literal assignments (non-shorthand)
-      const parent = identifier.getParent();
-      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
-        if (propAssignment.getNameNode() === identifier) {
-          return;
+        // Skip property names in object literal assignments (non-shorthand)
+        const parent = identifier.getParent();
+        if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
+          const propAssignment = parent.asKindOrThrow(
+            SyntaxKind.PropertyAssignment,
+          );
+          if (propAssignment.getNameNode() === identifier) {
+            return;
+          }
         }
-      }
 
-      if (importMap.has(idName)) {
-        const importInfo = importMap.get(idName);
-        assertDefined(importInfo, `Import info should be defined for ${idName}`);
-        usesImports.push({
-          moduleSpec: importInfo.moduleSpec,
-          importedName: idName,
-          isDefault: importInfo.isDefault,
-          isTypeOnly: importInfo.isTypeOnly
-        });
-      }
-    });
-    
+        if (importMap.has(idName)) {
+          const importInfo = importMap.get(idName);
+          assertDefined(
+            importInfo,
+            `Import info should be defined for ${idName}`,
+          );
+          usesImports.push({
+            moduleSpec: importInfo.moduleSpec,
+            importedName: idName,
+            isDefault: importInfo.isDefault,
+            isTypeOnly: importInfo.isTypeOnly,
+          });
+        }
+      });
+
     // Remove duplicates
-    const uniqueImports = Array.from(new Map(
-      usesImports.map(imp => [`${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}`, imp])
-    ).values());
-    
+    const uniqueImports = Array.from(
+      new Map(
+        usesImports.map((imp) => [
+          `${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}`,
+          imp,
+        ]),
+      ).values(),
+    );
+
     result.push({
       symbol: symbolName,
-      usesImports: uniqueImports
+      usesImports: uniqueImports,
     });
   }
-  
+
   return result;
 }
 
@@ -456,18 +820,18 @@ export function analyzeImportUsageBySymbol(sourceFile: SourceFile): ImportUsage[
  * Find imports that are only used by specific symbols
  */
 export function findImportsOnlyUsedBySymbols(
-  importUsages: ImportUsage[], 
-  targetSymbols: Set<string>
+  importUsages: ImportUsage[],
+  targetSymbols: Set<string>,
 ): Set<string> {
   const importsUsedByTarget = new Set<string>();
   const importsUsedByOthers = new Set<string>();
-  
+
   for (const usage of importUsages) {
     const isTargetSymbol = targetSymbols.has(usage.symbol);
-    
+
     for (const imp of usage.usesImports) {
       const importKey = `${imp.moduleSpec}:${imp.importedName}`;
-      
+
       if (isTargetSymbol) {
         importsUsedByTarget.add(importKey);
       } else {
@@ -475,7 +839,7 @@ export function findImportsOnlyUsedBySymbols(
       }
     }
   }
-  
+
   // Return imports used by target symbols but NOT by other symbols
   const onlyUsedByTarget = new Set<string>();
   for (const importKey of importsUsedByTarget) {
@@ -483,7 +847,7 @@ export function findImportsOnlyUsedBySymbols(
       onlyUsedByTarget.add(importKey);
     }
   }
-  
+
   return onlyUsedByTarget;
 }
 
@@ -493,40 +857,49 @@ export function findImportsOnlyUsedBySymbols(
 function adjustModuleSpecForNewLocation(
   moduleSpec: string,
   sourceFilePath: string,
-  targetFilePath: string
+  targetFilePath: string,
 ): string {
   // Only adjust relative imports (starting with ./ or ../)
   if (!moduleSpec.startsWith('.')) {
     return moduleSpec;
   }
-  
+
   // Resolve the module spec from the source file's location to get the absolute path
   const sourceDir = path.dirname(sourceFilePath);
   const resolvedPath = path.resolve(sourceDir, moduleSpec);
-  
+
   // Calculate the relative path from the target file's location
   const targetDir = path.dirname(targetFilePath);
   let relativePath = path.relative(targetDir, resolvedPath);
-  
+
   // Normalize path separators for cross-platform compatibility
   relativePath = relativePath.replace(/\\/g, '/');
-  
+
   // Ensure the path starts with ./ or ../
   if (!relativePath.startsWith('.')) {
     relativePath = './' + relativePath;
   }
-  
+
   return relativePath;
 }
 
 /**
  * Generate import statements for the new module based on symbol usage
  */
-type ImportMapEntry = { namedImports: Set<string>; defaultImport?: string; isTypeOnly: boolean };
+type ImportMapEntry = {
+  namedImports: Set<string>;
+  defaultImport?: string;
+  isTypeOnly: boolean;
+};
 
 function addImportToMap(
   requiredImportsMap: Map<string, ImportMapEntry>,
-  imp: { moduleSpec: string; importedName: string; isTypeOnly: boolean; isDefault: boolean }
+  imp: {
+    moduleSpec: string;
+    importedName: string;
+    isTypeOnly: boolean;
+    isDefault: boolean;
+  },
 ): void {
   let entry = requiredImportsMap.get(imp.moduleSpec);
   if (!entry) {
@@ -546,41 +919,49 @@ function addImportToMap(
 export function computeRequiredImports(
   symbolDefinitions: SymbolDefinition[],
   importUsages: ImportUsage[],
-  onlyUsedByTarget: Set<string>,
   sourceFilePath?: string,
-  targetFilePath?: string
+  targetFilePath?: string,
 ): RequiredImport[] {
   const requiredImportsMap = new Map<string, ImportMapEntry>();
-  const movedSymbolNames = new Set(symbolDefinitions.map(def => def.name));
-  
+  const movedSymbolNames = new Set(symbolDefinitions.map((def) => def.name));
+
   for (const usage of importUsages) {
     if (!movedSymbolNames.has(usage.symbol)) {
       continue;
     }
+    /*
+      Include all imports from moved symbols. The new module needs every import
+      that moved symbols reference, whether exclusively used or shared with
+      non-moved symbols.
+    */
     for (const imp of usage.usesImports) {
-      const importKey = `${imp.moduleSpec}:${imp.importedName}`;
-      if (onlyUsedByTarget.has(importKey) || usage.usesImports.some(() => movedSymbolNames.has(usage.symbol))) {
-        addImportToMap(requiredImportsMap, imp);
-      }
+      addImportToMap(requiredImportsMap, imp);
     }
   }
-  
+
   return Array.from(requiredImportsMap.entries()).map(([moduleSpec, info]) => {
-    const adjustedModuleSpec = (sourceFilePath && targetFilePath)
-      ? adjustModuleSpecForNewLocation(moduleSpec, sourceFilePath, targetFilePath)
-      : moduleSpec;
+    const adjustedModuleSpec =
+      sourceFilePath && targetFilePath
+        ? adjustModuleSpecForNewLocation(
+            moduleSpec,
+            sourceFilePath,
+            targetFilePath,
+          )
+        : moduleSpec;
     return {
       moduleSpec: adjustedModuleSpec,
       importedNames: Array.from(info.namedImports).sort(),
       isTypeOnly: info.isTypeOnly,
-      ...(info.defaultImport !== undefined && { defaultImport: info.defaultImport })
+      ...(info.defaultImport !== undefined && {
+        defaultImport: info.defaultImport,
+      }),
     };
   });
 }
 
 /**
  * Generate the source code for a new module.
- * 
+ *
  * Uses node.getFullText() to preserve all aspects of symbols including:
  * - All members (properties, methods, etc.)
  * - Comments and JSDoc
@@ -595,12 +976,18 @@ function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
     if (name && exportNames.has(name)) {
       stmt.setIsExported(true);
     }
-  } else if (Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) {
+  } else if (
+    Node.isFunctionDeclaration(stmt) ||
+    Node.isClassDeclaration(stmt)
+  ) {
     const name = stmt.getName();
     if (name && exportNames.has(name)) {
       stmt.setIsExported(true);
     }
-  } else if (Node.isTypeAliasDeclaration(stmt) || Node.isInterfaceDeclaration(stmt)) {
+  } else if (
+    Node.isTypeAliasDeclaration(stmt) ||
+    Node.isInterfaceDeclaration(stmt)
+  ) {
     const name = stmt.getName();
     if (exportNames.has(name)) {
       stmt.setIsExported(true);
@@ -608,8 +995,14 @@ function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
   }
 }
 
-function addImportStructureToFile(newFile: SourceFile, imp: RequiredImport): void {
-  const base = { moduleSpecifier: imp.moduleSpec, ...(imp.isTypeOnly ? { isTypeOnly: true } : {}) };
+function addImportStructureToFile(
+  newFile: SourceFile,
+  imp: RequiredImport,
+): void {
+  const base = {
+    moduleSpecifier: imp.moduleSpec,
+    ...(imp.isTypeOnly ? { isTypeOnly: true } : {}),
+  };
   if (imp.defaultImport && imp.importedNames.length > 0) {
     newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
     newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
@@ -623,21 +1016,23 @@ function addImportStructureToFile(newFile: SourceFile, imp: RequiredImport): voi
 export function generateNewModuleSource(
   symbolDefinitions: SymbolDefinition[],
   requiredImports: RequiredImport[],
-  additionalExports?: Set<string>
+  additionalExports?: Set<string>,
 ): string {
   const project = new Project({ useInMemoryFileSystem: true });
   const newFile = project.createSourceFile('new-module.ts', '');
-  
+
   for (const imp of requiredImports) {
     addImportStructureToFile(newFile, imp);
   }
-  
+
   /*
     Add symbol definitions by inserting their full AST text.
     This preserves everything: methods, properties, comments, JSDoc, formatting, etc.
   */
-  const sortedDefinitions = symbolDefinitions.sort((a, b) => a.startPos - b.startPos);
-  
+  const sortedDefinitions = symbolDefinitions.sort(
+    (a, b) => a.startPos - b.startPos,
+  );
+
   for (const def of sortedDefinitions) {
     // Get the full text of the node including JSDoc comments and all members
     const fullText = def.node.getFullText();
@@ -658,13 +1053,14 @@ export function generateNewModuleSource(
  * Remove symbol definitions from the original source file
  */
 export function removeSymbolsFromSource(
-  sourceFile: SourceFile, 
-  symbolsToRemove: Set<string>
+  sourceFile: SourceFile,
+  symbolsToRemove: Set<string>,
 ): string {
   // Create a mutable copy of the source file
-  const timestamp = Date.now() + Math.random();
-  const modifiedSourceFile = sourceFile.copy(`modified-${timestamp}.ts`);
-  
+  const modifiedSourceFile = sourceFile.copy(
+    `modified-${tempFileCounter++}.ts`,
+  );
+
   /*
     Use replaceWithText('') instead of remove() to preserve leading trivia
     (blank lines between declarations). remove() eats leading trivia;
@@ -673,7 +1069,7 @@ export function removeSymbolsFromSource(
   */
 
   // Remove function declarations
-  modifiedSourceFile.getFunctions().forEach(func => {
+  modifiedSourceFile.getFunctions().forEach((func) => {
     const name = func.getName();
     if (name && symbolsToRemove.has(name)) {
       func.replaceWithText('');
@@ -681,9 +1077,11 @@ export function removeSymbolsFromSource(
   });
 
   // Remove variable statements
-  modifiedSourceFile.getVariableStatements().forEach(stmt => {
+  modifiedSourceFile.getVariableStatements().forEach((stmt) => {
     const declarations = stmt.getDeclarations();
-    const declarationsToKeep = declarations.filter(decl => !symbolsToRemove.has(decl.getName()));
+    const declarationsToKeep = declarations.filter(
+      (decl) => !symbolsToRemove.has(decl.getName()),
+    );
 
     if (declarationsToKeep.length === 0) {
       // Remove entire statement if all declarations are being removed
@@ -694,30 +1092,32 @@ export function removeSymbolsFromSource(
       const isExported = stmt.isExported();
 
       // Create new variable statement with only the kept declarations
-      const newDeclarations = declarationsToKeep.map(decl => {
+      const newDeclarations = declarationsToKeep.map((decl) => {
         const name = decl.getName();
         const typeNode = decl.getTypeNode();
         const initializer = decl.getInitializer();
         return {
           name,
           ...(typeNode && { type: typeNode.getText() }),
-          ...(initializer && { initializer: initializer.getText() })
+          ...(initializer && { initializer: initializer.getText() }),
         };
       });
 
       // Replace the statement using ts-morph methods
       stmt.replaceWithText(
-        modifiedSourceFile.addVariableStatement({
-          declarationKind: kind,
-          isExported,
-          declarations: newDeclarations
-        }).getFullText()
+        modifiedSourceFile
+          .addVariableStatement({
+            declarationKind: kind,
+            isExported,
+            declarations: newDeclarations,
+          })
+          .getFullText(),
       );
     }
   });
 
   // Remove type aliases
-  modifiedSourceFile.getTypeAliases().forEach(type => {
+  modifiedSourceFile.getTypeAliases().forEach((type) => {
     const name = type.getName();
     if (symbolsToRemove.has(name)) {
       type.replaceWithText('');
@@ -725,7 +1125,7 @@ export function removeSymbolsFromSource(
   });
 
   // Remove interfaces
-  modifiedSourceFile.getInterfaces().forEach(iface => {
+  modifiedSourceFile.getInterfaces().forEach((iface) => {
     const name = iface.getName();
     if (symbolsToRemove.has(name)) {
       iface.replaceWithText('');
@@ -733,7 +1133,7 @@ export function removeSymbolsFromSource(
   });
 
   // Remove classes
-  modifiedSourceFile.getClasses().forEach(cls => {
+  modifiedSourceFile.getClasses().forEach((cls) => {
     const name = cls.getName();
     if (name && symbolsToRemove.has(name)) {
       cls.replaceWithText('');
@@ -751,72 +1151,78 @@ export function removeSymbolsFromSource(
  */
 export function removeUnusedImports(
   sourceFile: SourceFile,
-  _removedSymbols: Set<string>,
-  onlyUsedByRemovedSymbols: Set<string>
+  onlyUsedByRemovedSymbols: Set<string>,
 ): string {
   // Create a mutable copy with unique name
-  const timestamp = Date.now() + Math.random();
-  const modifiedSourceFile = sourceFile.copy(`modified-${timestamp}.ts`);
-  
+  const modifiedSourceFile = sourceFile.copy(
+    `modified-${tempFileCounter++}.ts`,
+  );
+
   // Remove import declarations that are only used by removed symbols
-  modifiedSourceFile.getImportDeclarations().forEach(importDecl => {
+  modifiedSourceFile.getImportDeclarations().forEach((importDecl) => {
     const moduleSpec = importDecl.getModuleSpecifierValue();
-    
+
     // Check default import
     const defaultImport = importDecl.getDefaultImport();
     const defaultImportText = defaultImport?.getText();
-    const shouldRemoveDefault = defaultImport && 
+    const shouldRemoveDefault =
+      defaultImport &&
       onlyUsedByRemovedSymbols.has(`${moduleSpec}:${defaultImportText}`);
-    
+
     // Check namespace import
     const namespaceImport = importDecl.getNamespaceImport();
-    const shouldRemoveNamespace = namespaceImport &&
-      onlyUsedByRemovedSymbols.has(`${moduleSpec}:${namespaceImport.getText()}`);
-    
+    const shouldRemoveNamespace =
+      namespaceImport &&
+      onlyUsedByRemovedSymbols.has(
+        `${moduleSpec}:${namespaceImport.getText()}`,
+      );
+
     // Check named imports
     const namedImports = importDecl.getNamedImports();
-    const importsToKeep = namedImports.filter(namedImport => {
+    const importsToKeep = namedImports.filter((namedImport) => {
       const importName = namedImport.getName();
       const importKey = `${moduleSpec}:${importName}`;
       return !onlyUsedByRemovedSymbols.has(importKey);
     });
-    
+
     // Determine if entire import should be removed
     const hasNoNamedImports = namedImports.length === 0;
     const hasNoKeptNamedImports = importsToKeep.length === 0;
-    const shouldRemoveEntireImport = 
+    const shouldRemoveEntireImport =
       (hasNoNamedImports && (shouldRemoveDefault || shouldRemoveNamespace)) ||
-      (!hasNoNamedImports && hasNoKeptNamedImports && !defaultImport && !namespaceImport);
-    
+      (!hasNoNamedImports &&
+        hasNoKeptNamedImports &&
+        !defaultImport &&
+        !namespaceImport);
+
     if (shouldRemoveEntireImport) {
       // Remove entire import declaration
       importDecl.remove();
     } else if (importsToKeep.length < namedImports.length) {
       // Some named imports removed - reconstruct the import
-      const keptImportNames = importsToKeep.map(imp => imp.getName()).join(', ');
+      const keptImportNames = importsToKeep
+        .map((imp) => imp.getName())
+        .join(', ');
       const newImportText = `import { ${keptImportNames} } from '${moduleSpec}';`;
       importDecl.replaceWithText(newImportText);
     }
   });
-  
+
   return modifiedSourceFile.getFullText();
 }
 
-/**
- * Add import and re-export for moved symbols (for backward compatibility)
- */
 /**
  * Classify symbols into types and values based on their definitions
  */
 function classifySymbolsByKind(
   symbols: Set<string>,
-  symbolDefinitions?: SymbolDefinition[]
+  symbolDefinitions?: SymbolDefinition[],
 ): { typeSymbols: Set<string>; valueSymbols: Set<string> } {
   const typeSymbols = new Set<string>();
   const valueSymbols = new Set<string>();
-  
+
   if (symbolDefinitions) {
-    const defMap = new Map(symbolDefinitions.map(d => [d.name, d]));
+    const defMap = new Map(symbolDefinitions.map((d) => [d.name, d]));
     for (const symbol of symbols) {
       const def = defMap.get(symbol);
       if (def) {
@@ -832,9 +1238,9 @@ function classifySymbolsByKind(
     }
   } else {
     // Fallback: treat all as values if we don't have type information
-    symbols.forEach(s => valueSymbols.add(s));
+    symbols.forEach((s) => valueSymbols.add(s));
   }
-  
+
   return { typeSymbols, valueSymbols };
 }
 
@@ -843,16 +1249,18 @@ function classifySymbolsByKind(
  */
 function findReferencedSymbols(
   sourceFile: SourceFile,
-  candidateSymbols: Set<string>
+  candidateSymbols: Set<string>,
 ): Set<string> {
   const referencedSymbols = new Set<string>();
-  
-  sourceFile.forEachDescendant(node => {
+
+  sourceFile.forEachDescendant((node) => {
     if (node.getKind() === SyntaxKind.Identifier) {
       // Skip property names in object literal assignments (non-shorthand)
       const parent = node.getParent();
       if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-        const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+        const propAssignment = parent.asKindOrThrow(
+          SyntaxKind.PropertyAssignment,
+        );
         if (propAssignment.getNameNode() === node) {
           return;
         }
@@ -864,7 +1272,7 @@ function findReferencedSymbols(
       }
     }
   });
-  
+
   return referencedSymbols;
 }
 
@@ -875,14 +1283,14 @@ function addImportDeclarations(
   sourceFile: SourceFile,
   typeSymbols: Set<string>,
   valueSymbols: Set<string>,
-  modulePath: string
+  modulePath: string,
 ): void {
   if (typeSymbols.size > 0) {
     const typeNames = Array.from(typeSymbols).sort().join(', ');
     const typeImportStatement = `import type { ${typeNames} } from '${modulePath}';`;
     sourceFile.insertText(0, typeImportStatement + '\n');
   }
-  
+
   if (valueSymbols.size > 0) {
     const valueNames = Array.from(valueSymbols).sort().join(', ');
     const valueImportStatement = `import { ${valueNames} } from '${modulePath}';`;
@@ -897,20 +1305,20 @@ function addReExportDeclarations(
   sourceFile: SourceFile,
   typeSymbols: Set<string>,
   valueSymbols: Set<string>,
-  modulePath: string
+  modulePath: string,
 ): void {
   if (typeSymbols.size > 0) {
     sourceFile.addExportDeclaration({
       moduleSpecifier: modulePath,
       namedExports: Array.from(typeSymbols).sort(),
-      isTypeOnly: true
+      isTypeOnly: true,
     });
   }
-  
+
   if (valueSymbols.size > 0) {
     sourceFile.addExportDeclaration({
       moduleSpecifier: modulePath,
-      namedExports: Array.from(valueSymbols).sort()
+      namedExports: Array.from(valueSymbols).sort(),
     });
   }
 }
@@ -920,18 +1328,22 @@ export function addImportForMovedSymbols(
   movedSymbols: Set<string>,
   newModulePath: string,
   shouldReExport: boolean,
-  symbolDefinitions?: SymbolDefinition[]
+  symbolDefinitions?: SymbolDefinition[],
 ): string {
-  const timestamp = Date.now() + Math.random();
-  const modifiedSourceFile = sourceFile.copy(`modified-${timestamp}.ts`);
-  
+  const modifiedSourceFile = sourceFile.copy(
+    `modified-${tempFileCounter++}.ts`,
+  );
+
   if (movedSymbols.size === 0) {
     return modifiedSourceFile.getFullText();
   }
-  
+
   // Classify symbols by kind (type vs value)
-  const { typeSymbols, valueSymbols } = classifySymbolsByKind(movedSymbols, symbolDefinitions);
-  
+  const { typeSymbols, valueSymbols } = classifySymbolsByKind(
+    movedSymbols,
+    symbolDefinitions,
+  );
+
   /*
     Determine which symbols need imports.
     When re-exporting, only import symbols that are actually used in the file.
@@ -939,18 +1351,32 @@ export function addImportForMovedSymbols(
   const symbolsToImport = shouldReExport
     ? findReferencedSymbols(sourceFile, movedSymbols)
     : movedSymbols;
-  
+
   // Filter types and values by what needs to be imported
-  const typesToImport = new Set([...typeSymbols].filter(s => symbolsToImport.has(s)));
-  const valuesToImport = new Set([...valueSymbols].filter(s => symbolsToImport.has(s)));
-  
+  const typesToImport = new Set(
+    [...typeSymbols].filter((s) => symbolsToImport.has(s)),
+  );
+  const valuesToImport = new Set(
+    [...valueSymbols].filter((s) => symbolsToImport.has(s)),
+  );
+
   // Add import declarations
-  addImportDeclarations(modifiedSourceFile, typesToImport, valuesToImport, newModulePath);
-  
+  addImportDeclarations(
+    modifiedSourceFile,
+    typesToImport,
+    valuesToImport,
+    newModulePath,
+  );
+
   // Add re-export declarations if requested
   if (shouldReExport) {
-    addReExportDeclarations(modifiedSourceFile, typeSymbols, valueSymbols, newModulePath);
+    addReExportDeclarations(
+      modifiedSourceFile,
+      typeSymbols,
+      valueSymbols,
+      newModulePath,
+    );
   }
-  
+
   return modifiedSourceFile.getFullText();
 }

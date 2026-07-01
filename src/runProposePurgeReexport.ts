@@ -5,42 +5,68 @@
  * This is the cleanup phase after propose-import-directly has moved imports.
  */
 
-import { openStorage, Storage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { SourceFile, ExportDeclaration } from "ts-morph";
-import { loadSourceFile } from "./indexing";
-import { reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem } from "./filesystem";
-import { isGeneratedFile } from "./generatedFileDetection";
+import { openStorage, Storage, ReExportItem } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
+import { groupBy } from './collections';
+import {
+  TslorPlan,
+  PLAN_VERSION,
+  PLAN_FILE_NAME,
+  computeStringChecksum,
+  writePlan,
+  displayPlan,
+  ModifyFileChange,
+  createEmptyPlan,
+} from './plan';
+import { SourceFile, ExportDeclaration } from 'ts-morph';
+import { loadSourceFile } from './indexing';
+import { reinsertScript } from './transformingFileSystem';
+import {
+  RepositoryRootProvider,
+  InMemoryRepositoryRootProvider,
+} from './repositoryRootProvider';
+import { FileSystem } from './filesystem';
+import { isGeneratedFile } from './generatedFileDetection';
 
 /**
- * Compute which file paths need indexing and which directory to scan for re-exports.
+ * Filter re-exports to only those whose re-exporter file lives within the given directory.
  *
- * The directory argument scopes *which re-exports to consider* but the full set
- * of repository files must be indexed so that consumers outside the directory
- * are visible to the unused-import check.
+ * This scopes the command so that running against a subdirectory considers only
+ * re-exports in that subdirectory, not the entire repository.
  */
-export function computeIndexingPaths(
-  allPaths: string[],
-  directory: string
-): { pathsToIndex: string[]; reExportDirectory: string } {
-  return {
-    pathsToIndex: allPaths,
-    reExportDirectory: directory,
-  };
+export function filterReExportsByDirectory(
+  reExports: ReExportItem[],
+  directory: string,
+): ReExportItem[] {
+  return reExports.filter((reExport) =>
+    isPathWithinDirectory(reExport.reExporterPath, directory),
+  );
 }
 
 /**
  * Propose removing unused re-exports from the codebase.
+ *
+ * @param writer - Callback for progress messages; tests can supply a stub to capture output
+ * @param cwd - Current working directory for path display; captured at the CLI boundary
  */
-export async function runProposePurgeReexport(directoryArg: string, debugOptions: DebugOptions, repoProvider: RepositoryRootProvider, fileSystem: FileSystem): Promise<TslorPlan> {
+export async function runProposePurgeReexport(
+  directoryArg: string,
+  debugOptions: DebugOptions,
+  fresh: boolean,
+  repoProvider: RepositoryRootProvider,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  cwd: string,
+): Promise<TslorPlan> {
   const isInMemory = repoProvider instanceof InMemoryRepositoryRootProvider;
 
-  const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
-  console.log(`Scanning codebase in ${directory} for unused re-exports...`);
+  const directory = normalizeAndValidatePath(
+    directoryArg,
+    'Directory',
+    isInMemory,
+  );
+  writer(`Scanning codebase in ${directory} for unused re-exports...\n`);
 
   // Find repository root
   const repoRoot = repoProvider.findRepositoryRoot(directory);
@@ -49,77 +75,92 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
     Build/update the index — index ALL repo files so that consumers outside the
     scanned directory are visible to the unused-import check.
   */
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
-  const { pathsToIndex } = computeIndexingPaths(allPaths, directory);
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: isInMemory,
+  });
+  const allPaths = await repoProvider.getTypeScriptFilePaths(
+    repoRoot,
+    fileSystem,
+  );
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(pathsToIndex, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
+  await indexImportFromFiles(allPaths, db, repoRoot, true, fileSystem, writer);
   db.save();
 
   // Find all re-exports in the codebase
-  const allReExports = findAllReExports(db);
+  const allReExports = db.findAllReExports();
 
   if (allReExports.length === 0) {
-    console.log('No re-exports found in the codebase.');
-    return createEmptyPlan();
+    writer('No re-exports found in the codebase.\n');
+    return writeEmptyPlan('propose-purge-reexport', writer, cwd);
   }
 
-  console.log(`Found ${allReExports.length} re-exported symbols`);
+  writer(`Found ${allReExports.length} re-exported symbols\n`);
+
+  // Scope to the requested directory
+  const scopedReExports = filterReExportsByDirectory(allReExports, directory);
+
+  if (scopedReExports.length === 0) {
+    writer(`No re-exports found within ${directory}.\n`);
+    return writeEmptyPlan('propose-purge-reexport', writer, cwd);
+  }
+
+  if (scopedReExports.length < allReExports.length) {
+    writer(
+      `Scoped to ${scopedReExports.length} re-export(s) within ${directory} (filtered from ${allReExports.length} total)\n`,
+    );
+  }
 
   // Filter out re-exports marked with @public
-  const filteredReExports = await filterPublicExports(allReExports, fileSystem);
-
-  // Find unused re-exports (those with no external importers)
-  const unusedReExports = await findUnusedReExports(db, filteredReExports);
-
-  if (unusedReExports.length === 0) {
-    console.log('No unused re-exports found.');
-    return createEmptyPlan();
+  const { kept: filteredReExports, skippedPublicCount } =
+    await filterPublicExports(scopedReExports, fileSystem);
+  if (skippedPublicCount > 0) {
+    writer(`Skipped ${skippedPublicCount} re-exports marked @public\n`);
   }
 
-  console.log(`Found ${unusedReExports.length} unused re-exports that can be removed`);
+  // Find unused re-exports (those with no external importers)
+  const { unused: unusedReExports, skippedNamespaceCount } =
+    findUnusedReExports(db, filteredReExports);
+  if (skippedNamespaceCount > 0) {
+    writer(
+      `Skipped ${skippedNamespaceCount} re-export(s) from files with namespace importers (import * as X).\n`,
+    );
+    writer(
+      `Run \`tslor normalize-namespace-imports <directory>\` to convert these to named imports first.\n`,
+    );
+  }
+
+  if (unusedReExports.length === 0) {
+    writer('No unused re-exports found.\n');
+    return writeEmptyPlan('propose-purge-reexport', writer, cwd);
+  }
 
   // Create plan with the changes
-  const plan = await createPurgeReexportPlan(unusedReExports, fileSystem);
+  const { plan, skippedGeneratedCount } = await createPurgeReexportPlan(
+    unusedReExports,
+    fileSystem,
+  );
+  if (skippedGeneratedCount > 0) {
+    writer(`Skipped ${skippedGeneratedCount} @generated file(s)\n`);
+  }
+
+  // Report count based on actual changes (after generated-file and no-op filtering)
+  if (plan.changes.length === 0) {
+    writer(
+      'No removable re-exports produced file changes (all in @generated files or no-op removals).\n',
+    );
+  } else {
+    writer(`Found ${plan.changes.length} file(s) with removable re-exports\n`);
+  }
 
   // Write and display plan
   await writePlan(plan, PLAN_FILE_NAME);
-  await displayPlan(plan, {});
+  await displayPlan(plan, {}, cwd, writer);
 
   return plan;
-}
-
-/**
- * Find all re-exports in the codebase
- */
-function findAllReExports(db: Storage): ReExportItem[] {
-  const reExports: ReExportItem[] = [];
-
-  const allReExportObjs = db.getAllReExports();
-
-  for (const reExportObj of allReExportObjs) {
-    // Extract symbol name from groups
-    const symbolNameGroup = reExportObj.groups?.find((g: string) => g.startsWith('reexportName|'));
-    if (symbolNameGroup) {
-      const [_prefix, symbolName] = symbolNameGroup.split('|');
-      if (symbolName === undefined) {
-        continue;
-      }
-      const [reExporterPath] = reExportObj.id.split('|').slice(1);
-      if (reExporterPath === undefined) {
-        continue;
-      }
-      reExports.push({
-        reExporterPath,
-        symbolName,
-        originalModuleSpec: reExportObj.reExport.moduleSpec,
-        isTypeOnly: reExportObj.reExport.isTypeOnly
-      });
-    }
-  }
-
-  return reExports;
 }
 
 /**
@@ -139,12 +180,10 @@ export function hasPublicTag(exportDecl: ExportDeclaration): boolean {
   return false;
 }
 
-type ReExportItem = { reExporterPath: string; symbolName: string; originalModuleSpec: string; isTypeOnly: boolean };
-
 function collectPublicSymbolsFromDecl(
   exportDecl: ExportDeclaration,
   fileReExports: ReExportItem[],
-  publicSymbols: Set<string>
+  publicSymbols: Set<string>,
 ): void {
   for (const namedExport of exportDecl.getNamedExports()) {
     publicSymbols.add(namedExport.getName());
@@ -164,7 +203,7 @@ function collectPublicSymbolsFromDecl(
 async function extractPublicSymbolsForFile(
   filePath: string,
   fileReExports: ReExportItem[],
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<Set<string>> {
   const sourceFile = await loadSourceFile(filePath, fileSystem);
   const exportDecls = sourceFile.getExportDeclarations();
@@ -182,23 +221,19 @@ async function extractPublicSymbolsForFile(
  */
 async function filterPublicExports(
   allReExports: ReExportItem[],
-  fileSystem: FileSystem
-): Promise<ReExportItem[]> {
-  const byFile = new Map<string, ReExportItem[]>();
-  for (const reExport of allReExports) {
-    let group = byFile.get(reExport.reExporterPath);
-    if (!group) {
-      group = [];
-      byFile.set(reExport.reExporterPath, group);
-    }
-    group.push(reExport);
-  }
+  fileSystem: FileSystem,
+): Promise<{ kept: ReExportItem[]; skippedPublicCount: number }> {
+  const byFile = groupBy(allReExports, (reExport) => reExport.reExporterPath);
 
   const kept: ReExportItem[] = [];
   let skippedCount = 0;
 
   for (const [filePath, fileReExports] of byFile) {
-    const publicSymbols = await extractPublicSymbolsForFile(filePath, fileReExports, fileSystem);
+    const publicSymbols = await extractPublicSymbolsForFile(
+      filePath,
+      fileReExports,
+      fileSystem,
+    );
     for (const reExport of fileReExports) {
       if (publicSymbols.has(reExport.symbolName)) {
         skippedCount++;
@@ -208,20 +243,16 @@ async function filterPublicExports(
     }
   }
 
-  if (skippedCount > 0) {
-    console.log(`Skipped ${skippedCount} re-exports marked @public`);
-  }
-
-  return kept;
+  return { kept, skippedPublicCount: skippedCount };
 }
 
 /**
  * Find re-exports that are not imported by any external modules
  */
-async function findUnusedReExports(
+function findUnusedReExports(
   db: Storage,
-  allReExports: ReExportItem[]
-): Promise<ReExportItem[]> {
+  allReExports: ReExportItem[],
+): { unused: ReExportItem[]; skippedNamespaceCount: number } {
   const unusedReExports: ReExportItem[] = [];
   let skippedNamespaceCount = 0;
 
@@ -229,15 +260,22 @@ async function findUnusedReExports(
   const namespaceImporterCache = new Map<string, boolean>();
 
   for (const reExport of allReExports) {
-    // Check if anyone imports this symbol from the re-exporter
-    const importers = db.getImportersOfExport(reExport.reExporterPath, reExport.symbolName);
+    const importers = db.getImportersOfExport(
+      reExport.reExporterPath,
+      reExport.symbolName,
+    );
 
     if (importers.length === 0) {
-      // Check for namespace importers (import * as X from this file)
-      let hasNamespaceImporters = namespaceImporterCache.get(reExport.reExporterPath);
+      let hasNamespaceImporters = namespaceImporterCache.get(
+        reExport.reExporterPath,
+      );
       if (hasNamespaceImporters === undefined) {
-        hasNamespaceImporters = db.getImportersOfExport(reExport.reExporterPath, '*').length > 0;
-        namespaceImporterCache.set(reExport.reExporterPath, hasNamespaceImporters);
+        hasNamespaceImporters =
+          db.getImportersOfExport(reExport.reExporterPath, '*').length > 0;
+        namespaceImporterCache.set(
+          reExport.reExporterPath,
+          hasNamespaceImporters,
+        );
       }
 
       if (hasNamespaceImporters) {
@@ -248,12 +286,7 @@ async function findUnusedReExports(
     }
   }
 
-  if (skippedNamespaceCount > 0) {
-    console.log(`Skipped ${skippedNamespaceCount} re-export(s) from files with namespace importers (import * as X).`);
-    console.log(`Run \`tslor normalize-namespace-imports <directory>\` to convert these to named imports first.`);
-  }
-
-  return unusedReExports;
+  return { unused: unusedReExports, skippedNamespaceCount };
 }
 
 /**
@@ -261,48 +294,34 @@ async function findUnusedReExports(
  */
 async function createPurgeReexportPlan(
   unusedReExports: ReExportItem[],
-  fileSystem: FileSystem
-): Promise<TslorPlan> {
+  fileSystem: FileSystem,
+): Promise<{ plan: TslorPlan; skippedGeneratedCount: number }> {
   const changes: ModifyFileChange[] = [];
   const undo: ModifyFileChange[] = [];
   const sourceFiles = new Set<string>();
   const checksums: { [filePath: string]: string } = {};
 
-  // Group changes by file
-  const changesByFile = new Map<string, typeof unusedReExports>();
-  for (const reExport of unusedReExports) {
-    let group = changesByFile.get(reExport.reExporterPath);
-    if (!group) {
-      group = [];
-      changesByFile.set(reExport.reExporterPath, group);
-    }
-    group.push(reExport);
-  }
+  const changesByFile = groupBy(
+    unusedReExports,
+    (reExport) => reExport.reExporterPath,
+  );
 
-  // Process each file
   let skippedGenerated = 0;
   for (const [filePath, fileReExports] of changesByFile) {
-    // Read the original file content for Vue file reconstruction and undo
     const originalContent = await fileSystem.readFile(filePath, 'utf-8');
 
-    // Skip files marked as @generated
     if (isGeneratedFile(originalContent)) {
       skippedGenerated++;
       continue;
     }
 
     const fileChecksum = computeStringChecksum(originalContent);
-
-    // Load the file through TransformingFileSystem for proper AST analysis
     const sourceFile = await loadSourceFile(filePath, fileSystem);
 
-    // Apply re-export removal changes
     applyReexportRemovalsToFile(sourceFile, fileReExports, filePath);
 
-    // Get modified script content
     const modifiedScriptContent = sourceFile.getFullText();
 
-    // Reconstruct full file content (handles Vue files properly)
     let finalContent: string;
     if (filePath.endsWith('.vue')) {
       finalContent = reinsertScript(originalContent, modifiedScriptContent);
@@ -310,21 +329,19 @@ async function createPurgeReexportPlan(
       finalContent = modifiedScriptContent;
     }
 
-    // Only include files in the plan if content actually changed
     if (finalContent !== originalContent) {
       changes.push({
         type: 'modify-file',
         path: filePath,
         content: finalContent,
-        originalChecksum: fileChecksum
+        originalChecksum: fileChecksum,
       });
 
-      // Create undo change to restore original content
       undo.push({
         type: 'modify-file',
         path: filePath,
         content: originalContent,
-        originalChecksum: computeStringChecksum(finalContent)
+        originalChecksum: computeStringChecksum(finalContent),
       });
 
       sourceFiles.add(filePath);
@@ -332,20 +349,62 @@ async function createPurgeReexportPlan(
     }
   }
 
-  if (skippedGenerated > 0) {
-    console.log(`Skipped ${skippedGenerated} @generated file(s)`);
-  }
-
   return {
-    version: PLAN_VERSION,
-    command: 'propose-purge-reexport',
-    timestamp: new Date().toISOString(),
-    sourceFiles: Array.from(sourceFiles),
-    targetFiles: [],
-    checksums,
-    changes,
-    undo
+    plan: {
+      version: PLAN_VERSION,
+      command: 'propose-purge-reexport',
+      timestamp: new Date().toISOString(),
+      sourceFiles: Array.from(sourceFiles),
+      targetFiles: [],
+      checksums,
+      changes,
+      undo,
+    },
+    skippedGeneratedCount: skippedGenerated,
   };
+}
+
+/**
+ * Create, write, and display an empty plan when no changes are needed.
+ */
+async function writeEmptyPlan(
+  command: string,
+  writer: (message: string) => void,
+  cwd: string,
+): Promise<TslorPlan> {
+  const plan = createEmptyPlan(command);
+  await writePlan(plan, PLAN_FILE_NAME);
+  await displayPlan(plan, {}, cwd, writer);
+  return plan;
+}
+
+/**
+ * Process a single export declaration, removing symbols that match the
+ * removal set. Removes the entire declaration if all symbols are removed.
+ */
+function processExportDecl(
+  exportDecl: ExportDeclaration,
+  specReExports: ReExportItem[],
+): void {
+  const namedExports = exportDecl.getNamedExports();
+  const symbolsToRemove = new Set(
+    specReExports.map((reExport) => reExport.symbolName),
+  );
+  const remainingExports = namedExports.filter(
+    (namedExport) => !symbolsToRemove.has(namedExport.getName()),
+  );
+
+  if (remainingExports.length === 0) {
+    exportDecl.remove();
+    return;
+  }
+  if (remainingExports.length < namedExports.length) {
+    for (const namedExport of namedExports) {
+      if (symbolsToRemove.has(namedExport.getName())) {
+        namedExport.remove();
+      }
+    }
+  }
 }
 
 /**
@@ -353,80 +412,41 @@ async function createPurgeReexportPlan(
  */
 export function applyReexportRemovalsToFile(
   sourceFile: SourceFile,
-  reExportsToRemove: Array<{ symbolName: string; originalModuleSpec: string; isTypeOnly: boolean }>,
-  filePath: string
+  reExportsToRemove: ReExportItem[],
+  filePath: string,
 ): void {
   try {
-    // Group re-exports by module spec for efficiency
-    const reExportsBySpec = new Map<string, typeof reExportsToRemove>();
-    for (const reExport of reExportsToRemove) {
-      let group = reExportsBySpec.get(reExport.originalModuleSpec);
-      if (!group) {
-        group = [];
-        reExportsBySpec.set(reExport.originalModuleSpec, group);
+    const reExportsBySpec = groupBy(
+      reExportsToRemove,
+      (reExport) => reExport.originalModuleSpec,
+    );
+
+    for (const exportDecl of sourceFile.getExportDeclarations()) {
+      const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
+      if (!moduleSpec) {
+        continue;
       }
-      group.push(reExport);
-    }
-
-    // Find and update export declarations
-    sourceFile.getExportDeclarations().forEach((exportDecl: ExportDeclaration) => {
+      const specReExports = reExportsBySpec.get(moduleSpec);
+      if (!specReExports) {
+        continue;
+      }
       try {
-        const moduleSpec = exportDecl.getModuleSpecifier()?.getLiteralValue();
-        if (!moduleSpec) {
-          return; // Not a re-export
-        }
-
-        const specReExports = reExportsBySpec.get(moduleSpec);
-        if (!specReExports) {
-          return;
-        }
-
-        // Get all named exports from this declaration
-        const namedExports = exportDecl.getNamedExports();
-        const symbolsToRemove = new Set(specReExports.map(reExport => reExport.symbolName));
-
-        // Filter out the exports we want to remove
-        const remainingExports = namedExports.filter(namedExport =>
-          !symbolsToRemove.has(namedExport.getName())
-        );
-
-        if (remainingExports.length === 0) {
-          // Remove the entire export declaration
-          exportDecl.remove();
-        } else if (remainingExports.length < namedExports.length) {
-          // Remove specific exports from the declaration using AST manipulation
-          namedExports.forEach(namedExport => {
-            if (symbolsToRemove.has(namedExport.getName())) {
-              namedExport.remove();
-            }
-          });
-        }
-        // If all exports remain, leave the declaration unchanged
-
+        processExportDecl(exportDecl, specReExports);
       } catch (exportError) {
         const exportText = exportDecl.getText().trim();
-        const errorMessage = exportError instanceof Error ? exportError.message : String(exportError);
-        throw new Error(`Failed to process export statement in ${filePath}: ${errorMessage}\nExport statement: ${exportText}`);
+        const errorMessage =
+          exportError instanceof Error
+            ? exportError.message
+            : String(exportError);
+        throw new Error(
+          `Failed to process export statement in ${filePath}: ${errorMessage}\nExport statement: ${exportText}`,
+        );
       }
-    });
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to apply re-export removals to ${filePath}: ${errorMessage}`);
+    throw new Error(
+      `Failed to apply re-export removals to ${filePath}: ${errorMessage}`,
+    );
   }
-}
-
-/**
- * Create an empty plan when no changes are needed
- */
-function createEmptyPlan(): TslorPlan {
-  return {
-    version: PLAN_VERSION,
-    command: 'propose-purge-reexport',
-    timestamp: new Date().toISOString(),
-    sourceFiles: [],
-    targetFiles: [],
-    checksums: {},
-    changes: [],
-    undo: []
-  };
 }

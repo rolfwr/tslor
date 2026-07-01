@@ -3,8 +3,6 @@ import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
 import { assertDefined } from './invariant';
 import {
-  Project,
-  SourceFile,
   FunctionDeclaration,
   VariableStatement,
   VariableDeclaration,
@@ -20,16 +18,9 @@ import {
   generateNewModuleSource,
   removeSymbolsFromSource,
   removeUnusedImports,
-  addImportForMovedSymbols
+  addImportForMovedSymbols,
 } from './splitModule';
-
-/**
- * Create a source file from source code for testing
- */
-function createTestSourceFile(sourceCode: string): SourceFile {
-  const project = new Project({ useInMemoryFileSystem: true });
-  return project.createSourceFile('test.ts', sourceCode);
-}
+import { createTestSourceFile } from './testUtils';
 
 test('Parse simple internal dependency', () => {
   const source = `
@@ -47,23 +38,23 @@ export function validateEmail(email: string): boolean {
 `;
 
   const moduleInfo = parseIsolatedSourceCode(source);
-  
+
   // Should identify exports
   assert.hasAllKeys(moduleInfo.exports, ['formatDate', 'validateEmail']);
-  
+
   // Should track that formatDate uses formatISODate
   const formatDateExport = moduleInfo.exports.get('formatDate');
   assert.isDefined(formatDateExport);
-  
+
   // Build dependency graph
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // formatDate should depend on formatISODate
   const formatDateDeps = deps.dependencies.get('formatDate');
   assert.isDefined(formatDateDeps);
   assertDefined(formatDateDeps, 'formatDateDeps should be defined');
   assert.isTrue(formatDateDeps.has('formatISODate'));
-  
+
   // validateEmail should have no internal dependencies
   const validateEmailDeps = deps.dependencies.get('validateEmail');
   assert.isDefined(validateEmailDeps);
@@ -96,20 +87,27 @@ export function otherFunction(): void {
 `;
 
   const moduleInfo = parseIsolatedSourceCode(source);
-  
+
   // Build dependency graph and analyze transitive dependencies
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // Analyze splitting processData
   const splitAnalysis = analyzeSplit(deps, 'processData');
-  
+
   assert.equal(splitAnalysis.symbolToMove, 'processData');
-  assert.isTrue(splitAnalysis.canSplit, 'Should be able to split - no circular deps');
-  
+  assert.isTrue(
+    splitAnalysis.canSplit,
+    'Should be able to split - no circular deps',
+  );
+
   // processData should transitively depend on validateInput, sanitizeInput, formatOutput
-  const expectedDeps = new Set(['validateInput', 'sanitizeInput', 'formatOutput']);
+  const expectedDeps = new Set([
+    'validateInput',
+    'sanitizeInput',
+    'formatOutput',
+  ]);
   assert.deepEqual(splitAnalysis.requiredDependencies, expectedDeps);
-  
+
   // otherFunction should have no dependencies
   const otherSplit = analyzeSplit(deps, 'otherFunction');
   assert.equal(otherSplit.requiredDependencies.size, 0);
@@ -135,23 +133,33 @@ export function independent(): string {
 `;
 
   const moduleInfo = parseIsolatedSourceCode(source);
-  
+
   // Build dependency graph and detect cycles
   const deps = buildIntraModuleDependencies(moduleInfo);
   const cycles = detectCircularDependencies(deps);
-  
+
   // Should detect the circular dependency
   assert.isTrue(cycles.length > 0, 'Should detect circular dependencies');
-  
+
   // Try to split funcA - should fail due to circular dependency
   const splitAnalysis = analyzeSplit(deps, 'funcA');
-  assert.isFalse(splitAnalysis.canSplit, 'Should not be able to split due to circular deps');
-  assert.isTrue(splitAnalysis.circularDependencies.length > 0, 'Should report circular dependencies');
-  
+  assert.isFalse(
+    splitAnalysis.canSplit,
+    'Should not be able to split due to circular deps',
+  );
+  assert.isTrue(
+    splitAnalysis.circularDependencies.length > 0,
+    'Should report circular dependencies',
+  );
+
   // independent should be splittable
   const independentSplit = analyzeSplit(deps, 'independent');
   assert.isTrue(independentSplit.canSplit, 'independent should be splittable');
-  assert.equal(independentSplit.requiredDependencies.size, 0, 'independent should have no deps');
+  assert.equal(
+    independentSplit.requiredDependencies.size,
+    0,
+    'independent should have no deps',
+  );
 });
 
 test('Split analysis with shared dependencies', () => {
@@ -179,23 +187,23 @@ function capitalize(str: string): string {
 
   const moduleInfo = parseIsolatedSourceCode(source);
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // Analyze splitting formatUser
   const formatUserSplit = analyzeSplit(deps, 'formatUser');
   assert.isTrue(formatUserSplit.canSplit);
-  
+
   // formatUser needs formatName, formatEmail, and capitalize (transitively)
   const expectedDeps = new Set(['formatName', 'formatEmail', 'capitalize']);
   assert.deepEqual(formatUserSplit.requiredDependencies, expectedDeps);
-  
-  // Analyze splitting displayUser  
+
+  // Analyze splitting displayUser
   const displayUserSplit = analyzeSplit(deps, 'displayUser');
   assert.isTrue(displayUserSplit.canSplit);
-  
+
   // displayUser needs formatName and capitalize (transitively)
   const expectedDisplayDeps = new Set(['formatName', 'capitalize']);
   assert.deepEqual(displayUserSplit.requiredDependencies, expectedDisplayDeps);
-  
+
   // This shows the shared dependency problem: both exports need formatName and capitalize
   // In a real implementation, we'd need to decide how to handle this
 });
@@ -224,17 +232,27 @@ function formatOutput(data: string): string {
 
   const moduleInfo = parseIsolatedSourceCode(source);
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // allDefinedSymbols should not contain duplicates
   const definitionsArray = Array.from(deps.definitions);
   const uniqueDefinitions = [...new Set(definitionsArray)];
-  assert.equal(definitionsArray.length, uniqueDefinitions.length, 'definitions should not contain duplicates');
-  
+  assert.equal(
+    definitionsArray.length,
+    uniqueDefinitions.length,
+    'definitions should not contain duplicates',
+  );
+
   // Should properly distinguish between defined symbols and external references
   // trim() and toUpperCase() should not be in definitions (they're built-in methods)
-  assert.isFalse(deps.definitions.has('trim'), 'built-in methods should not be in definitions');
-  assert.isFalse(deps.definitions.has('toUpperCase'), 'built-in methods should not be in definitions');
-  
+  assert.isFalse(
+    deps.definitions.has('trim'),
+    'built-in methods should not be in definitions',
+  );
+  assert.isFalse(
+    deps.definitions.has('toUpperCase'),
+    'built-in methods should not be in definitions',
+  );
+
   // All actual function names should be in definitions
   assert.isTrue(deps.definitions.has('processData'));
   assert.isTrue(deps.definitions.has('validateInput'));
@@ -259,12 +277,12 @@ function funcC(): string {
 `;
 
   const moduleInfo = parseIsolatedSourceCode(circularSource);
-  
+
   // Should not cause infinite recursion
   // Should properly handle the circular reference in export calculation
   const funcAExport = moduleInfo.exports.get('funcA');
   assert.isDefined(funcAExport, 'funcA should be exported');
-  
+
   // The circular dependency should be detected and handled gracefully
   // (exact behavior depends on implementation, but should not crash)
   assert.isArray(funcAExport?.uses, 'uses should be an array');
@@ -293,21 +311,29 @@ function processData(data: unknown): unknown {
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
+
   // Old approach: analyze using SourceFile
   const oldImportUsages = analyzeImportUsageBySymbol(sourceFile);
-  
+
   // New approach: analyze using StaticModuleInfo
   const staticModuleInfo = parseModule(sourceFile);
   const newImportUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
-  
+
   // Should produce equivalent results
-  assert.equal(oldImportUsages.length, newImportUsages.length, 'Should analyze same number of symbols');
-  
+  assert.equal(
+    oldImportUsages.length,
+    newImportUsages.length,
+    'Should analyze same number of symbols',
+  );
+
   // Sort both arrays by symbol name for comparison
-  const sortedOld = [...oldImportUsages].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  const sortedNew = [...newImportUsages].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  
+  const sortedOld = [...oldImportUsages].sort((a, b) =>
+    a.symbol.localeCompare(b.symbol),
+  );
+  const sortedNew = [...newImportUsages].sort((a, b) =>
+    a.symbol.localeCompare(b.symbol),
+  );
+
   for (let i = 0; i < sortedOld.length; i++) {
     const oldUsage = sortedOld.at(i);
     const newUsage = sortedNew.at(i);
@@ -315,13 +341,28 @@ function processData(data: unknown): unknown {
       continue;
     }
 
-    assert.equal(oldUsage.symbol, newUsage.symbol, `Symbol names should match at index ${i}`);
-    assert.equal(oldUsage.usesImports.length, newUsage.usesImports.length,
-      `Import count should match for symbol ${oldUsage.symbol}`);
+    assert.equal(
+      oldUsage.symbol,
+      newUsage.symbol,
+      `Symbol names should match at index ${i}`,
+    );
+    assert.equal(
+      oldUsage.usesImports.length,
+      newUsage.usesImports.length,
+      `Import count should match for symbol ${oldUsage.symbol}`,
+    );
 
     // Sort imports within each symbol for comparison
-    const sortedOldImports = [...oldUsage.usesImports].sort((a, b) => `${a.moduleSpec}:${a.importedName}`.localeCompare(`${b.moduleSpec}:${b.importedName}`));
-    const sortedNewImports = [...newUsage.usesImports].sort((a, b) => `${a.moduleSpec}:${a.importedName}`.localeCompare(`${b.moduleSpec}:${b.importedName}`));
+    const sortedOldImports = [...oldUsage.usesImports].sort((a, b) =>
+      `${a.moduleSpec}:${a.importedName}`.localeCompare(
+        `${b.moduleSpec}:${b.importedName}`,
+      ),
+    );
+    const sortedNewImports = [...newUsage.usesImports].sort((a, b) =>
+      `${a.moduleSpec}:${a.importedName}`.localeCompare(
+        `${b.moduleSpec}:${b.importedName}`,
+      ),
+    );
 
     for (let j = 0; j < sortedOldImports.length; j++) {
       const oldImport = sortedOldImports.at(j);
@@ -329,10 +370,16 @@ function processData(data: unknown): unknown {
       if (oldImport === undefined || newImport === undefined) {
         continue;
       }
-      assert.equal(oldImport.moduleSpec, newImport.moduleSpec,
-        `Module spec should match for ${oldUsage.symbol} import ${j}`);
-      assert.equal(oldImport.importedName, newImport.importedName,
-        `Import name should match for ${oldUsage.symbol} import ${j}`);
+      assert.equal(
+        oldImport.moduleSpec,
+        newImport.moduleSpec,
+        `Module spec should match for ${oldUsage.symbol} import ${j}`,
+      );
+      assert.equal(
+        oldImport.importedName,
+        newImport.importedName,
+        `Import name should match for ${oldUsage.symbol} import ${j}`,
+      );
     }
   }
 });
@@ -351,7 +398,7 @@ export function processFile(filename: string, content: string): string {
   const formatted = format(parsed, 'MM/dd/yyyy');
   const dir = dirname(filename);
   const fullPath = join(dir, 'output.txt');
-  
+
   writeFileSync(fullPath, formatted);
   return helper(fullPath);
 }
@@ -366,37 +413,53 @@ export function simpleFormat(date: Date): string {
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
+
   // Test that both analysis approaches work consistently
   const oldImportUsages = analyzeImportUsageBySymbol(sourceFile);
   const staticModuleInfo = parseModule(sourceFile);
   const newImportUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
-  
+
   // Should produce equivalent results
-  assert.equal(oldImportUsages.length, newImportUsages.length, 'Should analyze same number of symbols');
-  
+  assert.equal(
+    oldImportUsages.length,
+    newImportUsages.length,
+    'Should analyze same number of symbols',
+  );
+
   // Verify processFile has correct import dependencies
-  const processFileUsage = newImportUsages.find(u => u.symbol === 'processFile');
+  const processFileUsage = newImportUsages.find(
+    (u) => u.symbol === 'processFile',
+  );
   assertDefined(processFileUsage, 'processFile should be analyzed');
 
   // Should detect usage of multiple imports from different modules
   const expectedModules = new Set(['date-fns', 'fs', 'path', './utils']);
-  const usedModules = new Set(processFileUsage.usesImports.map(imp => imp.moduleSpec));
-  assert.deepEqual(usedModules, expectedModules, 'Should detect imports from all used modules');
-  
+  const usedModules = new Set(
+    processFileUsage.usesImports.map((imp) => imp.moduleSpec),
+  );
+  assert.deepEqual(
+    usedModules,
+    expectedModules,
+    'Should detect imports from all used modules',
+  );
+
   // Test that we can successfully analyze symbols that use multiple imports
-  const splitAnalysis = analyzeSplit(buildIntraModuleDependencies(staticModuleInfo), 'processFile');
-  assert.isTrue(splitAnalysis.canSplit, 'Should be able to split complex function');
-  
-  console.log('Complex import analysis working with current API design ✅');
+  const splitAnalysis = analyzeSplit(
+    buildIntraModuleDependencies(staticModuleInfo),
+    'processFile',
+  );
+  assert.isTrue(
+    splitAnalysis.canSplit,
+    'Should be able to split complex function',
+  );
 });
 
 test.skip('Handle import aliases, namespaces, and defaults (normalize-first strategy)', () => {
   // NOTE: These import types are intentionally NOT supported in core refactoring logic:
   // import { format as dateFormat } from 'date-fns';  // Import aliases
-  // import * as fs from 'fs';                         // Namespace imports  
+  // import * as fs from 'fs';                         // Namespace imports
   // import defaultParser from 'xml2js';              // Default imports
-  
+
   // Design Decision: Use separate `tslor normalize-imports` command to convert these
   // to straightforward syntax before running refactoring operations.
   //
@@ -404,10 +467,12 @@ test.skip('Handle import aliases, namespaces, and defaults (normalize-first stra
   // - Keeps core split logic simple and reliable
   // - Separates import normalization from module refactoring concerns
   // - More maintainable with fewer edge cases in critical refactoring path
-  
-  assert.isTrue(true, 'Placeholder - these will be handled by normalize-imports command');
-});
 
+  assert.isTrue(
+    true,
+    'Placeholder - these will be handled by normalize-imports command',
+  );
+});
 
 test('Extract function definitions from source', () => {
   const source = `
@@ -432,14 +497,18 @@ const CONSTANT_VALUE = 42;
 `;
 
   const sourceFile = createTestSourceFile(source);
-  const symbolsToExtract = new Set(['formatDate', 'formatISODate', 'CONSTANT_VALUE']);
+  const symbolsToExtract = new Set([
+    'formatDate',
+    'formatISODate',
+    'CONSTANT_VALUE',
+  ]);
   const definitions = extractSymbolDefinitions(sourceFile, symbolsToExtract);
-  
+
   // Should extract 3 definitions
   assert.equal(definitions.length, 3);
-  
+
   // Check formatDate
-  const formatDate = definitions.find(d => d.name === 'formatDate');
+  const formatDate = definitions.find((d) => d.name === 'formatDate');
   assert.isDefined(formatDate);
   assertDefined(formatDate, 'formatDate definition should be found');
   assert.equal(formatDate.kind, 'function');
@@ -448,18 +517,18 @@ const CONSTANT_VALUE = 42;
   assertDefined(formatDate.jsDocs, 'formatDate should have JSDoc');
   assert.isTrue(formatDate.jsDocs.length > 0);
   const firstDoc = formatDate.jsDocs.at(0);
-  assertDefined(firstDoc, 'Expected first JSDoc comment');
+  assertDefined(firstDoc, 'formatDate should have at least one JSDoc');
   assert.include(firstDoc.getInnerText(), 'Formats a date to ISO string');
-  
+
   // Verify we have the actual AST node, not just text
   assert.isDefined(formatDate.node);
   if (!FunctionDeclaration.isFunctionDeclaration(formatDate.node)) {
     assert.fail('formatDate node should be a FunctionDeclaration');
   }
   assert.equal(formatDate.node.getName(), 'formatDate');
-  
+
   // Check formatISODate (internal function)
-  const formatISODate = definitions.find(d => d.name === 'formatISODate');
+  const formatISODate = definitions.find((d) => d.name === 'formatISODate');
   assert.isDefined(formatISODate);
   assertDefined(formatISODate, 'formatISODate definition should be found');
   assert.equal(formatISODate.kind, 'function');
@@ -469,9 +538,9 @@ const CONSTANT_VALUE = 42;
     assert.fail('formatISODate node should be a FunctionDeclaration');
   }
   assert.equal(formatISODate.node.getName(), 'formatISODate');
-  
+
   // Check CONSTANT_VALUE
-  const constant = definitions.find(d => d.name === 'CONSTANT_VALUE');
+  const constant = definitions.find((d) => d.name === 'CONSTANT_VALUE');
   assert.isDefined(constant);
   assertDefined(constant, 'CONSTANT_VALUE definition should be found');
   assert.equal(constant.kind, 'const');
@@ -480,7 +549,11 @@ const CONSTANT_VALUE = 42;
   if (!VariableStatement.isVariableStatement(constant.node)) {
     assert.fail('CONSTANT_VALUE node should be a VariableStatement');
   }
-  assert.isTrue(constant.node.getDeclarations().some((decl: VariableDeclaration) => decl.getName() === 'CONSTANT_VALUE'));
+  assert.isTrue(
+    constant.node
+      .getDeclarations()
+      .some((decl: VariableDeclaration) => decl.getName() === 'CONSTANT_VALUE'),
+  );
 });
 
 test('Analyze import usage by symbols', () => {
@@ -507,30 +580,36 @@ function processData(data: unknown): unknown {
 
   const sourceFile = createTestSourceFile(source);
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  
+
   // Should analyze 4 symbols
   assert.equal(importUsages.length, 4);
-  
+
   // formatDate should use 'format' from 'date-fns'
-  const formatDateUsage = importUsages.find(u => u.symbol === 'formatDate');
+  const formatDateUsage = importUsages.find((u) => u.symbol === 'formatDate');
   assert.isDefined(formatDateUsage);
   assertDefined(formatDateUsage, 'formatDate usage should be found');
   assert.equal(formatDateUsage.usesImports.length, 1);
   const firstImport = formatDateUsage.usesImports.at(0);
-  assertDefined(firstImport, 'Expected first import');
+  assertDefined(firstImport, 'formatDate should have one import');
   assert.equal(firstImport.moduleSpec, 'date-fns');
   assert.equal(firstImport.importedName, 'format');
-  
+
   // validateEmail should use both 'validator' and 'helper' from './utils'
-  const validateEmailUsage = importUsages.find(u => u.symbol === 'validateEmail');
+  const validateEmailUsage = importUsages.find(
+    (u) => u.symbol === 'validateEmail',
+  );
   assert.isDefined(validateEmailUsage);
   assertDefined(validateEmailUsage, 'validateEmail usage should be found');
   assert.equal(validateEmailUsage.usesImports.length, 2);
-  const usedImports = validateEmailUsage.usesImports.map(imp => imp.importedName).sort();
+  const usedImports = validateEmailUsage.usesImports
+    .map((imp) => imp.importedName)
+    .sort();
   assert.deepEqual(usedImports, ['helper', 'validator']);
-  
+
   // formatISODate should use no imports
-  const formatISODateUsage = importUsages.find(u => u.symbol === 'formatISODate');
+  const formatISODateUsage = importUsages.find(
+    (u) => u.symbol === 'formatISODate',
+  );
   assert.isDefined(formatISODateUsage);
   assertDefined(formatISODateUsage, 'formatISODate usage should be found');
   assert.equal(formatISODateUsage.usesImports.length, 0);
@@ -556,20 +635,23 @@ function internalHelper(): string {
 
   const sourceFile = createTestSourceFile(source);
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  
+
   // If we're moving formatDate, which imports should move with it?
   const targetSymbols = new Set(['formatDate']);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, targetSymbols);
-  
+  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(
+    importUsages,
+    targetSymbols,
+  );
+
   // 'format' from 'date-fns' is only used by formatDate
   assert.isTrue(onlyUsedByTarget.has('date-fns:format'));
-  
+
   // 'shared' is used by multiple symbols, so shouldn't be in the set
   assert.isFalse(onlyUsedByTarget.has('./utils:shared'));
-  
+
   // 'validator' is only used by validateEmail, not formatDate
   assert.isFalse(onlyUsedByTarget.has('./utils:validator'));
-  
+
   // 'helper' is only used by internalHelper, not formatDate
   assert.isFalse(onlyUsedByTarget.has('./utils:helper'));
 });
@@ -598,33 +680,38 @@ const API_URL = 'https://api.example.com';
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
+
   // Extract symbols we want to move (formatDate and its dependency)
   const symbolsToMove = new Set(['formatDate', 'formatISODate']);
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  
+
   // Analyze import usage
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);
-  
+
   // Compute required imports
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+
   // Generate new module source
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify the generated source
   assert.include(newModuleSource, 'import { format } from "date-fns";');
-  assert.include(newModuleSource, 'export function formatDate(date: Date): string');
+  assert.include(
+    newModuleSource,
+    'export function formatDate(date: Date): string',
+  );
   assert.include(newModuleSource, 'function formatISODate(date: Date): string');
   assert.include(newModuleSource, 'return format(date');
   assert.include(newModuleSource, 'Formats a date to ISO string');
-  
+
   // Should not include validateEmail-related imports since they're shared
   assert.notInclude(newModuleSource, './utils');
-  
-  console.log('Generated new module source:');
-  console.log(newModuleSource);
 });
 
 test('Generate new module with mixed exports and internal symbols', () => {
@@ -643,20 +730,17 @@ const CONSTANT = 'value';
   const sourceFile = createTestSourceFile(source);
   const symbolsToMove = new Set(['publicFunction', 'helper', 'CONSTANT']);
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  
+
   const newModuleSource = generateNewModuleSource(symbolDefinitions, []);
-  
+
   // publicFunction should remain exported
   assert.include(newModuleSource, 'export function publicFunction()');
-  
+
   // helper should become exported (since it's being moved to new module)
   assert.include(newModuleSource, 'function helper()');
-  
+
   // CONSTANT should be included
   assert.include(newModuleSource, "const CONSTANT = 'value';");
-  
-  console.log('Generated mixed module source:');
-  console.log(newModuleSource);
 });
 
 test('Remove symbols from original source', () => {
@@ -684,24 +768,21 @@ const DEBUG = true;
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
+
   // Remove formatDate and formatISODate
   const symbolsToRemove = new Set(['formatDate', 'formatISODate']);
   const modifiedSource = removeSymbolsFromSource(sourceFile, symbolsToRemove);
-  
+
   // Should remove the functions
   assert.notInclude(modifiedSource, 'function formatDate');
   assert.notInclude(modifiedSource, 'function formatISODate');
-  
+
   // Should keep validateEmail
   assert.include(modifiedSource, 'function validateEmail');
-  
+
   // Should keep constants
   assert.include(modifiedSource, 'const API_URL');
   assert.include(modifiedSource, 'const DEBUG');
-  
-  console.log('Modified source after removing symbols:');
-  console.log(modifiedSource);
 });
 
 test('Remove unused imports after symbol removal', () => {
@@ -719,21 +800,16 @@ export function validateEmail(email: string): boolean {
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
-  // Simulate removing formatDate
-  const removedSymbols = new Set(['formatDate']);
-  const onlyUsedByRemoved = new Set(['date-fns:format']); // format is only used by formatDate
-  
-  const modifiedSource = removeUnusedImports(sourceFile, removedSymbols, onlyUsedByRemoved);
-  
+
+  const onlyUsedByRemoved = new Set(['date-fns:format']);
+
+  const modifiedSource = removeUnusedImports(sourceFile, onlyUsedByRemoved);
+
   // Should remove date-fns import
   assert.notInclude(modifiedSource, "import { format } from 'date-fns'");
-  
+
   // Should keep ./utils import (used by validateEmail)
   assert.include(modifiedSource, "import { helper, validator } from './utils'");
-  
-  console.log('Modified source after removing unused imports:');
-  console.log(modifiedSource);
 });
 
 test('Add import for moved symbols with re-export', () => {
@@ -746,23 +822,28 @@ const API_URL = 'https://api.example.com';
 `;
 
   const sourceFile = createTestSourceFile(source);
-  
+
   // Add import and re-export for moved symbols
   const movedSymbols = new Set(['formatDate', 'formatISODate']);
-  const modifiedSource = addImportForMovedSymbols(sourceFile, movedSymbols, './date-utils', true);
-  
+  const modifiedSource = addImportForMovedSymbols(
+    sourceFile,
+    movedSymbols,
+    './date-utils',
+    true,
+  );
+
   // Should NOT add import when shouldReExport is true - symbols are only re-exported, not used
-  assert.notMatch(modifiedSource, /^import.*formatDate/m, 
-    'Should not have import statement when only re-exporting');
-  
-  // Should add re-export  
+  assert.notMatch(
+    modifiedSource,
+    /^import.*formatDate/m,
+    'Should not have import statement when only re-exporting',
+  );
+
+  // Should add re-export
   assert.include(modifiedSource, 'export { formatDate, formatISODate }');
-  
+
   // Should keep existing code
   assert.include(modifiedSource, 'function validateEmail');
-  
-  console.log('Modified source after adding re-exports:');
-  console.log(modifiedSource);
 });
 
 test('Move type that depends on const value with typeof', () => {
@@ -791,20 +872,29 @@ export interface Item {
 `;
 
   const moduleInfo = parseIsolatedSourceCode(source);
-  
+
   // Build dependencies
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // DerivedFromConst should depend on myConstArray
   const derivedDeps = deps.dependencies.get('DerivedFromConst');
-  assert.isDefined(derivedDeps, 'DerivedFromConst should have dependencies tracked');
+  assert.isDefined(
+    derivedDeps,
+    'DerivedFromConst should have dependencies tracked',
+  );
   assertDefined(derivedDeps, 'derivedDeps should be defined');
-  assert.isTrue(derivedDeps.has('myConstArray'), 
-    'DerivedFromConst should depend on myConstArray (typeof dependency)');
-  
+  assert.isTrue(
+    derivedDeps.has('myConstArray'),
+    'DerivedFromConst should depend on myConstArray (typeof dependency)',
+  );
+
   // When splitting these types, myConstArray must be included
-  const symbolsToMove = new Set(['DerivedFromConst', 'UsesImportedType', 'MappedTypeUsingImport']);
-  
+  const symbolsToMove = new Set([
+    'DerivedFromConst',
+    'UsesImportedType',
+    'MappedTypeUsingImport',
+  ]);
+
   // Analyze each symbol to collect all required dependencies
   const allRequired = new Set<string>();
   for (const symbol of symbolsToMove) {
@@ -813,42 +903,58 @@ export interface Item {
       allRequired.add(req);
     }
   }
-  
+
   // Should detect that myConstArray needs to move
-  assert.isTrue(allRequired.has('myConstArray'),
-    'myConstArray should be required because DerivedFromConst uses it via typeof');
-  
+  assert.isTrue(
+    allRequired.has('myConstArray'),
+    'myConstArray should be required because DerivedFromConst uses it via typeof',
+  );
+
   // Generate new module with all required symbols
   const sourceFile = createTestSourceFile(source);
   const allSymbolsToMove = new Set([...symbolsToMove, ...allRequired]);
-  const symbolDefinitions = extractSymbolDefinitions(sourceFile, allSymbolsToMove);
-  
+  const symbolDefinitions = extractSymbolDefinitions(
+    sourceFile,
+    allSymbolsToMove,
+  );
+
   // Analyze import usage
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, allSymbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+
   // Generate new module
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify myConstArray is in the new module
-  assert.include(newModuleSource, "export const myConstArray = <const>['value1', 'value2'];",
-    'myConstArray must be moved to new module');
-  
+  assert.include(
+    newModuleSource,
+    "export const myConstArray = <const>['value1', 'value2'];",
+    'myConstArray must be moved to new module',
+  );
+
   // Verify DerivedFromConst is in the new module and still references myConstArray
-  assert.include(newModuleSource, 'export type DerivedFromConst = typeof myConstArray[number];',
-    'DerivedFromConst should reference myConstArray correctly');
-  
+  assert.include(
+    newModuleSource,
+    'export type DerivedFromConst = typeof myConstArray[number];',
+    'DerivedFromConst should reference myConstArray correctly',
+  );
+
   // Verify imports are included
-  assert.include(newModuleSource, 'import type { ExternalType } from "./external"',
-    'ExternalType import should be moved to new module');
-  
+  assert.include(
+    newModuleSource,
+    'import type { ExternalType } from "./external"',
+    'ExternalType import should be moved to new module',
+  );
+
   // Verify all types are present
   assert.include(newModuleSource, 'export interface UsesImportedType');
   assert.include(newModuleSource, 'export type MappedTypeUsingImport');
-  
-  console.log('Generated new module with typeof dependency:');
-  console.log(newModuleSource);
 });
 
 test('Complete split workflow with type/value separation in re-exports', () => {
@@ -878,9 +984,13 @@ export interface Item {
 
   const moduleInfo = parseIsolatedSourceCode(source);
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
-  const symbolsToMove = new Set(['DerivedFromConst', 'UsesImportedType', 'MappedTypeUsingImport']);
-  
+
+  const symbolsToMove = new Set([
+    'DerivedFromConst',
+    'UsesImportedType',
+    'MappedTypeUsingImport',
+  ]);
+
   // Collect all required dependencies
   const allRequired = new Set<string>();
   for (const symbol of symbolsToMove) {
@@ -889,68 +999,94 @@ export interface Item {
       allRequired.add(req);
     }
   }
-  
+
   // Should include myConstArray
   assert.isTrue(allRequired.has('myConstArray'));
-  
+
   const sourceFile = createTestSourceFile(source);
   const allSymbolsToMove = new Set([...symbolsToMove, ...allRequired]);
-  const symbolDefinitions = extractSymbolDefinitions(sourceFile, allSymbolsToMove);
-  
+  const symbolDefinitions = extractSymbolDefinitions(
+    sourceFile,
+    allSymbolsToMove,
+  );
+
   // Generate new module
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, allSymbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify new module has all symbols
   assert.include(newModuleSource, 'export const myConstArray');
   assert.include(newModuleSource, 'export type DerivedFromConst');
   assert.include(newModuleSource, 'export interface UsesImportedType');
   assert.include(newModuleSource, 'export type MappedTypeUsingImport');
-  
+
   // Remove symbols from source and add imports/re-exports
   const cleanedSource = removeSymbolsFromSource(sourceFile, allSymbolsToMove);
   const sourceFileForImports = createTestSourceFile(cleanedSource);
-  
+
   // Pass symbolDefinitions so function knows which are types vs values
   const finalSource = addImportForMovedSymbols(
-    sourceFileForImports, 
-    allSymbolsToMove, 
-    './itemDeps', 
+    sourceFileForImports,
+    allSymbolsToMove,
+    './itemDeps',
     true,
-    symbolDefinitions
+    symbolDefinitions,
   );
-  
+
   // Verify source still has Item
   assert.include(finalSource, 'export interface Item');
-  
+
   // Item uses DerivedFromConst, UsesImportedType, and MappedTypeUsingImport,
   // so imports ARE needed for those types even though they're also re-exported
-  assert.match(finalSource, /^import type.*DerivedFromConst/m,
-    'Should have import for type used in Item');
-  assert.match(finalSource, /^import type.*UsesImportedType/m,
-    'Should have import for type used in Item');
-  assert.match(finalSource, /^import type.*MappedTypeUsingImport/m,
-    'Should have import for type used in Item');
-  
+  assert.match(
+    finalSource,
+    /^import type.*DerivedFromConst/m,
+    'Should have import for type used in Item',
+  );
+  assert.match(
+    finalSource,
+    /^import type.*UsesImportedType/m,
+    'Should have import for type used in Item',
+  );
+  assert.match(
+    finalSource,
+    /^import type.*MappedTypeUsingImport/m,
+    'Should have import for type used in Item',
+  );
+
   // myConstArray was moved as a dependency, check if it needs import
   // Since it's not referenced in the remaining source, no import needed for it
-  
+
   // Verify type-only re-exports
-  assert.match(finalSource, /export type \{[^}]*DerivedFromConst[^}]*\}/,
-    'DerivedFromConst should use export type');
-  assert.match(finalSource, /export type \{[^}]*UsesImportedType[^}]*\}/,
-    'UsesImportedType should use export type');
-  assert.match(finalSource, /export type \{[^}]*MappedTypeUsingImport[^}]*\}/,
-    'MappedTypeUsingImport should use export type');
-  
+  assert.match(
+    finalSource,
+    /export type \{[^}]*DerivedFromConst[^}]*\}/,
+    'DerivedFromConst should use export type',
+  );
+  assert.match(
+    finalSource,
+    /export type \{[^}]*UsesImportedType[^}]*\}/,
+    'UsesImportedType should use export type',
+  );
+  assert.match(
+    finalSource,
+    /export type \{[^}]*MappedTypeUsingImport[^}]*\}/,
+    'MappedTypeUsingImport should use export type',
+  );
+
   // Verify value re-export
-  assert.match(finalSource, /export \{[^}]*myConstArray[^}]*\}/,
-    'myConstArray should use regular export');
-  
-  console.log('=== Final source with proper type/value separation in re-exports ===');
-  console.log(finalSource);
+  assert.match(
+    finalSource,
+    /export \{[^}]*myConstArray[^}]*\}/,
+    'myConstArray should use regular export',
+  );
 });
 
 test('Mapped type detects dependencies on key types and local types', () => {
@@ -992,9 +1128,9 @@ export interface Data {
 
   const moduleInfo = parseIsolatedSourceCode(source);
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   const symbolsToMove = new Set(['IconMap', 'Request', 'Entry']);
-  
+
   // Collect all required dependencies
   const allRequired = new Set<string>();
   for (const symbol of symbolsToMove) {
@@ -1003,48 +1139,72 @@ export interface Data {
       allRequired.add(req);
     }
   }
-  
+
   // CRITICAL: LocalIcon must be detected as a dependency of IconMap
-  assert.isTrue(allRequired.has('LocalIcon'),
-    'LocalIcon should be required because IconMap references it in the mapped type value');
-  
+  assert.isTrue(
+    allRequired.has('LocalIcon'),
+    'LocalIcon should be required because IconMap references it in the mapped type value',
+  );
+
   // Generate new module with all required symbols
   const sourceFile = createTestSourceFile(source);
   const allSymbolsToMove = new Set([...symbolsToMove, ...allRequired]);
-  const symbolDefinitions = extractSymbolDefinitions(sourceFile, allSymbolsToMove);
-  
+  const symbolDefinitions = extractSymbolDefinitions(
+    sourceFile,
+    allSymbolsToMove,
+  );
+
   // Verify LocalIcon was included in symbols to move
-  assert.isTrue(allSymbolsToMove.has('LocalIcon'),
-    'LocalIcon must be included in symbols to move');
-  
+  assert.isTrue(
+    allSymbolsToMove.has('LocalIcon'),
+    'LocalIcon must be included in symbols to move',
+  );
+
   // Analyze import usage
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, allSymbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+
   // Generate new module
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify LocalIcon is in the new module
-  assert.include(newModuleSource, 'export interface LocalIcon',
-    'LocalIcon must be moved to new module');
-  
+  assert.include(
+    newModuleSource,
+    'export interface LocalIcon',
+    'LocalIcon must be moved to new module',
+  );
+
   // Verify IconMap is in the new module
-  assert.include(newModuleSource, 'export type IconMap',
-    'IconMap should be in new module');
-  
+  assert.include(
+    newModuleSource,
+    'export type IconMap',
+    'IconMap should be in new module',
+  );
+
   // Verify ExternalSlot is imported (needed by mapped type key)
-  assert.include(newModuleSource, 'ExternalSlot',
-    'ExternalSlot import should be in new module for mapped type key');
-  
+  assert.include(
+    newModuleSource,
+    'ExternalSlot',
+    'ExternalSlot import should be in new module for mapped type key',
+  );
+
   // Verify ExternalDep1 and ExternalDep2 are imported
-  assert.include(newModuleSource, 'ExternalDep1',
-    'ExternalDep1 import should be in new module');
-  assert.include(newModuleSource, 'ExternalDep2',
-    'ExternalDep2 import should be in new module');
-  
-  console.log('Generated new module with mapped type dependencies:');
-  console.log(newModuleSource);
+  assert.include(
+    newModuleSource,
+    'ExternalDep1',
+    'ExternalDep1 import should be in new module',
+  );
+  assert.include(
+    newModuleSource,
+    'ExternalDep2',
+    'ExternalDep2 import should be in new module',
+  );
 });
 
 test('Move types with transitive type reference dependencies', () => {
@@ -1067,27 +1227,40 @@ export type ItemCustomIconsBlendedDto = (ItemCustomIconBlendedDto | null)[];
 `;
 
   const moduleInfo = parseIsolatedSourceCode(source);
-  
+
   // Build dependencies
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   // ItemCustomIconUpdateDto should depend on ItemCustomIconsDto
   const updateDtoDeps = deps.dependencies.get('ItemCustomIconUpdateDto');
-  assert.isDefined(updateDtoDeps, 'ItemCustomIconUpdateDto should have dependencies tracked');
+  assert.isDefined(
+    updateDtoDeps,
+    'ItemCustomIconUpdateDto should have dependencies tracked',
+  );
   assertDefined(updateDtoDeps, 'updateDtoDeps should be defined');
-  assert.isTrue(updateDtoDeps.has('ItemCustomIconsDto'), 
-    'ItemCustomIconUpdateDto should depend on ItemCustomIconsDto');
-  
+  assert.isTrue(
+    updateDtoDeps.has('ItemCustomIconsDto'),
+    'ItemCustomIconUpdateDto should depend on ItemCustomIconsDto',
+  );
+
   // ItemCustomIconsBlendedDto should depend on ItemCustomIconBlendedDto
   const blendedDtoDeps = deps.dependencies.get('ItemCustomIconsBlendedDto');
-  assert.isDefined(blendedDtoDeps, 'ItemCustomIconsBlendedDto should have dependencies tracked');
+  assert.isDefined(
+    blendedDtoDeps,
+    'ItemCustomIconsBlendedDto should have dependencies tracked',
+  );
   assertDefined(blendedDtoDeps, 'blendedDtoDeps should be defined');
-  assert.isTrue(blendedDtoDeps.has('ItemCustomIconBlendedDto'), 
-    'ItemCustomIconsBlendedDto should depend on ItemCustomIconBlendedDto');
-  
+  assert.isTrue(
+    blendedDtoDeps.has('ItemCustomIconBlendedDto'),
+    'ItemCustomIconsBlendedDto should depend on ItemCustomIconBlendedDto',
+  );
+
   // When splitting these types, their dependencies must be included
-  const symbolsToMove = new Set(['ItemCustomIconUpdateDto', 'ItemCustomIconsBlendedDto']);
-  
+  const symbolsToMove = new Set([
+    'ItemCustomIconUpdateDto',
+    'ItemCustomIconsBlendedDto',
+  ]);
+
   // Analyze each symbol to collect all required dependencies
   const allRequired = new Set<string>();
   for (const symbol of symbolsToMove) {
@@ -1096,38 +1269,59 @@ export type ItemCustomIconsBlendedDto = (ItemCustomIconBlendedDto | null)[];
       allRequired.add(req);
     }
   }
-  
+
   // Should detect that both base types need to move
-  assert.isTrue(allRequired.has('ItemCustomIconsDto'),
-    'ItemCustomIconsDto should be required because ItemCustomIconUpdateDto references it');
-  assert.isTrue(allRequired.has('ItemCustomIconBlendedDto'),
-    'ItemCustomIconBlendedDto should be required because ItemCustomIconsBlendedDto references it');
-  
+  assert.isTrue(
+    allRequired.has('ItemCustomIconsDto'),
+    'ItemCustomIconsDto should be required because ItemCustomIconUpdateDto references it',
+  );
+  assert.isTrue(
+    allRequired.has('ItemCustomIconBlendedDto'),
+    'ItemCustomIconBlendedDto should be required because ItemCustomIconsBlendedDto references it',
+  );
+
   // Generate new module with all required symbols
   const sourceFile = createTestSourceFile(source);
   const allSymbolsToMove = new Set([...symbolsToMove, ...allRequired]);
-  const symbolDefinitions = extractSymbolDefinitions(sourceFile, allSymbolsToMove);
-  
+  const symbolDefinitions = extractSymbolDefinitions(
+    sourceFile,
+    allSymbolsToMove,
+  );
+
   // Analyze import usage
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, allSymbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+
   // Generate new module
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify all four types are in the new module
-  assert.include(newModuleSource, "export type ItemCustomIconsDto = Record<string, string>;",
-    'ItemCustomIconsDto must be moved to new module');
-  assert.include(newModuleSource, 'export interface ItemCustomIconBlendedDto',
-    'ItemCustomIconBlendedDto must be moved to new module');
-  assert.include(newModuleSource, 'export type ItemCustomIconUpdateDto',
-    'ItemCustomIconUpdateDto should be in new module');
-  assert.include(newModuleSource, 'export type ItemCustomIconsBlendedDto',
-    'ItemCustomIconsBlendedDto should be in new module');
-  
-  console.log('Generated new module with transitive type dependencies:');
-  console.log(newModuleSource);
+  assert.include(
+    newModuleSource,
+    'export type ItemCustomIconsDto = Record<string, string>;',
+    'ItemCustomIconsDto must be moved to new module',
+  );
+  assert.include(
+    newModuleSource,
+    'export interface ItemCustomIconBlendedDto',
+    'ItemCustomIconBlendedDto must be moved to new module',
+  );
+  assert.include(
+    newModuleSource,
+    'export type ItemCustomIconUpdateDto',
+    'ItemCustomIconUpdateDto should be in new module',
+  );
+  assert.include(
+    newModuleSource,
+    'export type ItemCustomIconsBlendedDto',
+    'ItemCustomIconsBlendedDto should be in new module',
+  );
 });
 
 test('Re-exports should not create unused imports', () => {
@@ -1150,50 +1344,58 @@ export interface CustomData {
 
   const moduleInfo = parseIsolatedSourceCode(source);
   const deps = buildIntraModuleDependencies(moduleInfo);
-  
+
   const symbolsToMove = new Set(['CustomData']);
   const analysis = analyzeSplit(deps, 'CustomData');
-  
+
   // CustomData has no internal dependencies
   assert.equal(analysis.requiredDependencies.size, 0);
-  
+
   const sourceFile = createTestSourceFile(source);
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  
+
   // Generate new module
   const importUsages = analyzeImportUsageBySymbol(sourceFile);
-  const onlyUsedByTarget = findImportsOnlyUsedBySymbols(importUsages, symbolsToMove);
-  const requiredImports = computeRequiredImports(symbolDefinitions, importUsages, onlyUsedByTarget);
-  const newModuleSource = generateNewModuleSource(symbolDefinitions, requiredImports);
-  
+  const requiredImports = computeRequiredImports(
+    symbolDefinitions,
+    importUsages,
+  );
+  const newModuleSource = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+  );
+
   // Verify new module has the symbol
   assert.include(newModuleSource, 'export interface CustomData');
-  
+
   // Remove symbols from source and add imports/re-exports
   const cleanedSource = removeSymbolsFromSource(sourceFile, symbolsToMove);
   const sourceFileForImports = createTestSourceFile(cleanedSource);
-  
+
   const finalSource = addImportForMovedSymbols(
-    sourceFileForImports, 
-    symbolsToMove, 
-    './target', 
+    sourceFileForImports,
+    symbolsToMove,
+    './target',
     true,
-    symbolDefinitions
+    symbolDefinitions,
   );
-  
+
   // Verify source still has other symbols
   assert.include(finalSource, 'export interface ItemDto');
   assert.include(finalSource, 'export const CONFIG');
-  
+
   // Critical: verify there are NO import statements for CustomData
   // Only re-export statements should exist
-  assert.notMatch(finalSource, /^import.*CustomData/m,
-    'Should not have import statement for re-exported symbol');
-  
+  assert.notMatch(
+    finalSource,
+    /^import.*CustomData/m,
+    'Should not have import statement for re-exported symbol',
+  );
+
   // Verify re-export exists
-  assert.match(finalSource, /export type \{[^}]*CustomData[^}]*\}/,
-    'Should have type re-export for CustomData');
-  
-  console.log('=== Final source without unused imports ===');
-  console.log(finalSource);
+  assert.match(
+    finalSource,
+    /export type \{[^}]*CustomData[^}]*\}/,
+    'Should have type re-export for CustomData',
+  );
 });

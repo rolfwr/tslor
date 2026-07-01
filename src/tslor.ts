@@ -1,36 +1,36 @@
-import { runImports } from './runImports';
-import { runMv } from './runMv';
-import { runProjectUse } from './runProjectUse';
-import { runDependencies } from './runDependencies';
-import { runSplit } from './runSplit';
-import { runProposeSplit } from './runProposeSplit';
-import { runApply } from './runApply';
-import { runDiff } from './runDiff';
-import { runSymbolUsage } from './runSymbolUsage';
-import { runTraceImports } from './runTraceImports';
-import { runGrep } from './runGrep';
-import { runCycles } from './runCycles';
-import { runNeeds } from './runNeeds';
-import { runHot } from './runHot';
-import { runTsort } from './runTsort';
-import { runCoupling } from './runCoupling';
-import { program, Command, OptionValues } from 'commander';
-import { findGitRepoRoot } from './project';
-import { inspectModule } from './indexing';
-import { runImportChain } from './runImportChain';
-import { runTscat } from './runTscat';
-import { runProposeImportDirectly } from './runProposeImportDirectly';
-import { runProposePurgeReexport } from './runProposePurgeReexport';
-import { runNormalizeNamespaceImports } from './runNormalizeNamespaceImports';
-import { runReplaceTypeUse } from './runReplaceTypeUse';
-import { runNormalizeImports } from './runNormalizeImports';
-import { runTypeLeafUsage } from './runTypeLeafUsage';
-import { runImportGroups } from './runImportGroups';
-import { GitRepositoryRootProvider } from './repositoryRootProvider';
-import { RealFileSystem } from './filesystem';
+import { Command, OptionValues, program } from 'commander';
 import { dirname, extname, resolve } from 'path';
 import { CliError } from './errors';
+import { RealFileSystem } from './filesystem';
+import { inspectModule } from './indexing';
 import { DebugOptions } from './objstore';
+import { findGitRepoRoot } from './project';
+import { GitRepositoryRootProvider } from './repositoryRootProvider';
+import { runApply } from './runApply';
+import { runCoupling } from './runCoupling';
+import { runCycles } from './runCycles';
+import { runDependencies } from './runDependencies';
+import { runDiff } from './runDiff';
+import { runGrep } from './runGrep';
+import { runHot } from './runHot';
+import { runImportChain } from './runImportChain';
+import { runImportGroups } from './runImportGroups';
+import { runImports } from './runImports';
+import { runMv } from './runMv';
+import { runNeeds } from './runNeeds';
+import { runNormalizeImports } from './runNormalizeImports';
+import { runNormalizeNamespaceImports } from './runNormalizeNamespaceImports';
+import { runProjectUse } from './runProjectUse';
+import { runProposeImportDirectly } from './runProposeImportDirectly';
+import { runProposePurgeReexport } from './runProposePurgeReexport';
+import { runProposeSplit } from './runProposeSplit';
+import { runReplaceTypeUse } from './runReplaceTypeUse';
+import { runSplit } from './runSplit';
+import { runSymbolUsage } from './runSymbolUsage';
+import { runTraceImports } from './runTraceImports';
+import { runTscat } from './runTscat';
+import { runTsort } from './runTsort';
+import { runTypeLeafUsage } from './runTypeLeafUsage';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
 const isInteractive = process.stdout.isTTY && !process.env.CI;
@@ -241,10 +241,18 @@ program
 
 program
   .command('coupling <path>')
-  .description('Analyze member coupling via SCC decomposition and topological depth')
-  .option('--class <name>', 'Analyze members of the named class instead of module scope')
+  .description(
+    'Analyze internal coupling between declarations in a module or class',
+  )
+  .option(
+    '--class <name>',
+    'Analyze members of the named class instead of module scope',
+  )
   .option('-g, --graphviz', 'Output coupling graph in Graphviz DOT format')
-  .option('--graphviz-depth-zero-one-subset', 'Output only the depth-0/1 SCC subset as Graphviz DOT')
+  .option(
+    '--graphviz-depth-zero-one-subset',
+    'Output only the depth-0/1 SCC subset as Graphviz DOT',
+  )
   .action((path: string, opts) => {
     const classOption = typeof opts.class === 'string' ? opts.class : null;
     runCoupling(path, {
@@ -282,118 +290,220 @@ program
 
 program
   .command('split <sourceModule> <targetModule> <symbols...>')
-  .description('Split symbols (convenience: propose + apply)')
+  .description(
+    'Extract symbols to a new module and apply the changes immediately',
+  )
   .option('-n, --dry-run', '[DEPRECATED] Use propose-split instead')
-  .action(async (sourceModule: string, targetModule: string, symbols: string[], opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const fileSystem = new RealFileSystem();
-    await runSplit(sourceModule, targetModule, symbols, opts, debugOptions, fileSystem);
-  });
+  .action(
+    async (
+      sourceModule: string,
+      targetModule: string,
+      symbols: string[],
+      opts,
+      _cmd,
+    ) => {
+      const fileSystem = new RealFileSystem();
+      await runSplit(
+        sourceModule,
+        targetModule,
+        symbols,
+        opts,
+        fileSystem,
+        writeStderr,
+        currentCwd,
+      );
+    },
+  );
 
 program
   .command('propose-split <sourceModule> <targetModule> <symbols...>')
-  .description('Propose splitting symbols to a new module (creates .tslor-plan.json)')
-  .action(async (sourceModule: string, targetModule: string, symbols: string[], cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const fileSystem = new RealFileSystem();
-    await runProposeSplit(sourceModule, targetModule, symbols, debugOptions, fileSystem);
-  });
+  .description('Generate a plan to extract symbols to a new module')
+  .action(
+    async (
+      sourceModule: string,
+      targetModule: string,
+      symbols: string[],
+      _cmd,
+    ) => {
+      const fileSystem = new RealFileSystem();
+      await runProposeSplit(
+        sourceModule,
+        targetModule,
+        symbols,
+        fileSystem,
+        writeStderr,
+        currentCwd,
+      );
+    },
+  );
 
 program
   .command('propose-import-directly <directory>')
-  .description('Propose changing imports of re-exported symbols to point directly to original exports (creates .tslor-plan.json)')
+  .description(
+    'Generate a plan to replace imports through barrel files with direct imports',
+  )
   .action(async (directory: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const repoProvider = new GitRepositoryRootProvider();
-    const fileSystem = new RealFileSystem();
-    await runProposeImportDirectly(directory, debugOptions, repoProvider, fileSystem);
-  });
-
-program
-  .command('propose-purge-reexport <directory>')
-  .description('Propose removing unused re-exports from the codebase (creates .tslor-plan.json)')
-  .action(async (directory: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const repoProvider = new GitRepositoryRootProvider();
-    const fileSystem = new RealFileSystem();
-    await runProposePurgeReexport(directory, debugOptions, repoProvider, fileSystem);
-  });
-
-program
-  .command('normalize-namespace-imports <directory>')
-  .description('Convert namespace imports (import * as X) to explicit named imports (creates .tslor-plan.json)')
-  .action(async (directory: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const repoProvider = new GitRepositoryRootProvider();
-    const fileSystem = new RealFileSystem();
-    await runNormalizeNamespaceImports(directory, debugOptions, repoProvider, fileSystem);
-  });
-
-program
-  .command('replace-type-use <directory>')
-  .description('Replace all usages of a type with another type')
-  .requiredOption('--source-type <name>', 'Type name to replace')
-  .requiredOption('--source-module <specifier>', 'Import specifier for the source type')
-  .requiredOption('--target-type <name>', 'Replacement type name')
-  .requiredOption('--target-module <specifier>', 'Import specifier for the target type')
-  .action(async (directory: string, opts: OptionValues, cmd: Command) => {
-    const { sourceType, sourceModule, targetType, targetModule } = opts;
-    if (typeof sourceType !== 'string' || typeof sourceModule !== 'string' ||
-        typeof targetType !== 'string' || typeof targetModule !== 'string') {
-      throw new Error('Missing required options: --source-type, --source-module, --target-type, --target-module');
-    }
-    const debugOptions = getDebugOptions(cmd);
-    const repoProvider = new GitRepositoryRootProvider();
-    const fileSystem = new RealFileSystem();
-    await runReplaceTypeUse(directory, { sourceType, sourceModule, targetType, targetModule }, debugOptions, repoProvider, fileSystem);
-  });
-
-program
-  .command('normalize-imports <directory>')
-  .description('Merge duplicate import declarations from the same module (creates .tslor-plan.json)')
-  .action(async (directory: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    const repoProvider = new GitRepositoryRootProvider();
-    const fileSystem = new RealFileSystem();
-    await runNormalizeImports(directory, debugOptions, repoProvider, fileSystem);
-  });
-
-program
-  .command('type-leaf-usage <directory> <types...>')
-  .description('Find leaf modules importing specified types (no transitive type-using dependencies)')
-  .option('--all', 'Include modules that define the types')
-  .action(async (directory: string, types: string[], opts: OptionValues, cmd: Command) => {
     const { traceId, fresh } = getGlobalOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
     const fileSystem = new RealFileSystem();
-    await runTypeLeafUsage(
+    await runProposeImportDirectly(
       directory,
-      types,
-      { all: opts['all'] === true },
       { traceId },
       fresh,
+      repoProvider,
       fileSystem,
       writeStderr,
+      currentCwd,
     );
   });
 
 program
+  .command('propose-purge-reexport <directory>')
+  .description('Generate a plan to remove re-exports that nothing imports')
+  .action(async (directory: string, cmd) => {
+    const { traceId, fresh } = getGlobalOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runProposePurgeReexport(
+      directory,
+      { traceId },
+      fresh,
+      repoProvider,
+      fileSystem,
+      writeStderr,
+      currentCwd,
+    );
+  });
+
+program
+  .command('normalize-namespace-imports <directory>')
+  .description(
+    'Generate a plan to replace namespace imports with explicit named imports',
+  )
+  .action(async (directory: string, cmd) => {
+    const { traceId, fresh } = getGlobalOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runNormalizeNamespaceImports(
+      directory,
+      { traceId },
+      fresh,
+      repoProvider,
+      fileSystem,
+      writeStderr,
+      currentCwd,
+    );
+  });
+
+program
+  .command('replace-type-use <directory>')
+  .description(
+    'Generate a plan to replace one type with another across a codebase',
+  )
+  .requiredOption('--source-type <name>', 'Type name to replace')
+  .requiredOption(
+    '--source-module <specifier>',
+    'Import specifier for the source type',
+  )
+  .requiredOption('--target-type <name>', 'Replacement type name')
+  .requiredOption(
+    '--target-module <specifier>',
+    'Import specifier for the target type',
+  )
+  .action(async (directory: string, opts: OptionValues, cmd: Command) => {
+    const { sourceType, sourceModule, targetType, targetModule } = opts;
+    if (
+      typeof sourceType !== 'string' ||
+      typeof sourceModule !== 'string' ||
+      typeof targetType !== 'string' ||
+      typeof targetModule !== 'string'
+    ) {
+      throw new CliError(
+        'Missing required options: --source-type, --source-module, --target-type, --target-module',
+      );
+    }
+    const { traceId, fresh } = getGlobalOptions(cmd);
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runReplaceTypeUse(
+      directory,
+      { sourceType, sourceModule, targetType, targetModule },
+      {
+        debugOptions: { traceId },
+        fresh,
+        repoProvider,
+        fileSystem,
+        writer: writeStderr,
+        cwd: currentCwd,
+      },
+    );
+  });
+
+program
+  .command('normalize-imports <directory>')
+  .description(
+    'Generate a plan to merge duplicate imports from the same module',
+  )
+  .action(async (directory: string) => {
+    const repoProvider = new GitRepositoryRootProvider();
+    const fileSystem = new RealFileSystem();
+    await runNormalizeImports(
+      directory,
+      repoProvider,
+      fileSystem,
+      writeStderr,
+      currentCwd,
+    );
+  });
+
+program
+  .command('type-leaf-usage <directory> <types...>')
+  .description(
+    'Find modules that import specified types but are not themselves type-imported',
+  )
+  .option('--all', 'Include modules that define the types')
+  .action(
+    async (
+      directory: string,
+      types: string[],
+      opts: OptionValues,
+      cmd: Command,
+    ) => {
+      const { traceId, fresh } = getGlobalOptions(cmd);
+      const fileSystem = new RealFileSystem();
+      await runTypeLeafUsage(
+        directory,
+        types,
+        { all: opts['all'] === true },
+        { traceId },
+        fresh,
+        fileSystem,
+        writeStderr,
+      );
+    },
+  );
+
+program
   .command('apply [plan-file]')
-  .description('Apply a proposed refactoring plan')
+  .description(
+    'Apply changes from a refactoring plan, with optional verification and rollback',
+  )
   .option('--force', 'Apply even if checksums have changed')
-  .option('--verify <command>', 'Run shell command after applying; rollback if it fails')
-  .action(async (planFile: string | undefined, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    await runApply(planFile, opts, debugOptions);
+  .option(
+    '--verify <command>',
+    'Run shell command after applying; rollback if it fails',
+  )
+  .action(async (planFile: string | undefined, opts, _cmd) => {
+    await runApply(planFile, { ...opts, writer: writeStderr }, currentCwd);
   });
 
 program
   .command('diff [plan-file]')
-  .description('Show unified diff of proposed changes')
+  .description('Preview changes from a refactoring plan as a unified diff')
   .option('--stats', 'Show change statistics instead of full diff')
   .option('--names-only', 'Show only file names that will be changed')
-  .action(async (planFile: string | undefined, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    await runDiff(planFile, opts, debugOptions);
+  .action(async (planFile: string | undefined, opts) => {
+    await runDiff(planFile, { ...opts }, writeStderr, currentCwd);
   });
 
 program
@@ -460,8 +570,13 @@ program
 
 program
   .command('import-groups <paths...>')
-  .description('Group modules by shared import dependencies and rank by impact')
-  .option('-p, --project-scope', 'Only consider imports within the same project')
+  .description(
+    'Find modules that share identical import sets and rank groups by size',
+  )
+  .option(
+    '-p, --project-scope',
+    'Only consider imports within the same project',
+  )
   .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
     const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
@@ -478,17 +593,8 @@ program
     );
   });
 
-
-/*
-  File moved fixup strategy:
-
-  - Identify all exports provided by the new file location.
-  - Identify all exports at old file location that no longer is provided.
-  - Identify all files that import any of the exports at the old location.
-  - Rewrite the imports of these files to import from the new location.
-*/
 async function main() {
-  program.parse(process.argv);
+  await program.parseAsync(process.argv);
 }
 
 main().catch((err) => {

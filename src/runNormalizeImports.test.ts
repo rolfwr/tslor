@@ -5,7 +5,7 @@ import { normalizeImportsInFile } from './runNormalizeImports';
 function normalize(source: string): { changed: boolean; result: string } {
   const project = new Project({ useInMemoryFileSystem: true });
   const sourceFile = project.createSourceFile('test.ts', source);
-  const changed = normalizeImportsInFile(sourceFile);
+  const { changed } = normalizeImportsInFile(sourceFile);
   return { changed, result: sourceFile.getFullText() };
 }
 
@@ -104,7 +104,7 @@ import { A, C } from './mod';
   assert.isTrue(changed);
   assert.equal(result.match(/from '\.\/mod'/g)?.length, 1);
   // A should appear only once in the import
-  const importLine = result.split('\n').find(l => l.includes("from './mod'"));
+  const importLine = result.split('\n').find((l) => l.includes("from './mod'"));
   if (importLine === undefined) {
     throw new Error('Expected to find import line');
   }
@@ -172,7 +172,10 @@ import type GroupModel from '@mimir/common/dto/groupModel';
 `);
   // Cannot merge because setDefaultImport on type-only import produces invalid syntax
   assert.isFalse(changed);
-  assert.equal(result.match(/from '@mimir\/common\/dto\/groupModel'/g)?.length, 2);
+  assert.equal(
+    result.match(/from '@mimir\/common\/dto\/groupModel'/g)?.length,
+    2,
+  );
 });
 
 test('Merge named-only type imports even when group has an unmergeable default', () => {

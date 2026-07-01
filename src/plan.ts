@@ -1,6 +1,6 @@
 /**
  * TSLOR Plan Infrastructure
- * 
+ *
  * Implements the propose/apply pattern for behavior-preserving refactorings.
  * Plan files serve as an execution contract between proposal and application.
  */
@@ -10,6 +10,8 @@ import { createHash } from 'crypto';
 import { existsSync } from 'fs';
 import * as Diff from 'diff';
 import { dirname, join, relative } from 'path';
+import { CliError } from './errors';
+import { denormalizePath } from './pathUtils';
 
 export const PLAN_FILE_NAME = '.tslor-plan.json';
 export const PLAN_VERSION = '1.0.0';
@@ -18,20 +20,20 @@ export const PLAN_VERSION = '1.0.0';
  * A TSLOR refactoring plan that can be proposed, reviewed, and applied.
  */
 export interface TslorPlan {
-  version: string;           // Plan format version
-  command: string;           // Command that created this plan (e.g., "split")
-  timestamp: string;         // ISO 8601 timestamp when proposed
-  sourceFiles: string[];     // Files being modified
-  targetFiles: string[];     // Files being created
-  
+  version: string; // Plan format version
+  command: string; // Command that created this plan (e.g., "split")
+  timestamp: string; // ISO 8601 timestamp when proposed
+  sourceFiles: string[]; // Files being modified
+  targetFiles: string[]; // Files being created
+
   // Checksums to detect changes since proposal
   checksums: {
-    [filePath: string]: string;  // SHA256 of file content
+    [filePath: string]: string; // SHA256 of file content
   };
-  
+
   // The actual changes to apply
   changes: Change[];
-  
+
   // Optional: Undo information for rollback
   undo?: Change[];
 }
@@ -39,10 +41,7 @@ export interface TslorPlan {
 /**
  * Types of changes that can be applied to files
  */
-export type Change =
-  | CreateFileChange
-  | ModifyFileChange
-  | DeleteFileChange;
+export type Change = CreateFileChange | ModifyFileChange | DeleteFileChange;
 
 export interface CreateFileChange {
   type: 'create-file';
@@ -54,7 +53,7 @@ export interface ModifyFileChange {
   type: 'modify-file';
   path: string;
   content: string;
-  originalChecksum: string;  // To verify file hasn't changed
+  originalChecksum: string; // To verify file hasn't changed
 }
 
 export interface DeleteFileChange {
@@ -81,7 +80,10 @@ export function computeStringChecksum(content: string): string {
 /**
  * Write a plan to a file.
  */
-export async function writePlan(plan: TslorPlan, planFile: string): Promise<void> {
+export async function writePlan(
+  plan: TslorPlan,
+  planFile: string,
+): Promise<void> {
   const planJson = JSON.stringify(plan, null, 2);
   await fsp.writeFile(planFile, planJson, 'utf-8');
 }
@@ -91,9 +93,9 @@ export async function writePlan(plan: TslorPlan, planFile: string): Promise<void
  */
 export async function readPlan(planFile: string): Promise<TslorPlan> {
   if (!existsSync(planFile)) {
-    throw new Error(`Plan file does not exist: ${planFile}`);
+    throw new CliError(`Plan file does not exist: ${planFile}`);
   }
-  
+
   const planJson = await fsp.readFile(planFile, 'utf-8');
   // RATIONALE: JSON boundary for internal tooling, validated by validatePlanFormat
   // ast-grep-ignore: no-type-assertion
@@ -107,73 +109,75 @@ export async function readPlan(planFile: string): Promise<TslorPlan> {
  */
 export function validatePlanFormat(plan: TslorPlan): void {
   if (!plan.version) {
-    throw new Error('Plan missing version field');
+    throw new CliError('Plan missing version field');
   }
-  
   if (!plan.command) {
-    throw new Error('Plan missing command field');
+    throw new CliError('Plan missing command field');
   }
-  
   if (!plan.timestamp) {
-    throw new Error('Plan missing timestamp field');
+    throw new CliError('Plan missing timestamp field');
   }
-  
   if (!Array.isArray(plan.sourceFiles)) {
-    throw new Error('Plan missing sourceFiles array');
+    throw new CliError('Plan missing sourceFiles array');
   }
-  
   if (!Array.isArray(plan.targetFiles)) {
-    throw new Error('Plan missing targetFiles array');
+    throw new CliError('Plan missing targetFiles array');
   }
-  
   if (!plan.checksums || typeof plan.checksums !== 'object') {
-    throw new Error('Plan missing checksums object');
+    throw new CliError('Plan missing checksums object');
   }
-  
   if (!Array.isArray(plan.changes)) {
-    throw new Error('Plan missing changes array');
+    throw new CliError('Plan missing changes array');
   }
 }
 
 /**
  * Validate that files haven't changed since plan was created.
+ *
+ * @param warn - Warning callback for force-mode checksum mismatch notices.
  */
-export async function validateChecksums(plan: TslorPlan, force: boolean): Promise<void> {
+export async function validateChecksums(
+  plan: TslorPlan,
+  force: boolean,
+  warn: (message: string) => void,
+): Promise<void> {
   const mismatches: string[] = [];
   const missing: string[] = [];
-  
+
   for (const [filePath, expectedChecksum] of Object.entries(plan.checksums)) {
     if (!existsSync(filePath)) {
       missing.push(filePath);
       continue;
     }
-    
+
     const actualChecksum = await computeFileChecksum(filePath);
     if (actualChecksum !== expectedChecksum) {
       mismatches.push(filePath);
     }
   }
-  
+
   if (missing.length > 0) {
-    throw new Error(
+    throw new CliError(
       `The following files no longer exist:\n` +
-      missing.map(f => `  - ${f}`).join('\n') +
-      `\n\nPlan cannot be applied.`
+        missing.map((f) => `  - ${f}`).join('\n') +
+        `\n\nPlan cannot be applied.`,
     );
   }
-  
+
   if (mismatches.length > 0 && !force) {
-    throw new Error(
+    throw new CliError(
       `The following files have changed since plan was created:\n` +
-      mismatches.map(f => `  - ${f}`).join('\n') +
-      `\n\nPlease create a new plan or use --force to apply anyway.`
+        mismatches.map((f) => `  - ${f}`).join('\n') +
+        `\n\nPlease create a new plan or use --force to apply anyway.`,
     );
   }
-  
+
   if (mismatches.length > 0 && force) {
-    console.warn('Warning: Applying plan despite checksum mismatches (--force specified)');
+    warn(
+      'Warning: Applying plan despite checksum mismatches (--force specified)\n',
+    );
     for (const file of mismatches) {
-      console.warn(`  - ${file}`);
+      warn(`  - ${file}\n`);
     }
   }
 }
@@ -181,93 +185,103 @@ export async function validateChecksums(plan: TslorPlan, force: boolean): Promis
 /**
  * Display a human-readable preview of the plan.
  */
-export async function displayPlan(plan: TslorPlan, options: { noDiff?: boolean }): Promise<void> {
-  console.log('\n=== PROPOSED CHANGES ===');
-  console.log(`Command: ${plan.command}`);
-  console.log(`Proposed at: ${plan.timestamp}`);
-  console.log('');
-  
+export async function displayPlan(
+  plan: TslorPlan,
+  options: { noDiff?: boolean },
+  cwd: string,
+  writer: (message: string) => void,
+): Promise<void> {
+  writer('\n=== PROPOSED CHANGES ===\n');
+  writer(`Command: ${plan.command}\n`);
+  writer(`Proposed at: ${plan.timestamp}\n`);
+  writer('\n');
+
   // Group changes by type
-  const creates = plan.changes.filter((c): c is CreateFileChange => c.type === 'create-file');
-  const modifies = plan.changes.filter((c): c is ModifyFileChange => c.type === 'modify-file');
-  const deletes = plan.changes.filter((c): c is DeleteFileChange => c.type === 'delete-file');
-  
+  const creates = plan.changes.filter(
+    (c): c is CreateFileChange => c.type === 'create-file',
+  );
+  const modifies = plan.changes.filter(
+    (c): c is ModifyFileChange => c.type === 'modify-file',
+  );
+  const deletes = plan.changes.filter(
+    (c): c is DeleteFileChange => c.type === 'delete-file',
+  );
+
   if (creates.length > 0) {
-    console.log('Files to create:');
+    writer('Files to create:\n');
     for (const change of creates) {
       const lines = change.content.split('\n').length;
-      console.log(`  + ${relative(process.cwd(), change.path)} (${lines} lines)`);
+      writer(`  + ${denormalizePath(change.path, cwd)} (${lines} lines)\n`);
     }
-    console.log('');
+    writer('\n');
   }
-  
+
   if (modifies.length > 0) {
-    console.log('Files to modify:');
+    writer('Files to modify:\n');
     for (const change of modifies) {
       const lines = change.content.split('\n').length;
-      console.log(`  ~ ${relative(process.cwd(), change.path)} (${lines} lines)`);
+      writer(`  ~ ${denormalizePath(change.path, cwd)} (${lines} lines)\n`);
     }
-    console.log('');
+    writer('\n');
   }
-  
+
   if (deletes.length > 0) {
-    console.log('Files to delete:');
+    writer('Files to delete:\n');
     for (const change of deletes) {
-      console.log(`  - ${relative(process.cwd(), change.path)}`);
+      writer(`  - ${denormalizePath(change.path, cwd)}\n`);
     }
-    console.log('');
+    writer('\n');
   }
-  
-  console.log(`Total changes: ${plan.changes.length}`);
-  console.log('');
-  
+
+  writer(`Total changes: ${plan.changes.length}\n`);
+  writer('\n');
+
   // Show unified diff (unless disabled)
   if (!options.noDiff) {
-    console.log('=== DIFF ===');
-    const diff = await generatePlanDiff(plan);
-    console.log(diff);
-    console.log('');
+    writer('=== DIFF ===\n');
+    const diff = await generatePlanDiff(plan, cwd);
+    writer(diff);
+    writer('\n');
   }
-  
-  console.log(`Plan written to: ${PLAN_FILE_NAME}`);
-  console.log(`To apply: tslor apply`);
-  console.log(`To see diff: tslor diff`);
-  console.log('=== END PROPOSED CHANGES ===\n');
+
+  writer(`Plan written to: ${PLAN_FILE_NAME}\n`);
+  writer(`To apply: tslor apply\n`);
+  writer(`To see diff: tslor diff\n`);
+  writer('=== END PROPOSED CHANGES ===\n');
+}
+
+/**
+ * Validate preconditions before executing changes.
+ */
+function auditChanges(changes: Change[]): void {
+  for (const change of changes) {
+    if (change.type === 'modify-file' || change.type === 'delete-file') {
+      if (!existsSync(change.path)) {
+        throw new CliError(
+          `Cannot ${change.type}: file does not exist: ${change.path}`,
+        );
+      }
+    }
+    if (change.type === 'create-file') {
+      if (existsSync(change.path)) {
+        throw new CliError(
+          `Cannot create file: already exists: ${change.path}`,
+        );
+      }
+    }
+  }
 }
 
 /**
  * Execute all changes in a plan atomically.
  */
 export async function executeChanges(changes: Change[]): Promise<void> {
-  // First, validate that all changes can be applied
+  auditChanges(changes);
   for (const change of changes) {
-    if (change.type === 'modify-file' || change.type === 'delete-file') {
-      if (!existsSync(change.path)) {
-        throw new Error(`Cannot ${change.type}: file does not exist: ${change.path}`);
-      }
-    }
-    
-    if (change.type === 'create-file') {
-      if (existsSync(change.path)) {
-        throw new Error(`Cannot create file: already exists: ${change.path}`);
-      }
-    }
-  }
-  
-  // Execute all changes
-  for (const change of changes) {
-    switch (change.type) {
-      case 'create-file':
-        await fsp.writeFile(change.path, change.content, 'utf-8');
-        break;
-        
-      case 'modify-file':
-        await fsp.writeFile(change.path, change.content, 'utf-8');
-        break;
-        
-      case 'delete-file':
-        await fsp.unlink(change.path);
-        break;
+    if (change.type === 'delete-file') {
+      await fsp.unlink(change.path);
+    } else {
+      await fsp.writeFile(change.path, change.content, 'utf-8');
     }
   }
 }
@@ -275,37 +289,35 @@ export async function executeChanges(changes: Change[]): Promise<void> {
 /**
  * Execute undo changes to rollback a plan.
  */
-export async function executeUndo(plan: TslorPlan): Promise<void> {
+export async function executeUndo(
+  plan: TslorPlan,
+  writer: (message: string) => void,
+): Promise<void> {
   if (!plan.undo) {
-    throw new Error('Plan does not contain undo information');
+    throw new CliError('Plan does not contain undo information');
   }
-  
-  console.log('Rolling back changes...');
-  
-  // Execute undo changes
+
+  writer('Rolling back changes...\n');
+
   for (const change of plan.undo) {
-    switch (change.type) {
-      case 'create-file':
-        await fsp.writeFile(change.path, change.content, 'utf-8');
-        break;
-        
-      case 'modify-file':
-        await fsp.writeFile(change.path, change.content, 'utf-8');
-        break;
-        
-      case 'delete-file':
-        if (existsSync(change.path)) {
-          await fsp.unlink(change.path);
-        }
-        break;
+    if (change.type === 'delete-file') {
+      if (existsSync(change.path)) {
+        await fsp.unlink(change.path);
+      }
+    } else {
+      await fsp.writeFile(change.path, change.content, 'utf-8');
     }
   }
-  
-  console.log('✓ Changes rolled back');
+
+  writer('✓ Changes rolled back\n');
 }
 
 /**
  * Archive a plan file after application.
+ *
+ * Uses copyFile + unlink instead of rename to handle cross-device (EXDEV)
+ * scenarios where the plan file and working directory reside on different
+ * filesystems (e.g., Docker volumes, network mounts, separate partitions).
  */
 export async function archivePlan(planFile: string): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '_');
@@ -320,119 +332,157 @@ export async function archivePlan(planFile: string): Promise<string> {
 /**
  * Generate a unified diff for a change.
  */
-export function generateDiff(change: Change, oldContent?: string): string {
-  const cwd = process.cwd();
+function generateDiff(change: Change, oldContent: string, cwd: string): string {
   const relativePath = relative(cwd, change.path);
-  
+
   if (change.type === 'create-file') {
-    // Show as creating new file
-    const patch = Diff.createPatch(
+    return Diff.createPatch(
       relativePath,
       '',
       change.content,
       'original (does not exist)',
-      'modified (new file)'
+      'modified (new file)',
     );
-    return patch;
   } else if (change.type === 'modify-file') {
-    // Show diff between original and modified
-    const original = oldContent || '';
-    const patch = Diff.createPatch(
+    return Diff.createPatch(
       relativePath,
-      original,
+      oldContent,
       change.content,
       'original',
-      'modified'
+      'modified',
     );
-    return patch;
-  } else if (change.type === 'delete-file') {
-    // Show as deleting file
-    const original = oldContent || '';
-    const patch = Diff.createPatch(
+  } else {
+    return Diff.createPatch(
       relativePath,
-      original,
+      oldContent,
       '',
       'original',
-      'modified (deleted)'
+      'modified (deleted)',
     );
-    return patch;
   }
-  
-  return '';
 }
 
 /**
  * Generate unified diffs for all changes in a plan.
  */
-export async function generatePlanDiff(plan: TslorPlan): Promise<string> {
+async function generatePlanDiff(plan: TslorPlan, cwd: string): Promise<string> {
   const diffs: string[] = [];
-  
+
   for (const change of plan.changes) {
     let oldContent = '';
-    
+
     // For modify/delete, read the current file content
-    if ((change.type === 'modify-file' || change.type === 'delete-file') && existsSync(change.path)) {
+    if (
+      (change.type === 'modify-file' || change.type === 'delete-file') &&
+      existsSync(change.path)
+    ) {
       oldContent = await fsp.readFile(change.path, 'utf-8');
     }
-    
-    const diff = generateDiff(change, oldContent);
+
+    const diff = generateDiff(change, oldContent, cwd);
     if (diff) {
       diffs.push(diff);
     }
   }
-  
+
   return diffs.join('\n');
 }
 
-function displayChangedFileNames(plan: TslorPlan): void {
-  console.log('Files to be changed:');
+function displayChangedFileNames(
+  plan: TslorPlan,
+  cwd: string,
+  writer: (message: string) => void,
+): void {
+  writer('Files to be changed:\n');
   for (const change of plan.changes) {
-    const symbol = change.type === 'create-file' ? '+' : change.type === 'delete-file' ? '-' : '~';
-    const relativePath = relative(process.cwd(), change.path);
-    console.log(`  ${symbol} ${relativePath}`);
+    const symbol =
+      change.type === 'create-file'
+        ? '+'
+        : change.type === 'delete-file'
+          ? '-'
+          : '~';
+    const path = denormalizePath(change.path, cwd);
+    writer(`  ${symbol} ${path}\n`);
   }
 }
 
-async function displayStatForChange(change: TslorPlan['changes'][number]): Promise<void> {
-  const relativePath = relative(process.cwd(), change.path);
+async function displayStatForChange(
+  change: TslorPlan['changes'][number],
+  cwd: string,
+  writer: (message: string) => void,
+): Promise<void> {
+  const path = denormalizePath(change.path, cwd);
+
   if (change.type === 'create-file') {
     const lines = change.content.split('\n').length;
-    console.log(`  ${relativePath} | ${lines} lines (new)`);
+    writer(`  ${path} | ${lines} lines (new)\n`);
     return;
   }
+
+  const oldContent = existsSync(change.path)
+    ? await fsp.readFile(change.path, 'utf-8')
+    : '';
+
   if (change.type === 'modify-file') {
-    const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
-    const delta = change.content.split('\n').length - oldContent.split('\n').length;
+    const newLines = change.content.split('\n').length;
+    const oldLines = oldContent.split('\n').length;
+    const delta = newLines - oldLines;
     const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
-    console.log(`  ${relativePath} | ${deltaStr} lines`);
+    writer(`  ${path} | ${deltaStr} lines\n`);
     return;
   }
+
   if (change.type === 'delete-file') {
-    const oldContent = existsSync(change.path) ? await fsp.readFile(change.path, 'utf-8') : '';
     const lines = oldContent.split('\n').length;
-    console.log(`  ${relativePath} | -${lines} lines (deleted)`);
+    writer(`  ${path} | -${lines} lines (deleted)\n`);
   }
 }
 
-async function displayChangeStatistics(plan: TslorPlan): Promise<void> {
-  console.log('Change statistics:');
+async function displayChangeStatistics(
+  plan: TslorPlan,
+  cwd: string,
+  writer: (message: string) => void,
+): Promise<void> {
+  writer('Change statistics:\n');
   for (const change of plan.changes) {
-    await displayStatForChange(change);
+    await displayStatForChange(change, cwd, writer);
   }
+}
+
+/**
+ * Create an empty plan when no changes are needed.
+ *
+ * @param command - The command that generated the plan
+ */
+export function createEmptyPlan(command: string): TslorPlan {
+  return {
+    version: PLAN_VERSION,
+    command,
+    timestamp: new Date().toISOString(),
+    sourceFiles: [],
+    targetFiles: [],
+    checksums: {},
+    changes: [],
+  };
 }
 
 /**
  * Display unified diff for a plan.
  */
-export async function displayPlanDiff(plan: TslorPlan, options: { stats?: boolean; namesOnly?: boolean }): Promise<void> {
+export async function displayPlanDiff(
+  plan: TslorPlan,
+  options: { stats?: boolean; namesOnly?: boolean },
+  cwd: string,
+  writer: (message: string) => void,
+): Promise<void> {
   if (options.namesOnly) {
-    displayChangedFileNames(plan);
+    displayChangedFileNames(plan, cwd, writer);
     return;
   }
   if (options.stats) {
-    await displayChangeStatistics(plan);
+    await displayChangeStatistics(plan, cwd, writer);
     return;
   }
-  const diff = await generatePlanDiff(plan);
-  console.log(diff);
+  const diff = await generatePlanDiff(plan, cwd);
+  writer(diff);
 }

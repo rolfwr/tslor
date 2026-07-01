@@ -1,6 +1,9 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
-import { runProposeImportDirectly, applyImportChangesToFile } from './runProposeImportDirectly';
+import {
+  runProposeImportDirectly,
+  applyImportChangesToFile,
+} from './runProposeImportDirectly';
 import { DebugOptions } from './objstore';
 import { ModifyFileChange } from './plan';
 import { InMemoryRepositoryRootProvider } from './repositoryRootProvider';
@@ -72,25 +75,40 @@ export function useCustomIcons(): ItemCustomIconsDto {
   const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
     '/repo/original.ts',
     '/repo/reexport.ts',
-    '/repo/consumer.ts'
+    '/repo/consumer.ts',
   ]);
 
   // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
   const fileSystem = new InMemoryFileSystem(new Map());
-  const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
+  const plan = await runProposeImportDirectly(
+    '/repo',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo',
+  );
 
   // The plan should have changes (imports to modify)
   assert(plan.changes.length > 0, 'Plan should have changes');
 
   // CRITICAL: The plan should have undo information
-  assert(plan.undo && plan.undo.length > 0, 'Plan should have undo information for rollback');
+  assert(
+    plan.undo && plan.undo.length > 0,
+    'Plan should have undo information for rollback',
+  );
 
   /*
     Verify that undo changes would restore the original imports.
     Each change should have a corresponding undo that reverses it.
   */
-  assert.equal(plan.changes.length, plan.undo.length, 'Should have same number of changes and undo operations');
+  assert.equal(
+    plan.changes.length,
+    plan.undo.length,
+    'Should have same number of changes and undo operations',
+  );
 
   // Check that undo operations are the reverse of changes
   for (let i = 0; i < plan.changes.length; i++) {
@@ -100,15 +118,25 @@ export function useCustomIcons(): ItemCustomIconsDto {
       continue;
     }
 
-    assert.equal(change.type, undo.type, `Change and undo types should match for index ${i}`);
+    assert.equal(
+      change.type,
+      undo.type,
+      `Change and undo types should match for index ${i}`,
+    );
 
     if (change.type === 'modify-file' && undo.type === 'modify-file') {
       /*
         The undo content should restore the original file content.
         For import changes, this means changing back from './original' to './reexport'.
       */
-      assert(undo.content.includes("from './reexport'"), `Undo should restore import from reexport, got: ${undo.content}`);
-      assert(!undo.content.includes("from './original'"), `Undo should not contain import from original, got: ${undo.content}`);
+      assert(
+        undo.content.includes("from './reexport'"),
+        `Undo should restore import from reexport, got: ${undo.content}`,
+      );
+      assert(
+        !undo.content.includes("from './original'"),
+        `Undo should not contain import from original, got: ${undo.content}`,
+      );
     }
   }
 });
@@ -162,13 +190,21 @@ import { realFunction, fakeFunction } from './vueCompat';
   const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
     '/repo/realModule.ts',
     '/repo/vueCompat.ts',
-    '/repo/consumer.ts'
+    '/repo/consumer.ts',
   ]);
 
   // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
   const fileSystem = new InMemoryFileSystem(new Map());
-  const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
+  const plan = await runProposeImportDirectly(
+    '/repo',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo',
+  );
 
   /*
     The plan should have NO changes for consumer.ts because fakeFunction doesn't exist in realModule.
@@ -181,8 +217,9 @@ import { realFunction, fakeFunction } from './vueCompat';
     Check that consumer.ts is not in the modified files, or if it is,
     that the import still references vueCompat for fakeFunction.
   */
-  const consumerChanges = plan.changes.filter(change =>
-    change.type === 'modify-file' && change.path.endsWith('consumer.ts')
+  const consumerChanges = plan.changes.filter(
+    (change) =>
+      change.type === 'modify-file' && change.path.endsWith('consumer.ts'),
   );
 
   if (consumerChanges.length > 0) {
@@ -192,8 +229,10 @@ import { realFunction, fakeFunction } from './vueCompat';
       assert.fail('Expected modify-file change');
     }
     const modifiedContent = modifyChange.content;
-    assert(modifiedContent.includes("fakeFunction } from './vueCompat'"),
-      'fakeFunction should still import from vueCompat since it does not exist in realModule');
+    assert(
+      modifiedContent.includes("fakeFunction } from './vueCompat'"),
+      'fakeFunction should still import from vueCompat since it does not exist in realModule',
+    );
   }
 
   // The test should pass - currently it will fail because the bug causes fakeFunction
@@ -209,9 +248,12 @@ test('applyImportChangesToFile splits mixed imports when only some symbols are r
   */
 
   const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = project.createSourceFile('consumer.ts', `
+  const sourceFile = project.createSourceFile(
+    'consumer.ts',
+    `
 import type { getItemRequestSchema, getItemResponseSchema } from '../../api/schemas/item/getItem';
-`);
+`,
+  );
 
   // Only getItemResponseSchema should be redirected
   const changes = [
@@ -228,29 +270,49 @@ import type { getItemRequestSchema, getItemResponseSchema } from '../../api/sche
   const result = sourceFile.getFullText();
 
   // The original import should be narrowed to only the unchanged symbol
-  assert.match(result, /getItemRequestSchema/,
-    'getItemRequestSchema must remain imported from the original module');
-  assert.match(result, /from ['"]\.\.\/\.\.\/api\/schemas\/item\/getItem['"]/,
-    'getItemRequestSchema must still point at getItem');
+  assert.match(
+    result,
+    /getItemRequestSchema/,
+    'getItemRequestSchema must remain imported from the original module',
+  );
+  assert.match(
+    result,
+    /from ['"]\.\.\/\.\.\/api\/schemas\/item\/getItem['"]/,
+    'getItemRequestSchema must still point at getItem',
+  );
 
   // A new import should be added for the redirected symbol
-  assert.match(result, /getItemResponseSchema/,
-    'getItemResponseSchema must be imported from the new module');
-  assert.match(result, /from ['"]\.\.\/\.\.\/api\/schemas\/item\/getItemResponse['"]/,
-    'getItemResponseSchema must point at getItemResponse');
+  assert.match(
+    result,
+    /getItemResponseSchema/,
+    'getItemResponseSchema must be imported from the new module',
+  );
+  assert.match(
+    result,
+    /from ['"]\.\.\/\.\.\/api\/schemas\/item\/getItemResponse['"]/,
+    'getItemResponseSchema must point at getItemResponse',
+  );
 
   // The redirected symbol must NOT remain in the original import
   const importDecls = sourceFile.getImportDeclarations();
-  const originalImport = importDecls.find(d =>
-    d.getModuleSpecifierValue() === '../../api/schemas/item/getItem'
+  const originalImport = importDecls.find(
+    (d) => d.getModuleSpecifierValue() === '../../api/schemas/item/getItem',
   );
-  assert.isDefined(originalImport, 'Original import declaration should still exist');
+  assert.isDefined(
+    originalImport,
+    'Original import declaration should still exist',
+  );
   if (originalImport === undefined) {
     throw new Error('Expected originalImport');
   }
-  const originalNames = originalImport.getNamedImports().map(n => n.getName());
-  assert.notInclude(originalNames, 'getItemResponseSchema',
-    'getItemResponseSchema must be removed from the original import');
+  const originalNames = originalImport
+    .getNamedImports()
+    .map((n) => n.getName());
+  assert.notInclude(
+    originalNames,
+    'getItemResponseSchema',
+    'getItemResponseSchema must be removed from the original import',
+  );
 });
 
 test('applyImportChangesToFile splits mixed import with multiple re-exported symbols', () => {
@@ -261,9 +323,12 @@ test('applyImportChangesToFile splits mixed import with multiple re-exported sym
   */
 
   const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = project.createSourceFile('consumer.ts', `
+  const sourceFile = project.createSourceFile(
+    'consumer.ts',
+    `
 import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } from '../../api/schemas/item/getItem';
-`);
+`,
+  );
 
   const changes = [
     {
@@ -284,32 +349,46 @@ import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } fro
 
   // Original import keeps only the non-re-exported symbol
   const importDecls = sourceFile.getImportDeclarations();
-  const originalImport = importDecls.find(d =>
-    d.getModuleSpecifierValue() === '../../api/schemas/item/getItem'
+  const originalImport = importDecls.find(
+    (d) => d.getModuleSpecifierValue() === '../../api/schemas/item/getItem',
   );
   assert.isDefined(originalImport, 'Original import should still exist');
   if (originalImport === undefined) {
     throw new Error('Expected originalImport');
   }
-  const originalNames = originalImport.getNamedImports().map(n => n.getName());
-  assert.deepEqual(originalNames, ['getItemRequestSchema'],
-    'Only getItemRequestSchema should remain in the original import');
+  const originalNames = originalImport
+    .getNamedImports()
+    .map((n) => n.getName());
+  assert.deepEqual(
+    originalNames,
+    ['getItemRequestSchema'],
+    'Only getItemRequestSchema should remain in the original import',
+  );
 
   // New import has both re-exported symbols pointing at the target module
-  const newImport = importDecls.find(d =>
-    d.getModuleSpecifierValue() === '../../api/schemas/item/getItemResponse'
+  const newImport = importDecls.find(
+    (d) =>
+      d.getModuleSpecifierValue() === '../../api/schemas/item/getItemResponse',
   );
-  assert.isDefined(newImport, 'New import pointing at getItemResponse should exist');
+  assert.isDefined(
+    newImport,
+    'New import pointing at getItemResponse should exist',
+  );
   if (newImport === undefined) {
     throw new Error('Expected newImport');
   }
-  const newNames = newImport.getNamedImports().map(n => n.getName()).sort();
-  assert.deepEqual(newNames, ['GetItemResponse', 'getItemResponseSchema'],
-    'Both re-exported symbols should be in the new import');
+  const newNames = newImport
+    .getNamedImports()
+    .map((n) => n.getName())
+    .sort();
+  assert.deepEqual(
+    newNames,
+    ['GetItemResponse', 'getItemResponseSchema'],
+    'Both re-exported symbols should be in the new import',
+  );
 
   // New import should be type-only since all moved symbols are type-only
-  assert.isTrue(newImport.isTypeOnly(),
-    'New import should be type-only');
+  assert.isTrue(newImport.isTypeOnly(), 'New import should be type-only');
 });
 
 test('applyImportChangesToFile preserves per-symbol type qualifier when splitting', () => {
@@ -320,9 +399,12 @@ test('applyImportChangesToFile preserves per-symbol type qualifier when splittin
   */
 
   const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = project.createSourceFile('consumer.ts', `
+  const sourceFile = project.createSourceFile(
+    'consumer.ts',
+    `
 import { startS3Server, type BucketConfiguration } from '@mimir/s3-server/s3server';
-`);
+`,
+  );
 
   const changes = [
     {
@@ -338,14 +420,19 @@ import { startS3Server, type BucketConfiguration } from '@mimir/s3-server/s3serv
   const result = sourceFile.getFullText();
 
   // The new import must be type-only
-  assert.match(result, /import\s+type\s*\{[^}]*BucketConfiguration[^}]*\}\s*from\s*['"]@mimir\/s3-server\/bucketConfiguration['"]/,
-    'New import for BucketConfiguration must have the type qualifier');
+  assert.match(
+    result,
+    /import\s+type\s*\{[^}]*BucketConfiguration[^}]*\}\s*from\s*['"]@mimir\/s3-server\/bucketConfiguration['"]/,
+    'New import for BucketConfiguration must have the type qualifier',
+  );
 
   // startS3Server must remain as a value import from the original module
-  assert.match(result, /startS3Server/,
-    'startS3Server must remain imported');
-  assert.match(result, /from ['"]@mimir\/s3-server\/s3server['"]/,
-    'startS3Server must still point at s3server');
+  assert.match(result, /startS3Server/, 'startS3Server must remain imported');
+  assert.match(
+    result,
+    /from ['"]@mimir\/s3-server\/s3server['"]/,
+    'startS3Server must still point at s3server',
+  );
 });
 
 test('runProposeImportDirectly produces changes for mixed imports (relative paths)', async () => {
@@ -357,21 +444,37 @@ test('runProposeImportDirectly produces changes for mixed imports (relative path
   */
 
   const files = new Map<string, string>([
-    ['/repo/tsconfig.json', JSON.stringify({
-      compilerOptions: { target: 'ES2022', module: 'ES2022', moduleResolution: 'Bundler' },
-      include: ['*.ts'],
-    })],
-    ['/repo/getItemResponse.ts', [
-      'export const getItemResponseSchema = "response";',
-      'export type GetItemResponse = { id: string };',
-    ].join('\n')],
-    ['/repo/getItem.ts', [
-      'export const getItemRequestSchema = "request";',
-      'export { getItemResponseSchema, type GetItemResponse } from "./getItemResponse";',
-    ].join('\n')],
-    ['/repo/consumer.ts', [
-      'import type { getItemRequestSchema, getItemResponseSchema } from "./getItem";',
-    ].join('\n')],
+    [
+      '/repo/tsconfig.json',
+      JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+        },
+        include: ['*.ts'],
+      }),
+    ],
+    [
+      '/repo/getItemResponse.ts',
+      [
+        'export const getItemResponseSchema = "response";',
+        'export type GetItemResponse = { id: string };',
+      ].join('\n'),
+    ],
+    [
+      '/repo/getItem.ts',
+      [
+        'export const getItemRequestSchema = "request";',
+        'export { getItemResponseSchema, type GetItemResponse } from "./getItemResponse";',
+      ].join('\n'),
+    ],
+    [
+      '/repo/consumer.ts',
+      [
+        'import type { getItemRequestSchema, getItemResponseSchema } from "./getItem";',
+      ].join('\n'),
+    ],
   ]);
 
   const fileSystem = new InMemoryFileSystem(files);
@@ -382,26 +485,41 @@ test('runProposeImportDirectly produces changes for mixed imports (relative path
   ]);
   const debugOptions: DebugOptions = { traceId: null };
 
-  const plan = await runProposeImportDirectly('/repo', debugOptions, repoProvider, fileSystem);
+  const plan = await runProposeImportDirectly(
+    '/repo',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo',
+  );
 
   // The plan MUST have a change for consumer.ts
-  assert.isAbove(plan.changes.length, 0,
-    'Plan should have at least one change');
-  const consumerChange = plan.changes.find(
-    (c): c is ModifyFileChange => c.type === 'modify-file' && c.path === '/repo/consumer.ts'
+  assert.isAbove(
+    plan.changes.length,
+    0,
+    'Plan should have at least one change',
   );
-  assert.isDefined(consumerChange,
-    'consumer.ts should be modified to split the mixed import');
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange =>
+      c.type === 'modify-file' && c.path === '/repo/consumer.ts',
+  );
   if (consumerChange === undefined) {
-    throw new Error('consumerChange is undefined');
+    assert.fail('consumer.ts should be modified to split the mixed import');
   }
 
-  // Verify the modified content splits the import correctly
   const content = consumerChange.content;
-  assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
-    'getItemRequestSchema must remain imported from getItem');
-  assert.match(content, /getItemResponseSchema.*from.*\.\/getItemResponse/,
-    'getItemResponseSchema must be redirected to getItemResponse');
+  assert.match(
+    content,
+    /getItemRequestSchema.*from.*\.\/getItem/,
+    'getItemRequestSchema must remain imported from getItem',
+  );
+  assert.match(
+    content,
+    /getItemResponseSchema.*from.*\.\/getItemResponse/,
+    'getItemResponseSchema must be redirected to getItemResponse',
+  );
 });
 
 test('runProposeImportDirectly produces changes when consumer uses path-mapped imports', async () => {
@@ -414,25 +532,39 @@ test('runProposeImportDirectly produces changes when consumer uses path-mapped i
   */
 
   const files = new Map<string, string>([
-    ['/repo/tsconfig.json', JSON.stringify({
-      compilerOptions: {
-        target: 'ES2022', module: 'ES2022', moduleResolution: 'Bundler',
-        paths: { '@repo/*': ['src/*'] },
-        baseUrl: '.',
-      },
-      include: ['src/**/*.ts'],
-    })],
-    ['/repo/src/getItemResponse.ts', [
-      'export const getItemResponseSchema = "response";',
-      'export type GetItemResponse = { id: string };',
-    ].join('\n')],
-    ['/repo/src/getItem.ts', [
-      'export const getItemRequestSchema = "request";',
-      'export { getItemResponseSchema, type GetItemResponse } from "./getItemResponse";',
-    ].join('\n')],
-    ['/repo/src/consumer.ts', [
-      'import type { getItemRequestSchema, getItemResponseSchema } from "./getItem";',
-    ].join('\n')],
+    [
+      '/repo/tsconfig.json',
+      JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+          paths: { '@repo/*': ['src/*'] },
+          baseUrl: '.',
+        },
+        include: ['src/**/*.ts'],
+      }),
+    ],
+    [
+      '/repo/src/getItemResponse.ts',
+      [
+        'export const getItemResponseSchema = "response";',
+        'export type GetItemResponse = { id: string };',
+      ].join('\n'),
+    ],
+    [
+      '/repo/src/getItem.ts',
+      [
+        'export const getItemRequestSchema = "request";',
+        'export { getItemResponseSchema, type GetItemResponse } from "./getItemResponse";',
+      ].join('\n'),
+    ],
+    [
+      '/repo/src/consumer.ts',
+      [
+        'import type { getItemRequestSchema, getItemResponseSchema } from "./getItem";',
+      ].join('\n'),
+    ],
   ]);
 
   const fileSystem = new InMemoryFileSystem(files);
@@ -443,22 +575,120 @@ test('runProposeImportDirectly produces changes when consumer uses path-mapped i
   ]);
   const debugOptions: DebugOptions = { traceId: null };
 
-  const plan = await runProposeImportDirectly('/repo/src', debugOptions, repoProvider, fileSystem);
-
-  assert.isAbove(plan.changes.length, 0,
-    'Plan should have at least one change');
-  const consumerChange = plan.changes.find(
-    (c): c is ModifyFileChange => c.type === 'modify-file' && c.path === '/repo/src/consumer.ts'
+  const plan = await runProposeImportDirectly(
+    '/repo/src',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo/src',
   );
-  assert.isDefined(consumerChange,
-    'consumer.ts should be modified even when tsconfig has path aliases');
+
+  assert.isAbove(
+    plan.changes.length,
+    0,
+    'Plan should have at least one change',
+  );
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange =>
+      c.type === 'modify-file' && c.path === '/repo/src/consumer.ts',
+  );
   if (consumerChange === undefined) {
-    throw new Error('consumerChange is undefined');
+    assert.fail(
+      'consumer.ts should be modified even when tsconfig has path aliases',
+    );
   }
 
   const content = consumerChange.content;
-  assert.match(content, /getItemRequestSchema.*from.*\.\/getItem/,
-    'getItemRequestSchema must remain imported from getItem');
-  assert.match(content, /getItemResponseSchema.*from.*\.\/getItemResponse/,
-    'getItemResponseSchema must be redirected to getItemResponse');
+  assert.match(
+    content,
+    /getItemRequestSchema.*from.*\.\/getItem/,
+    'getItemRequestSchema must remain imported from getItem',
+  );
+  assert.match(
+    content,
+    /getItemResponseSchema.*from.*\.\/getItemResponse/,
+    'getItemResponseSchema must be redirected to getItemResponse',
+  );
+});
+
+test('runProposeImportDirectly handles bare package re-exports', async () => {
+  /*
+    Reproduction of the bare-package bug:
+    A barrel file re-exports symbols from a bare npm package (e.g., 'some-lib').
+    Consumers import from the barrel. The command should redirect consumers
+    to import directly from the bare package, not silently drop the change.
+  */
+
+  const files = new Map<string, string>([
+    [
+      '/repo/tsconfig.json',
+      JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+        },
+        include: ['*.ts'],
+      }),
+    ],
+    [
+      '/repo/barrel.ts',
+      ['export { computed, ref, reactive } from "some-lib";'].join('\n'),
+    ],
+    [
+      '/repo/consumer.ts',
+      ['import { computed, ref } from "./barrel";'].join('\n'),
+    ],
+  ]);
+
+  const fileSystem = new InMemoryFileSystem(files);
+  const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
+    '/repo/barrel.ts',
+    '/repo/consumer.ts',
+  ]);
+  const debugOptions: DebugOptions = { traceId: null };
+
+  const plan = await runProposeImportDirectly(
+    '/repo',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo',
+  );
+
+  /*
+    The plan MUST have changes — consumer.ts should import from 'some-lib'
+    directly instead of from './barrel'.
+  */
+  assert.isAbove(
+    plan.changes.length,
+    0,
+    'Plan should have changes for bare package re-exports',
+  );
+
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange =>
+      c.type === 'modify-file' && c.path === '/repo/consumer.ts',
+  );
+  if (consumerChange === undefined) {
+    assert.fail('consumer.ts should be modified to import from bare package');
+  }
+
+  const content = consumerChange.content;
+  assert.match(
+    content,
+    /from ['"]some-lib['"]/,
+    'consumer should import from the bare package "some-lib"',
+  );
+  assert.match(content, /computed/, 'computed should still be imported');
+  assert.match(content, /ref/, 'ref should still be imported');
+  assert.notMatch(
+    content,
+    /from ['"]\.\/barrel['"]/,
+    'consumer should NOT import from barrel anymore',
+  );
 });

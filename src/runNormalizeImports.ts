@@ -7,28 +7,49 @@
  * side-effect imports.
  */
 
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { TslorPlan, PLAN_VERSION, PLAN_FILE_NAME, computeStringChecksum, writePlan, displayPlan, ModifyFileChange } from "./plan";
-import { SourceFile, ImportDeclaration, Identifier } from "ts-morph";
-import { loadSourceFile } from "./indexing";
-import { reinsertScript } from "./transformingFileSystem";
-import { RepositoryRootProvider, InMemoryRepositoryRootProvider } from "./repositoryRootProvider";
-import { FileSystem } from "./filesystem";
+import { Identifier, ImportDeclaration, SourceFile } from 'ts-morph';
+import { groupBy } from './collections';
+import { FileSystem } from './filesystem';
+import { loadSourceFile } from './indexing';
+import { isPathWithinDirectory, normalizeAndValidatePath } from './pathUtils';
+import {
+  computeStringChecksum,
+  displayPlan,
+  ModifyFileChange,
+  PLAN_FILE_NAME,
+  PLAN_VERSION,
+  TslorPlan,
+  writePlan,
+} from './plan';
+import {
+  InMemoryRepositoryRootProvider,
+  RepositoryRootProvider,
+} from './repositoryRootProvider';
+import { reinsertScript } from './transformingFileSystem';
 
 export async function runNormalizeImports(
   directoryArg: string,
-  debugOptions: DebugOptions,
   repoProvider: RepositoryRootProvider,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  cwd: string,
 ): Promise<TslorPlan> {
   const isInMemory = repoProvider instanceof InMemoryRepositoryRootProvider;
-  const directory = normalizeAndValidatePath(directoryArg, "Directory", isInMemory);
-  console.log(`Scanning for mergeable imports in ${directory}...`);
+  const directory = normalizeAndValidatePath(
+    directoryArg,
+    'Directory',
+    isInMemory,
+  );
+  writer(`Scanning for mergeable imports in ${directory}...\n`);
 
   const repoRoot = repoProvider.findRepositoryRoot(directory);
-  const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
-  const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
+  const allPaths = await repoProvider.getTypeScriptFilePaths(
+    repoRoot,
+    fileSystem,
+  );
+  const filteredPaths = allPaths.filter((path: string) =>
+    isPathWithinDirectory(path, directory),
+  );
 
   const changes: ModifyFileChange[] = [];
   const undo: ModifyFileChange[] = [];
@@ -44,7 +65,14 @@ export async function runNormalizeImports(
     }
 
     const sourceFile = await loadSourceFile(filePath, fileSystem);
-    const changed = normalizeImportsInFile(sourceFile);
+    const { changed, conflicts } = normalizeImportsInFile(sourceFile);
+
+    for (const c of conflicts) {
+      writer(
+        `Warning: conflicting default imports from '${c.module}': ` +
+          `'${c.winnerDefault}' vs '${c.donorDefault}'. Skipping merge of this declaration.\n`,
+      );
+    }
 
     if (!changed) {
       continue;
@@ -64,13 +92,13 @@ export async function runNormalizeImports(
         type: 'modify-file',
         path: filePath,
         content: finalContent,
-        originalChecksum: fileChecksum
+        originalChecksum: fileChecksum,
       });
       undo.push({
         type: 'modify-file',
         path: filePath,
         content: originalContent,
-        originalChecksum: computeStringChecksum(finalContent)
+        originalChecksum: computeStringChecksum(finalContent),
       });
       sourceFiles.add(filePath);
       checksums[filePath] = fileChecksum;
@@ -85,98 +113,108 @@ export async function runNormalizeImports(
     targetFiles: [],
     checksums,
     changes,
-    undo
+    undo,
   };
 
   if (changes.length === 0) {
-    console.log('No mergeable imports found.');
+    writer('No mergeable imports found.\n');
   } else {
-    console.log(`Found ${changes.length} files with mergeable imports`);
+    writer(`Found ${changes.length} files with mergeable imports\n`);
     await writePlan(plan, PLAN_FILE_NAME);
-    await displayPlan(plan, {});
+    await displayPlan(plan, {}, cwd, writer);
   }
 
   return plan;
 }
 
 /**
- * Merge duplicate import declarations in a source file.
- * Returns true if any changes were made.
+ * Information about a conflicting default import that prevented a merge.
  */
-export function normalizeImportsInFile(sourceFile: SourceFile): boolean {
+export interface ImportConflict {
+  module: string;
+  winnerDefault: string | undefined;
+  donorDefault: string;
+}
+
+/**
+ * Merge duplicate import declarations in a source file.
+ * Returns whether any changes were made and any conflicts that prevented merges.
+ */
+export function normalizeImportsInFile(sourceFile: SourceFile): {
+  changed: boolean;
+  conflicts: ImportConflict[];
+} {
   const imports = sourceFile.getImportDeclarations();
 
-  // Group mergeable imports by (moduleSpecifier, isTypeOnly)
-  const groups = new Map<string, ImportDeclaration[]>();
-
-  for (const importDecl of imports) {
-    if (isSideEffectImport(importDecl)) {
-      continue;
-    }
-    if (importDecl.getNamespaceImport()) {
-      continue;
-    }
-
-    const moduleSpec = importDecl.getModuleSpecifierValue();
-    const isTypeOnly = importDecl.isTypeOnly();
-    const key = `${moduleSpec}\0${isTypeOnly}`;
-
-    let group = groups.get(key);
-    if (!group) {
-      group = [];
-      groups.set(key, group);
-    }
-    group.push(importDecl);
-  }
+  const groups = groupBy(
+    imports.filter((d) => !isSideEffectImport(d) && !d.getNamespaceImport()),
+    (d) => `${d.getModuleSpecifierValue()}\0${d.isTypeOnly()}`,
+  );
 
   let changed = false;
+  const conflicts: ImportConflict[] = [];
 
   for (const group of groups.values()) {
     if (group.length < 2) {
       continue;
     }
-    if (mergeImportGroup(group)) {
+    const result = mergeImportGroup(group);
+    if (result.changed) {
       changed = true;
     }
+    conflicts.push(...result.conflicts);
   }
 
-  return changed;
+  return { changed, conflicts };
 }
 
-function mergeImportGroup(group: ImportDeclaration[]): boolean {
-  const winner = group.at(0);
-  if (winner === undefined) {
-    return false;
-  }
+function mergeImportGroup(group: ImportDeclaration[]): {
+  changed: boolean;
+  conflicts: ImportConflict[];
+} {
+  // biome-ignore lint/style/noNonNullAssertion: caller guarantees group.length >= 2
+  const winner = group[0]!;
   const winnerDefaultName = winner.getDefaultImport()?.getText();
   const winnerComments = leadingCommentTexts(winner);
   let changed = false;
+  const conflicts: ImportConflict[] = [];
 
-  for (let i = 1; i < group.length; i++) {
-    const donor = group.at(i);
-    if (donor === undefined) {
+  for (const [i, donor] of group.entries()) {
+    if (i === 0) {
       continue;
     }
-    if (tryMergeDonorIntoWinner(winner, donor, winnerDefaultName, winnerComments)) {
+    const result = tryMergeDonorIntoWinner(
+      winner,
+      donor,
+      winnerDefaultName,
+      winnerComments,
+    );
+    if (result.merged) {
       changed = true;
+    } else if (result.conflictName !== undefined) {
+      conflicts.push({
+        module: winner.getModuleSpecifierValue(),
+        winnerDefault: winnerDefaultName,
+        donorDefault: result.conflictName,
+      });
     }
   }
 
-  return changed;
+  return { changed, conflicts };
 }
 
 function tryMergeDonorIntoWinner(
   winner: ImportDeclaration,
   donor: ImportDeclaration,
   winnerDefaultName: string | undefined,
-  winnerComments: string[]
-): boolean {
+  winnerComments: string[],
+): { merged: true } | { merged: false; conflictName?: string } {
   /*
     Don't merge imports with different leading comments — they may be
     build directives (e.g., a VUE2 marker) that control conditional compilation.
   */
   if (!leadingCommentsEqual(winnerComments, leadingCommentTexts(donor))) {
-    return false;
+    return { merged: false };
   }
 
   /*
@@ -184,61 +222,63 @@ function tryMergeDonorIntoWinner(
     Skip merge if the result would have both a default and named imports on a type-only import.
   */
   if (wouldViolateTypeOnlyRestriction(winner, donor, winnerDefaultName)) {
-    return false;
+    return { merged: false };
   }
 
-  if (!mergeDefaultImport(winner, donor, winnerDefaultName)) {
-    return false;
+  const defaultResult = mergeDefaultImport(winner, donor, winnerDefaultName);
+  if (!defaultResult.merged) {
+    return { merged: false, conflictName: defaultResult.conflict };
   }
 
   mergeNamedImports(winner, donor);
   donor.remove();
-  return true;
+  return { merged: true };
 }
 
 function wouldViolateTypeOnlyRestriction(
   winner: ImportDeclaration,
   donor: ImportDeclaration,
-  winnerDefaultName: string | undefined
+  winnerDefaultName: string | undefined,
 ): boolean {
   if (!winner.isTypeOnly()) {
     return false;
   }
-  const mergedHasDefault = Boolean(winnerDefaultName) || Boolean(donor.getDefaultImport());
-  const mergedHasNamed = winner.getNamedImports().length > 0 || donor.getNamedImports().length > 0;
+  const mergedHasDefault =
+    Boolean(winnerDefaultName) || Boolean(donor.getDefaultImport());
+  const mergedHasNamed =
+    winner.getNamedImports().length > 0 || donor.getNamedImports().length > 0;
   return mergedHasDefault && mergedHasNamed;
 }
 
 /**
  * Merges the default import from donor into winner.
- * Returns false if a conflict prevents the merge.
+ * Returns `{ merged: true }` on success, or `{ merged: false, conflict: name }` on conflict.
  */
 function mergeDefaultImport(
   winner: ImportDeclaration,
   donor: ImportDeclaration,
-  winnerDefaultName: string | undefined
-): boolean {
+  winnerDefaultName: string | undefined,
+): { merged: true } | { merged: false; conflict: string } {
   const donorDefault = donor.getDefaultImport();
   if (!donorDefault) {
-    return true;
+    return { merged: true };
   }
   if (!winnerDefaultName) {
     winner.setDefaultImport(donorDefault.getText());
-    return true;
+    return { merged: true };
   }
   if (winnerDefaultName !== donorDefault.getText()) {
-    console.warn(
-      `Warning: conflicting default imports from '${winner.getModuleSpecifierValue()}': ` +
-      `'${winnerDefaultName}' vs '${donorDefault.getText()}'. Skipping merge of this declaration.`
-    );
-    return false;
+    return { merged: false, conflict: donorDefault.getText() };
   }
-  return true;
+  return { merged: true };
 }
 
-function mergeNamedImports(winner: ImportDeclaration, donor: ImportDeclaration): void {
+function mergeNamedImports(
+  winner: ImportDeclaration,
+  donor: ImportDeclaration,
+): void {
   const existingNames = new Set(
-    winner.getNamedImports().map(ni => namedImportKey(ni))
+    winner.getNamedImports().map((ni) => namedImportKey(ni)),
   );
 
   for (const namedImport of donor.getNamedImports()) {
@@ -261,7 +301,7 @@ function isSideEffectImport(importDecl: ImportDeclaration): boolean {
 }
 
 function leadingCommentTexts(node: ImportDeclaration): string[] {
-  return node.getLeadingCommentRanges().map(r => r.getText());
+  return node.getLeadingCommentRanges().map((r) => r.getText());
 }
 
 function leadingCommentsEqual(a: string[], b: string[]): boolean {
@@ -271,7 +311,12 @@ function leadingCommentsEqual(a: string[], b: string[]): boolean {
   return a.every((text, i) => text === b[i]);
 }
 
-function namedImportKey(namedImport: { getName(): string; getAliasNode(): Identifier | undefined }): string {
+function namedImportKey(namedImport: {
+  getName(): string;
+  getAliasNode(): Identifier | undefined;
+}): string {
   const alias = namedImport.getAliasNode();
-  return alias ? `${namedImport.getName()} as ${alias.getText()}` : namedImport.getName();
+  return alias
+    ? `${namedImport.getName()} as ${alias.getText()}`
+    : namedImport.getName();
 }

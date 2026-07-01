@@ -1,10 +1,6 @@
-import { DebugOptions } from "./objstore";
-import { runProposeSplit } from "./runProposeSplit";
-import { runApply } from "./runApply";
-import { PLAN_FILE_NAME } from "./plan";
-import { existsSync } from "fs";
-import { promises as fsp } from "fs";
-import { FileSystem } from "./filesystem";
+import { FileSystem } from './filesystem';
+import { runApply } from './runApply';
+import { runProposeSplit } from './runProposeSplit';
 
 interface SplitOptions {
   dryRun?: boolean;
@@ -12,11 +8,11 @@ interface SplitOptions {
 
 /**
  * Split command (convenience wrapper for propose + apply).
- * 
+ *
  * This command combines propose-split and apply into a single operation
  * for quick refactoring workflows. For team coordination or high-risk
  * refactorings, use propose-split + apply separately.
- * 
+ *
  * NOTE: --dry-run is deprecated. Use propose-split to review plans.
  */
 export async function runSplit(
@@ -24,37 +20,44 @@ export async function runSplit(
   targetModuleArg: string,
   symbols: string[],
   options: SplitOptions,
-  debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  cwd: string,
 ) {
   if (options.dryRun) {
-    console.warn('Warning: --dry-run is deprecated. Use "tslor propose-split" to review plans.');
-    console.warn('Falling back to propose-split behavior.\n');
-    
+    writer(
+      'Warning: --dry-run is deprecated. Use "tslor propose-split" to review plans.\n',
+    );
+    writer('Falling back to propose-split behavior.\n');
+
     // Just propose, don't apply
-    await runProposeSplit(sourceModuleArg, targetModuleArg, symbols, debugOptions, fileSystem);
+    await runProposeSplit(
+      sourceModuleArg,
+      targetModuleArg,
+      symbols,
+      fileSystem,
+      writer,
+      cwd,
+    );
     return;
   }
 
   // Convenience wrapper: propose + apply in one command
-  console.log('Split command: propose + apply\n');
-  
+  writer('Split command: propose + apply\n');
+
   // Step 1: Propose
-  await runProposeSplit(sourceModuleArg, targetModuleArg, symbols, debugOptions, fileSystem);
-  
+  await runProposeSplit(
+    sourceModuleArg,
+    targetModuleArg,
+    symbols,
+    fileSystem,
+    writer,
+    cwd,
+  );
+
   // Step 2: Apply
-  console.log('');
-  await runApply(undefined, {}, debugOptions);
-  
-  // Step 3: Clean up temporary plan file
-  try {
-    if (existsSync(PLAN_FILE_NAME)) {
-      await fsp.unlink(PLAN_FILE_NAME);
-    }
-  } catch {
-    // Ignore cleanup errors
-  }
-  
-  console.log('');
-  console.log('Split operation completed');
+  writer('\n');
+  await runApply(undefined, { writer }, cwd);
+
+  writer('\nSplit operation completed\n');
 }
