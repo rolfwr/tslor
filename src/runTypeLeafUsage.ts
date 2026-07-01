@@ -67,7 +67,7 @@ function findLeaves(db: Storage, candidateSet: Set<string>): string[] {
   // Memoized check: does filePath transitively import any member of candidateSet?
   const memo = new Map<string, boolean>();
 
-  function hasCanditateDependency(filePath: string): boolean {
+  function hasCandidateDependency(filePath: string): boolean {
     const cached = memo.get(filePath);
     if (cached !== undefined) {
       return cached;
@@ -82,7 +82,7 @@ function findLeaves(db: Storage, candidateSet: Set<string>): string[] {
         memo.set(filePath, true);
         return true;
       }
-      if (hasCanditateDependency(dep.path)) {
+      if (hasCandidateDependency(dep.path)) {
         memo.set(filePath, true);
         return true;
       }
@@ -93,7 +93,7 @@ function findLeaves(db: Storage, candidateSet: Set<string>): string[] {
 
   const leaves: string[] = [];
   for (const filePath of candidateSet) {
-    if (!hasCanditateDependency(filePath)) {
+    if (!hasCandidateDependency(filePath)) {
       leaves.push(filePath);
     }
   }
