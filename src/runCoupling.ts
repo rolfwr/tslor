@@ -1,13 +1,14 @@
 import {
-  Node,
-  Project,
-  SyntaxKind,
   type ClassDeclaration,
   type ClassElement,
   type Identifier,
+  Node,
+  Project,
   type PropertyAccessExpression,
   type SourceFile,
+  SyntaxKind,
 } from 'ts-morph';
+import { CliError } from './errors';
 import {
   computeTopologicalDepth,
   condenseToDAG,
@@ -15,6 +16,7 @@ import {
   partitionLeafSccsByDistance,
   type SCC,
 } from './graphUtils';
+import { getOrThrow, invariant } from './invariant';
 
 /**
  * Directed member dependency graph.
@@ -42,19 +44,6 @@ interface MutableModuleMemberDefinition {
   executableBodies: Node[];
 }
 
-function requiredMapGet<K, V>(
-  map: ReadonlyMap<K, V>,
-  key: K,
-  context: string
-): V {
-  const value = map.get(key);
-  if (value === undefined) {
-    throw new Error(`Expected ${context} to exist`);
-  }
-
-  return value;
-}
-
 function loadSourceFile(filePath: string): SourceFile {
   const project = new Project({
     skipAddingFilesFromTsConfig: true,
@@ -63,10 +52,15 @@ function loadSourceFile(filePath: string): SourceFile {
   return project.addSourceFileAtPath(filePath);
 }
 
-function findTargetClass(sourceFile: SourceFile, className: string): ClassDeclaration {
+function findTargetClass(
+  sourceFile: SourceFile,
+  className: string,
+): ClassDeclaration {
   const classDeclaration = sourceFile.getClass(className);
   if (classDeclaration === undefined) {
-    throw new Error(`Class ${className} not found in ${sourceFile.getFilePath()}`);
+    throw new CliError(
+      `Class ${className} not found in ${sourceFile.getFilePath()}`,
+    );
   }
 
   return classDeclaration;
@@ -81,7 +75,10 @@ function getMemberName(member: Node): string | null {
     return member.getName();
   }
 
-  if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
+  if (
+    Node.isGetAccessorDeclaration(member) ||
+    Node.isSetAccessorDeclaration(member)
+  ) {
     return member.getName();
   }
 
@@ -97,7 +94,10 @@ function getExecutableBody(member: Node): Node | null {
     return member.getBody() ?? null;
   }
 
-  if (Node.isGetAccessorDeclaration(member) || Node.isSetAccessorDeclaration(member)) {
+  if (
+    Node.isGetAccessorDeclaration(member) ||
+    Node.isSetAccessorDeclaration(member)
+  ) {
     return member.getBody() ?? null;
   }
 
@@ -111,7 +111,10 @@ function getExecutableBody(member: Node): Node | null {
       return null;
     }
 
-    if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+    if (
+      Node.isArrowFunction(initializer) ||
+      Node.isFunctionExpression(initializer)
+    ) {
       return initializer.getBody();
     }
 
@@ -121,7 +124,9 @@ function getExecutableBody(member: Node): Node | null {
   return null;
 }
 
-function collectClassMembers(classDeclaration: ClassDeclaration): ClassMemberDefinition[] {
+function collectClassMembers(
+  classDeclaration: ClassDeclaration,
+): ClassMemberDefinition[] {
   const members: ClassMemberDefinition[] = [];
 
   for (const member of classDeclaration.getMembers()) {
@@ -140,7 +145,9 @@ function collectClassMembers(classDeclaration: ClassDeclaration): ClassMemberDef
   return members;
 }
 
-function createGraphNodes(memberNames: ReadonlyArray<string>): MutableCouplingGraph {
+function createGraphNodes(
+  memberNames: ReadonlyArray<string>,
+): MutableCouplingGraph {
   const graph: MutableCouplingGraph = new Map();
 
   for (const memberName of memberNames) {
@@ -164,7 +171,10 @@ function isThisBindingScope(node: Node): boolean {
   );
 }
 
-function isClassThisAccess(access: Node, owningDeclaration: ClassElement): boolean {
+function isClassThisAccess(
+  access: Node,
+  owningDeclaration: ClassElement,
+): boolean {
   const nearestNonArrowThisScope = access.getFirstAncestor((ancestor) => {
     if (Node.isArrowFunction(ancestor)) {
       return false;
@@ -177,10 +187,10 @@ function isClassThisAccess(access: Node, owningDeclaration: ClassElement): boole
 }
 
 function getPropertyAccesses(
-  node: Node
+  node: Node,
 ): ReadonlyArray<PropertyAccessExpression> {
   const descendantAccesses = node.getDescendantsOfKind(
-    SyntaxKind.PropertyAccessExpression
+    SyntaxKind.PropertyAccessExpression,
   );
 
   if (Node.isPropertyAccessExpression(node)) {
@@ -192,7 +202,7 @@ function getPropertyAccesses(
 
 function collectThisAccessDependencies(
   body: Node,
-  owningDeclaration: ClassElement
+  owningDeclaration: ClassElement,
 ): Set<string> {
   const dependencies = new Set<string>();
 
@@ -213,7 +223,7 @@ function collectThisAccessDependencies(
 
 function populateClassGraphEdges(
   graph: MutableCouplingGraph,
-  members: ReadonlyArray<ClassMemberDefinition>
+  members: ReadonlyArray<ClassMemberDefinition>,
 ): void {
   const memberNames = new Set(graph.keys());
 
@@ -222,15 +232,15 @@ function populateClassGraphEdges(
       continue;
     }
 
-    const sourceDependencies = requiredMapGet(
+    const sourceDependencies = getOrThrow(
       graph,
       member.name,
-      `coupling graph node for member ${member.name}`
+      `Expected graph node for member ${member.name}`,
     );
 
     for (const dependencyName of collectThisAccessDependencies(
       member.executableBody,
-      member.declaration
+      member.declaration,
     )) {
       if (dependencyName === member.name) {
         continue;
@@ -245,7 +255,9 @@ function populateClassGraphEdges(
   }
 }
 
-function buildClassCouplingGraph(classDeclaration: ClassDeclaration): MutableCouplingGraph {
+function buildClassCouplingGraph(
+  classDeclaration: ClassDeclaration,
+): MutableCouplingGraph {
   const members = collectClassMembers(classDeclaration);
   const graph = createGraphNodes(members.map((member) => member.name));
 
@@ -258,7 +270,7 @@ function addModuleMember(
   members: Map<string, MutableModuleMemberDefinition>,
   name: string,
   declaration: Node,
-  executableBodies: ReadonlyArray<Node>
+  executableBodies: ReadonlyArray<Node>,
 ): void {
   const existing = members.get(name);
   if (existing === undefined) {
@@ -296,7 +308,10 @@ function getPropertyExecutableBodies(member: ClassElement): Node[] {
     return [];
   }
 
-  if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+  if (
+    Node.isArrowFunction(initializer) ||
+    Node.isFunctionExpression(initializer)
+  ) {
     return [initializer.getBody()];
   }
 
@@ -316,7 +331,9 @@ function getClassMemberExecutableBodies(member: ClassElement): Node[] {
   return getPropertyExecutableBodies(member);
 }
 
-function collectClassExecutableBodies(classDeclaration: ClassDeclaration): Node[] {
+function collectClassExecutableBodies(
+  classDeclaration: ClassDeclaration,
+): Node[] {
   const executableBodies: Node[] = [];
 
   for (const member of classDeclaration.getMembers()) {
@@ -326,7 +343,9 @@ function collectClassExecutableBodies(classDeclaration: ClassDeclaration): Node[
   return executableBodies;
 }
 
-function getVariableExecutableBodies(variableDeclaration: Node): ReadonlyArray<Node> {
+function getVariableExecutableBodies(
+  variableDeclaration: Node,
+): ReadonlyArray<Node> {
   if (!Node.isVariableDeclaration(variableDeclaration)) {
     return [];
   }
@@ -336,7 +355,10 @@ function getVariableExecutableBodies(variableDeclaration: Node): ReadonlyArray<N
     return [];
   }
 
-  if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) {
+  if (
+    Node.isArrowFunction(initializer) ||
+    Node.isFunctionExpression(initializer)
+  ) {
     return [initializer.getBody()];
   }
 
@@ -350,10 +372,12 @@ interface VariableBinding {
 
 function collectVariablePatternBindings(
   nameNode: Node,
-  bindings: VariableBinding[]
+  bindings: VariableBinding[],
 ): void {
   if (Node.isIdentifier(nameNode)) {
-    const bindingElement = nameNode.getFirstAncestorByKind(SyntaxKind.BindingElement);
+    const bindingElement = nameNode.getFirstAncestorByKind(
+      SyntaxKind.BindingElement,
+    );
     if (bindingElement === undefined) {
       return;
     }
@@ -362,7 +386,10 @@ function collectVariablePatternBindings(
     return;
   }
 
-  if (Node.isObjectBindingPattern(nameNode) || Node.isArrayBindingPattern(nameNode)) {
+  if (
+    Node.isObjectBindingPattern(nameNode) ||
+    Node.isArrayBindingPattern(nameNode)
+  ) {
     for (const element of nameNode.getElements()) {
       if (Node.isBindingElement(element)) {
         collectVariablePatternBindings(element.getNameNode(), bindings);
@@ -388,7 +415,7 @@ function collectVariableBindings(variableDeclaration: Node): VariableBinding[] {
 
 function collectFunctionDeclarationMember(
   statement: Node,
-  memberCollectors: Map<string, MutableModuleMemberDefinition>
+  memberCollectors: Map<string, MutableModuleMemberDefinition>,
 ): boolean {
   if (!Node.isFunctionDeclaration(statement)) {
     return false;
@@ -400,14 +427,19 @@ function collectFunctionDeclarationMember(
   }
 
   const body = statement.getBody();
-  addModuleMember(memberCollectors, name, statement, body === undefined ? [] : [body]);
+  addModuleMember(
+    memberCollectors,
+    name,
+    statement,
+    body === undefined ? [] : [body],
+  );
 
   return true;
 }
 
 function collectClassDeclarationMember(
   statement: Node,
-  memberCollectors: Map<string, MutableModuleMemberDefinition>
+  memberCollectors: Map<string, MutableModuleMemberDefinition>,
 ): boolean {
   if (!Node.isClassDeclaration(statement)) {
     return false;
@@ -422,7 +454,7 @@ function collectClassDeclarationMember(
     memberCollectors,
     name,
     statement,
-    collectClassExecutableBodies(statement)
+    collectClassExecutableBodies(statement),
   );
 
   return true;
@@ -430,7 +462,7 @@ function collectClassDeclarationMember(
 
 function collectVariableStatementMembers(
   statement: Node,
-  memberCollectors: Map<string, MutableModuleMemberDefinition>
+  memberCollectors: Map<string, MutableModuleMemberDefinition>,
 ): boolean {
   if (!Node.isVariableStatement(statement)) {
     return false;
@@ -443,7 +475,7 @@ function collectVariableStatementMembers(
         memberCollectors,
         binding.name,
         binding.declaration,
-        executableBodies
+        executableBodies,
       );
     }
   }
@@ -453,7 +485,7 @@ function collectVariableStatementMembers(
 
 function collectInterfaceDeclarationMember(
   statement: Node,
-  memberCollectors: Map<string, MutableModuleMemberDefinition>
+  memberCollectors: Map<string, MutableModuleMemberDefinition>,
 ): boolean {
   if (!Node.isInterfaceDeclaration(statement)) {
     return false;
@@ -466,7 +498,7 @@ function collectInterfaceDeclarationMember(
 
 function collectTypeAliasDeclarationMember(
   statement: Node,
-  memberCollectors: Map<string, MutableModuleMemberDefinition>
+  memberCollectors: Map<string, MutableModuleMemberDefinition>,
 ): boolean {
   if (!Node.isTypeAliasDeclaration(statement)) {
     return false;
@@ -478,7 +510,7 @@ function collectTypeAliasDeclarationMember(
 }
 
 function toModuleMemberDefinitions(
-  memberCollectors: ReadonlyMap<string, MutableModuleMemberDefinition>
+  memberCollectors: ReadonlyMap<string, MutableModuleMemberDefinition>,
 ): ModuleMemberDefinition[] {
   const members: ModuleMemberDefinition[] = [];
 
@@ -493,7 +525,9 @@ function toModuleMemberDefinitions(
   return members;
 }
 
-function collectModuleMembers(sourceFile: SourceFile): ModuleMemberDefinition[] {
+function collectModuleMembers(
+  sourceFile: SourceFile,
+): ModuleMemberDefinition[] {
   const memberCollectors = new Map<string, MutableModuleMemberDefinition>();
 
   for (const statement of sourceFile.getStatements()) {
@@ -520,7 +554,9 @@ function collectModuleMembers(sourceFile: SourceFile): ModuleMemberDefinition[] 
 }
 
 function getIdentifiers(node: Node): ReadonlyArray<Identifier> {
-  const descendantIdentifiers = node.getDescendantsOfKind(SyntaxKind.Identifier);
+  const descendantIdentifiers = node.getDescendantsOfKind(
+    SyntaxKind.Identifier,
+  );
 
   if (Node.isIdentifier(node)) {
     return [node, ...descendantIdentifiers];
@@ -535,7 +571,10 @@ function isBareIdentifier(identifier: Identifier): boolean {
     return true;
   }
 
-  if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === identifier) {
+  if (
+    Node.isPropertyAccessExpression(parent) &&
+    parent.getNameNode() === identifier
+  ) {
     return false;
   }
 
@@ -548,7 +587,7 @@ function isBareIdentifier(identifier: Identifier): boolean {
 
 function resolveModuleDependencyName(
   identifier: Identifier,
-  moduleDeclarations: ReadonlyMap<string, ReadonlyArray<Node>>
+  moduleDeclarations: ReadonlyMap<string, ReadonlyArray<Node>>,
 ): string | null {
   if (!isBareIdentifier(identifier)) {
     return null;
@@ -579,7 +618,7 @@ function resolveModuleDependencyName(
 
 function populateModuleGraphEdges(
   graph: MutableCouplingGraph,
-  members: ReadonlyArray<ModuleMemberDefinition>
+  members: ReadonlyArray<ModuleMemberDefinition>,
 ): void {
   const declarationsByName = new Map<string, ReadonlyArray<Node>>();
   for (const member of members) {
@@ -587,17 +626,17 @@ function populateModuleGraphEdges(
   }
 
   for (const member of members) {
-    const sourceDependencies = requiredMapGet(
+    const sourceDependencies = getOrThrow(
       graph,
       member.name,
-      `coupling graph node for declaration ${member.name}`
+      `Expected graph node for member ${member.name}`,
     );
 
     for (const executableBody of member.executableBodies) {
       for (const identifier of getIdentifiers(executableBody)) {
         const dependencyName = resolveModuleDependencyName(
           identifier,
-          declarationsByName
+          declarationsByName,
         );
         if (dependencyName === null || dependencyName === member.name) {
           continue;
@@ -609,7 +648,9 @@ function populateModuleGraphEdges(
   }
 }
 
-function buildModuleCouplingGraph(sourceFile: SourceFile): MutableCouplingGraph {
+function buildModuleCouplingGraph(
+  sourceFile: SourceFile,
+): MutableCouplingGraph {
   const members = collectModuleMembers(sourceFile);
   const graph = createGraphNodes(members.map((member) => member.name));
 
@@ -625,7 +666,10 @@ function buildModuleCouplingGraph(sourceFile: SourceFile): MutableCouplingGraph 
  * properties as nodes. Edges are added for `this.X` references from each
  * executable member body to another member `X` in the same class.
  */
-export function parseClassCoupling(filePath: string, className: string): CouplingGraph {
+export function parseClassCoupling(
+  filePath: string,
+  className: string,
+): CouplingGraph {
   const sourceFile = loadSourceFile(filePath);
   return buildClassCouplingGraph(findTargetClass(sourceFile, className));
 }
@@ -692,33 +736,34 @@ function analyzeCouplingGraph(graph: CouplingGraph): CouplingAnalysis {
 
 function requiredDepth(
   depthByScc: ReadonlyMap<number, number>,
-  sccIndex: number
+  sccIndex: number,
 ): number {
-  const depth = depthByScc.get(sccIndex);
-  if (depth === undefined) {
-    throw new Error(`Expected topological depth for SCC ${String(sccIndex)}`);
-  }
-
-  return depth;
+  return getOrThrow(
+    depthByScc,
+    sccIndex,
+    `Expected topological depth for SCC ${String(sccIndex)}`,
+  );
 }
 
 function compareSccIndices(
   leftSccIndex: number,
   rightSccIndex: number,
-  sccs: ReadonlyArray<SCC>
+  sccs: ReadonlyArray<SCC>,
 ): number {
   const leftMembers = sccs[leftSccIndex];
   const rightMembers = sccs[rightSccIndex];
-  if (leftMembers === undefined || rightMembers === undefined) {
-    throw new Error(
-      `Missing SCC members while sorting (left=${String(leftSccIndex)}, right=${String(rightSccIndex)}, total=${String(sccs.length)})`
-    );
-  }
+  invariant(
+    leftMembers !== undefined && rightMembers !== undefined,
+    `Missing SCC members while sorting (left=${String(leftSccIndex)}, right=${String(rightSccIndex)}, total=${String(sccs.length)})`,
+  );
 
   return leftMembers.join(',').localeCompare(rightMembers.join(','));
 }
 
-function formatTextHeader(filePath: string, options: RunCouplingOptions): string {
+function formatTextHeader(
+  filePath: string,
+  options: RunCouplingOptions,
+): string {
   const scope =
     options.class === undefined
       ? 'module scope'
@@ -732,7 +777,7 @@ function compareSccTreeOrder(
   leftSccIndex: number,
   rightSccIndex: number,
   analysis: CouplingAnalysis,
-  direction: SccDepthSortDirection
+  direction: SccDepthSortDirection,
 ): number {
   const leftDepth = requiredDepth(analysis.depthByScc, leftSccIndex);
   const rightDepth = requiredDepth(analysis.depthByScc, rightSccIndex);
@@ -750,7 +795,7 @@ function formatSccTreeLine(
   sccIndex: number,
   sccMembers: SCC,
   depth: number,
-  indent: string
+  indent: string,
 ): string {
   return `${indent}Group-${String(depth)}-${String(sccIndex + 1)}: ${sccMembers.join(', ')}`;
 }
@@ -758,17 +803,17 @@ function formatSccTreeLine(
 function sortedSccIndices(
   sccIndices: Iterable<number>,
   analysis: CouplingAnalysis,
-  direction: SccDepthSortDirection
+  direction: SccDepthSortDirection,
 ): number[] {
   return [...sccIndices].sort((left, right) =>
-    compareSccTreeOrder(left, right, analysis, direction)
+    compareSccTreeOrder(left, right, analysis, direction),
   );
 }
 
 function formatNestedSccLines(
   analysis: CouplingAnalysis,
   dag: ReadonlyMap<number, ReadonlySet<number>>,
-  direction: SccDepthSortDirection
+  direction: SccDepthSortDirection,
 ): string[] {
   const lines: string[] = [];
   const printedSccs = new Set<number>();
@@ -776,15 +821,17 @@ function formatNestedSccLines(
 
   function printScc(sccIndex: number, indent: string): void {
     const sccMembers = analysis.sccs[sccIndex];
-    if (sccMembers === undefined) {
-      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-    }
+    invariant(
+      sccMembers !== undefined,
+      `Expected SCC members for SCC index ${String(sccIndex)}`,
+    );
 
     const depth = requiredDepth(analysis.depthByScc, sccIndex);
-    const dependencies = dag.get(sccIndex);
-    if (dependencies === undefined) {
-      throw new Error(`Expected DAG dependencies for SCC ${String(sccIndex)}`);
-    }
+    const dependencies = getOrThrow(
+      dag,
+      sccIndex,
+      `Expected DAG dependencies for SCC ${String(sccIndex)}`,
+    );
 
     const linePrefix = formatSccTreeLine(sccIndex, sccMembers, depth, indent);
 
@@ -804,25 +851,30 @@ function formatNestedSccLines(
     printedSccs.add(sccIndex);
     unprintedSccs.delete(sccIndex);
 
-    for (const dependencySccIndex of sortedSccIndices(dependencies, analysis, direction)) {
+    for (const dependencySccIndex of sortedSccIndices(
+      dependencies,
+      analysis,
+      direction,
+    )) {
       printScc(dependencySccIndex, `${indent}  `);
     }
   }
 
   while (unprintedSccs.size > 0) {
-    const [nextSccIndex] = sortedSccIndices(unprintedSccs, analysis, direction);
-    if (nextSccIndex === undefined) {
-      throw new Error('Expected at least one SCC while rendering coupling text');
-    }
-
-    printScc(nextSccIndex, '');
+    const sorted = sortedSccIndices(unprintedSccs, analysis, direction);
+    const nextScc = sorted[0];
+    invariant(
+      nextScc !== undefined,
+      'Expected at least one SCC while rendering coupling text',
+    );
+    printScc(nextScc, '');
   }
 
   return lines;
 }
 
 function reverseDag(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): ReadonlyMap<number, ReadonlySet<number>> {
   const reversed = new Map<number, Set<number>>();
 
@@ -832,10 +884,11 @@ function reverseDag(
 
   for (const [fromSccIndex, dependencies] of dag) {
     for (const toSccIndex of dependencies) {
-      const dependents = reversed.get(toSccIndex);
-      if (dependents === undefined) {
-        throw new Error(`Expected reversed DAG node for SCC ${String(toSccIndex)}`);
-      }
+      const dependents = getOrThrow(
+        reversed,
+        toSccIndex,
+        `Expected reversed DAG node for SCC ${String(toSccIndex)}`,
+      );
 
       dependents.add(fromSccIndex);
     }
@@ -847,20 +900,22 @@ function reverseDag(
 function formatLeafClusterMembers(
   label: string,
   cluster: ReadonlyArray<number>,
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): string {
   if (cluster.length === 0) {
     return `${label}: (none)`;
   }
 
-  const memberNames = sortedSccIndices(cluster, analysis, 'ascending').flatMap((sccIndex) => {
-    const sccMembers = analysis.sccs[sccIndex];
-    if (sccMembers === undefined) {
-      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-    }
-
-    return sccMembers;
-  });
+  const memberNames = sortedSccIndices(cluster, analysis, 'ascending').flatMap(
+    (sccIndex) => {
+      const sccMembers = analysis.sccs[sccIndex];
+      invariant(
+        sccMembers !== undefined,
+        `Expected SCC members for SCC index ${String(sccIndex)}`,
+      );
+      return sccMembers;
+    },
+  );
 
   return `${label}: ${memberNames.join(', ')}`;
 }
@@ -872,7 +927,7 @@ interface DepthZeroOneSubsetGraph {
 
 function isDepthZeroOrOne(
   depthByScc: ReadonlyMap<number, number>,
-  sccIndex: number
+  sccIndex: number,
 ): boolean {
   return requiredDepth(depthByScc, sccIndex) <= 1;
 }
@@ -890,7 +945,7 @@ function collectDepthZeroOneSccIndices(analysis: CouplingAnalysis): number[] {
 }
 
 function initializeEmptySubsetDag(
-  subsetSccIndices: ReadonlyArray<number>
+  subsetSccIndices: ReadonlyArray<number>,
 ): Map<number, Set<number>> {
   const subsetDag = new Map<number, Set<number>>();
   for (const sccIndex of subsetSccIndices) {
@@ -904,22 +959,23 @@ function addDepthOneToZeroSubsetEdges(
   subsetDag: ReadonlyMap<number, Set<number>>,
   subsetIndexSet: ReadonlySet<number>,
   analysis: CouplingAnalysis,
-  subsetSccIndices: ReadonlyArray<number>
+  subsetSccIndices: ReadonlyArray<number>,
 ): void {
   for (const fromSccIndex of subsetSccIndices) {
     if (requiredDepth(analysis.depthByScc, fromSccIndex) !== 1) {
       continue;
     }
 
-    const dependencies = analysis.dag.get(fromSccIndex);
-    if (dependencies === undefined) {
-      throw new Error(`Expected DAG dependencies for SCC ${String(fromSccIndex)}`);
-    }
+    const dependencies = getOrThrow(
+      analysis.dag,
+      fromSccIndex,
+      `Expected DAG dependencies for SCC ${String(fromSccIndex)}`,
+    );
 
-    const subsetDependencies = requiredMapGet(
+    const subsetDependencies = getOrThrow(
       subsetDag,
       fromSccIndex,
-      `depth-0/1 subset DAG node for SCC ${String(fromSccIndex)}`
+      `Expected subset DAG entry for SCC ${String(fromSccIndex)}`,
     );
 
     for (const toSccIndex of dependencies) {
@@ -935,7 +991,7 @@ function addDepthOneToZeroSubsetEdges(
 }
 
 function buildDepthZeroOneSubsetGraph(
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): DepthZeroOneSubsetGraph {
   const subsetSccIndices = collectDepthZeroOneSccIndices(analysis);
   const subsetDag = initializeEmptySubsetDag(subsetSccIndices);
@@ -945,7 +1001,7 @@ function buildDepthZeroOneSubsetGraph(
     subsetDag,
     subsetIndexSet,
     analysis,
-    subsetSccIndices
+    subsetSccIndices,
   );
 
   return {
@@ -968,7 +1024,7 @@ function formatLeafClusteringLines(analysis: CouplingAnalysis): string[] {
 }
 
 function subsetUndirectedAdjacency(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): Map<number, Set<number>> {
   const undirected = new Map<number, Set<number>>();
 
@@ -977,17 +1033,17 @@ function subsetUndirectedAdjacency(
   }
 
   for (const [fromSccIndex, dependencies] of dag) {
-    const fromNeighbors = requiredMapGet(
+    const fromNeighbors = getOrThrow(
       undirected,
       fromSccIndex,
-      `subset graph node for SCC ${String(fromSccIndex)}`
+      `Expected undirected entry for SCC ${String(fromSccIndex)}`,
     );
 
     for (const toSccIndex of dependencies) {
-      const toNeighbors = requiredMapGet(
+      const toNeighbors = getOrThrow(
         undirected,
         toSccIndex,
-        `subset graph node for SCC ${String(toSccIndex)}`
+        `Expected undirected entry for SCC ${String(toSccIndex)}`,
       );
 
       fromNeighbors.add(toSccIndex);
@@ -1000,12 +1056,16 @@ function subsetUndirectedAdjacency(
 
 function collectWeaklyConnectedComponents(
   undirected: ReadonlyMap<number, ReadonlySet<number>>,
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): number[][] {
   const components: number[][] = [];
   const visited = new Set<number>();
 
-  for (const sccIndex of sortedSccIndices(undirected.keys(), analysis, 'ascending')) {
+  for (const sccIndex of sortedSccIndices(
+    undirected.keys(),
+    analysis,
+    'ascending',
+  )) {
     if (visited.has(sccIndex)) {
       continue;
     }
@@ -1014,23 +1074,20 @@ function collectWeaklyConnectedComponents(
     const component: number[] = [];
     visited.add(sccIndex);
 
-    let cursor = 0;
-    while (cursor < queue.length) {
-      const currentSccIndex = queue[cursor];
-      if (currentSccIndex === undefined) {
-        throw new Error('Expected SCC index while collecting weakly connected components');
-      }
-
-      cursor++;
+    for (const currentSccIndex of queue) {
       component.push(currentSccIndex);
 
-      const neighbors = requiredMapGet(
+      const neighbors = getOrThrow(
         undirected,
         currentSccIndex,
-        `subset neighbors for SCC ${String(currentSccIndex)}`
+        `Expected undirected neighbors for SCC ${String(currentSccIndex)}`,
       );
 
-      for (const neighborSccIndex of sortedSccIndices(neighbors, analysis, 'ascending')) {
+      for (const neighborSccIndex of sortedSccIndices(
+        neighbors,
+        analysis,
+        'ascending',
+      )) {
         if (visited.has(neighborSccIndex)) {
           continue;
         }
@@ -1040,7 +1097,9 @@ function collectWeaklyConnectedComponents(
       }
     }
 
-    component.sort((left, right) => compareSccIndices(left, right, analysis.sccs));
+    component.sort((left, right) =>
+      compareSccIndices(left, right, analysis.sccs),
+    );
     components.push(component);
   }
 
@@ -1048,20 +1107,20 @@ function collectWeaklyConnectedComponents(
     const leftLabel = left
       .flatMap((sccIndex) => {
         const sccMembers = analysis.sccs[sccIndex];
-        if (sccMembers === undefined) {
-          throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-        }
-
+        invariant(
+          sccMembers !== undefined,
+          `Expected SCC members for SCC index ${String(sccIndex)}`,
+        );
         return sccMembers;
       })
       .join(',');
     const rightLabel = right
       .flatMap((sccIndex) => {
         const sccMembers = analysis.sccs[sccIndex];
-        if (sccMembers === undefined) {
-          throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-        }
-
+        invariant(
+          sccMembers !== undefined,
+          `Expected SCC members for SCC index ${String(sccIndex)}`,
+        );
         return sccMembers;
       })
       .join(',');
@@ -1075,21 +1134,23 @@ function collectWeaklyConnectedComponents(
 function formatWeaklyConnectedSubsetComponent(
   componentIndex: number,
   component: ReadonlyArray<number>,
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): string {
   const memberNames = component.flatMap((sccIndex) => {
     const sccMembers = analysis.sccs[sccIndex];
-    if (sccMembers === undefined) {
-      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-    }
-
+    invariant(
+      sccMembers !== undefined,
+      `Expected SCC members for SCC index ${String(sccIndex)}`,
+    );
     return sccMembers;
   });
 
   return `Component ${String(componentIndex)}: ${memberNames.join(', ')}`;
 }
 
-function formatDepthZeroOneWeaklyConnectedLines(analysis: CouplingAnalysis): string[] {
+function formatDepthZeroOneWeaklyConnectedLines(
+  analysis: CouplingAnalysis,
+): string[] {
   const subsetGraph = buildDepthZeroOneSubsetGraph(analysis);
   const undirected = subsetUndirectedAdjacency(subsetGraph.dag);
   const components = collectWeaklyConnectedComponents(undirected, analysis);
@@ -1097,7 +1158,11 @@ function formatDepthZeroOneWeaklyConnectedLines(analysis: CouplingAnalysis): str
   const lines = ['Depth 0-1 subset weakly connected components:'];
   for (const [componentIndex, component] of components.entries()) {
     lines.push(
-      formatWeaklyConnectedSubsetComponent(componentIndex + 1, component, analysis)
+      formatWeaklyConnectedSubsetComponent(
+        componentIndex + 1,
+        component,
+        analysis,
+      ),
     );
   }
 
@@ -1110,7 +1175,7 @@ function formatDepthZeroOneWeaklyConnectedLines(analysis: CouplingAnalysis): str
 export function formatCouplingText(
   filePath: string,
   options: RunCouplingOptions,
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): string {
   const lines: string[] = [formatTextHeader(filePath, options)];
 
@@ -1123,7 +1188,9 @@ export function formatCouplingText(
   lines.push(...formatNestedSccLines(analysis, analysis.dag, 'descending'));
   lines.push('');
   lines.push('Dependencies -> Dependents:');
-  lines.push(...formatNestedSccLines(analysis, reverseDag(analysis.dag), 'ascending'));
+  lines.push(
+    ...formatNestedSccLines(analysis, reverseDag(analysis.dag), 'ascending'),
+  );
   lines.push('');
   lines.push(...formatLeafClusteringLines(analysis));
   lines.push('');
@@ -1135,7 +1202,7 @@ export function formatCouplingText(
 function interpolateColor(
   from: DotColor,
   to: DotColor,
-  progress: number
+  progress: number,
 ): DotColor {
   const clampProgress = Math.max(0, Math.min(1, progress));
 
@@ -1162,25 +1229,32 @@ function depthColor(depth: number, maxDepth: number): string {
 }
 
 function escapeDotLabel(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n');
 }
 
 function formatDotNode(
   sccIndex: number,
   sccMembers: SCC,
   depth: number,
-  maxDepth: number
+  maxDepth: number,
 ): string {
   const label = `SCC ${String(sccIndex + 1)}\nDepth ${String(depth)}\n${sccMembers.join('\n')}`;
 
   return `  scc_${String(sccIndex)} [label="${escapeDotLabel(label)}", fillcolor="${depthColor(depth, maxDepth)}"];`;
 }
 
-function formatDotEdges(dag: ReadonlyMap<number, ReadonlySet<number>>): string[] {
+function formatDotEdges(
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
+): string[] {
   const edges: string[] = [];
 
   for (const [fromSccIndex, dependencies] of dag) {
-    for (const toSccIndex of [...dependencies].sort((left, right) => left - right)) {
+    for (const toSccIndex of [...dependencies].sort(
+      (left, right) => left - right,
+    )) {
       edges.push(`  scc_${String(fromSccIndex)} -> scc_${String(toSccIndex)};`);
     }
   }
@@ -1191,7 +1265,7 @@ function formatDotEdges(dag: ReadonlyMap<number, ReadonlySet<number>>): string[]
 function formatCouplingDotForSccIndices(
   analysis: CouplingAnalysis,
   sccIndices: ReadonlyArray<number>,
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): string {
   const lines: string[] = [
     'digraph Coupling {',
@@ -1209,17 +1283,18 @@ function formatCouplingDotForSccIndices(
 
   for (const sccIndex of [...sccIndices].sort((left, right) => left - right)) {
     const sccMembers = analysis.sccs[sccIndex];
-    if (sccMembers === undefined) {
-      throw new Error(`Expected SCC members for SCC index ${String(sccIndex)}`);
-    }
+    invariant(
+      sccMembers !== undefined,
+      `Expected SCC members for SCC index ${String(sccIndex)}`,
+    );
 
     lines.push(
       formatDotNode(
         sccIndex,
         sccMembers,
         requiredDepth(analysis.depthByScc, sccIndex),
-        maxDepth
-      )
+        maxDepth,
+      ),
     );
   }
 
@@ -1236,7 +1311,7 @@ export function formatCouplingDot(analysis: CouplingAnalysis): string {
   return formatCouplingDotForSccIndices(
     analysis,
     [...analysis.sccs.keys()],
-    analysis.dag
+    analysis.dag,
   );
 }
 
@@ -1244,13 +1319,13 @@ export function formatCouplingDot(analysis: CouplingAnalysis): string {
  * Format depth-0/1 SCC subset as Graphviz DOT output.
  */
 export function formatCouplingDotDepthZeroOneSubset(
-  analysis: CouplingAnalysis
+  analysis: CouplingAnalysis,
 ): string {
   const subsetGraph = buildDepthZeroOneSubsetGraph(analysis);
   return formatCouplingDotForSccIndices(
     analysis,
     subsetGraph.sccIndices,
-    subsetGraph.dag
+    subsetGraph.dag,
   );
 }
 
@@ -1259,7 +1334,7 @@ export function formatCouplingDotDepthZeroOneSubset(
  */
 export function runCoupling(
   filePath: string,
-  options: RunCouplingOptions
+  options: RunCouplingOptions,
 ): void {
   const graph =
     options.class === undefined
