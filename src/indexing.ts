@@ -548,50 +548,69 @@ export async function inspectModule(repoRoot: string, tsFilePath: string, fileSy
 
     const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
 
-  const moduleInfo: ModuleInfo = {
-    path: tsFilePath,
-    repoRoot,
-    tsconfig: importerTsConfig,
-    importOfNamedExports: [],
-    importOfUnresolvedSpec: [],
-    reExports: staticModuleInfo.reExports,
-    needs: {
-      nodejs: staticModuleInfo.nodejsGlobalUsages || staticModuleInfo.usesNodejsGlobals,
-    },
-  };
+    const importSpecs = new Set<string>();
 
-  const importSpecs = new Set<string>();
-
-  for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-    importSpecs.add(unresolved.moduleSpec);
-  }
-
-  const resolvedPathsBySpec = new Map<string, string>();
-  for (const spec of importSpecs) {
-    const resolvedPath = await resolveImportSpec(repoRoot, tsFilePath, spec, fileSystem);
-    if (resolvedPath) {
-      resolvedPathsBySpec.set(spec, resolvedPath);
+    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+      importSpecs.add(unresolved.moduleSpec);
     }
-  }
 
-  for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-    const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
-    if (resolvedPath) {
-      moduleInfo.importOfNamedExports.push({
-        type: 'NamedExport',
-        path: resolvedPath,
-        name: unresolved.name,
-      });
-    } else {
-      moduleInfo.importOfUnresolvedSpec.push({
-        type: 'ExternalImport',
-        moduleSpecifier: unresolved.moduleSpec,
-        name: unresolved.name,
-      });
+    /*
+      Also resolve re-export module specifiers so the inspect output
+      shows absolute paths, not raw specifiers.
+    */
+    for (const reExport of staticModuleInfo.reExports) {
+      importSpecs.add(reExport.moduleSpec);
     }
-  }
 
-  return moduleInfo;
+    const resolvedPathsBySpec = new Map<string, string>();
+    for (const spec of importSpecs) {
+      const resolvedPath = await resolveImportSpec(repoRoot, tsFilePath, spec, fileSystem);
+      if (resolvedPath) {
+        resolvedPathsBySpec.set(spec, resolvedPath);
+      }
+    }
+
+    /*
+      Resolve re-export paths using the same resolution map.
+    */
+    const resolvedReExports = staticModuleInfo.reExports.map((reExport) => {
+      const resolvedPath = resolvedPathsBySpec.get(reExport.moduleSpec);
+      if (resolvedPath !== undefined) {
+        return { ...reExport, resolvedPath };
+      }
+      return reExport;
+    });
+
+    const moduleInfo: ModuleInfo = {
+      path: tsFilePath,
+      repoRoot,
+      tsconfig: importerTsConfig,
+      importOfNamedExports: [],
+      importOfUnresolvedSpec: [],
+      reExports: resolvedReExports,
+      needs: {
+        nodejs: staticModuleInfo.nodejsGlobalUsages || staticModuleInfo.usesNodejsGlobals,
+      },
+    };
+
+    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+      const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
+      if (resolvedPath) {
+        moduleInfo.importOfNamedExports.push({
+          type: 'NamedExport',
+          path: resolvedPath,
+          name: unresolved.name,
+        });
+      } else {
+        moduleInfo.importOfUnresolvedSpec.push({
+          type: 'ExternalImport',
+          moduleSpecifier: unresolved.moduleSpec,
+          name: unresolved.name,
+        });
+      }
+    }
+
+    return moduleInfo;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to inspect module ${tsFilePath}: ${errorMessage}`);
@@ -745,6 +764,7 @@ interface UnresolvedExport {
 interface ReExport {
   name: string;
   moduleSpec: string;
+  resolvedPath?: string;
   isTypeOnly: boolean;
 }
 
@@ -1743,14 +1763,13 @@ async function storeImportsFromFile(moduleInfo: ModuleInfo, db: Storage, mtimeMs
   }
 
   // Store re-exports
-  for (let i = 0; i < moduleInfo.reExports.length; i++) {
-    const reExport = moduleInfo.reExports.at(i);
-    if (reExport === undefined) {
-      continue;
-    }
+  for (const [i, reExport] of moduleInfo.reExports.entries()) {
     db.putReExport(moduleInfo.path, i, reExport.name, {
       moduleSpec: reExport.moduleSpec,
-      isTypeOnly: reExport.isTypeOnly
+      isTypeOnly: reExport.isTypeOnly,
+      ...(reExport.resolvedPath !== undefined && {
+        resolvedPath: reExport.resolvedPath,
+      }),
     });
   }
 
