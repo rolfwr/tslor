@@ -3,7 +3,6 @@ import { dirname, extname, resolve } from 'path';
 import { CliError } from './errors';
 import { RealFileSystem } from './filesystem';
 import { inspectModule } from './indexing';
-import { DebugOptions } from './objstore';
 import { findGitRepoRoot } from './project';
 import { GitRepositoryRootProvider } from './repositoryRootProvider';
 import { runApply } from './runApply';
@@ -53,12 +52,6 @@ function getGlobalOptions(cmd: Command): {
       typeof globalOptions.traceId === 'string' ? globalOptions.traceId : null,
     fresh: globalOptions.fresh === true,
   };
-}
-
-function getDebugOptions(cmd: Command): DebugOptions {
-  const globalOptions = cmd.parent?.opts() ?? {};
-  const traceId = globalOptions.traceId;
-  return { traceId: typeof traceId === 'string' ? traceId : null };
 }
 
 program
@@ -228,15 +221,31 @@ program
 
 program
   .command('cycles <directory>')
-  .description('Find and report import cycles between modules as code smells')
-  .option('-d, --directories', 'Find cycles between directories instead of individual modules')
-  .option('-g, --graphviz', 'Output cycles in Graphviz DOT format for visualization')
+  .description('Detect and report circular import dependencies')
+  .option(
+    '-d, --directories',
+    'Find cycles between directories instead of individual modules',
+  )
+  .option(
+    '-g, --graphviz',
+    'Output cycles in Graphviz DOT format for visualization',
+  )
   .option('-a, --ascii', 'Output cycles as ASCII art graph for visualization')
-  .option('-f, --fancy', 'Output cycles with Unicode characters and colors for enhanced visualization')
+  .option(
+    '-f, --fancy',
+    'Output cycles with Unicode characters and colors for enhanced visualization',
+  )
   .action(async (directory: string, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runCycles(directory, opts, debugOptions, fileSystem);
+    await runCycles(
+      directory,
+      { ...opts, cwd: currentCwd },
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program

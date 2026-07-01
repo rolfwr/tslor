@@ -1,17 +1,19 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot, getTypeScriptFilePaths } from "./project";
-import { openStorage, isObjWithExporterPath, Storage } from "./storage";
-import { DebugOptions, Obj } from "./objstore";
-import { normalizePath, denormalizePath } from "./pathUtils";
-import { dirname } from "path";
-import chalk from "chalk";
-import { FileSystem } from "./filesystem";
+import { dirname, sep } from 'path';
+import { FileSystem } from './filesystem';
+import { type AdjacencyMap, findSCCs, type SCC } from './graphUtils';
+import { updateStorage } from './indexing';
+import { DebugOptions, Obj } from './objstore';
+import { denormalizePath, normalizePath } from './pathUtils';
+import { findGitRepoRoot, getTypeScriptFilePaths } from './project';
+import { isObjWithExporterPath, openStorage, Storage } from './storage';
 
 export interface CyclesOptions {
   directories?: boolean;
   graphviz?: boolean;
   ascii?: boolean;
   fancy?: boolean;
+  /** Working directory for path denormalization */
+  cwd: string;
 }
 
 /**
@@ -20,34 +22,75 @@ export interface CyclesOptions {
 const UNICODE_CHARS = {
   node: '●',
   arrowLeft: '🭮',
-  arrowRight: '🭬', 
-  arrowUp: '↑',
-  arrowDown: '↓',
+  arrowRight: '🭬',
   horizontal: '─',
   vertical: '│',
   cornerTopLeft: '╭',
-  cornerTopRight: '╮', 
+  cornerTopRight: '╮',
   cornerBottomLeft: '╰',
   cornerBottomRight: '╯',
-  cross: '┼'
-};
+  cross: '┼',
+} as const;
+
+/**
+ * ANSI color helper — returns a function that wraps a string in escape codes.
+ */
+interface ColorOptions {
+  fg: number;
+  bold?: boolean;
+}
+
+function color(opts: ColorOptions): (s: string) => string {
+  return (s: string) =>
+    `\x1b[${opts.fg}m${opts.bold ? '\x1b[1m' : ''}${s}\x1b[0m`;
+}
 
 /**
  * Color scheme for fancy terminal rendering.
  */
 const COLORS = {
-  cycleNode: chalk.red.bold,
-  forwardArrow: chalk.green,
-  backwardArrow: chalk.yellow,
-  directory: chalk.blue,
-  filename: chalk.white,
-  cycleHeader: chalk.cyan.bold,
-  lineConnections: chalk.gray
+  cycleNode: color({ fg: 31, bold: true }),
+  directory: color({ fg: 34 }),
+  filename: color({ fg: 37 }),
+  cycleHeader: color({ fg: 36, bold: true }),
+  lineConnections: color({ fg: 90 }),
 };
 
 /**
+ * Terminal capability detection — captured once at the entry boundary.
+ */
+interface TerminalCapabilities {
+  useFancy: boolean;
+  terminalWidth: number;
+}
+
+interface ReportContext {
+  capabilities: TerminalCapabilities;
+  cwd: string;
+}
+
+function detectTerminalCapabilities(): TerminalCapabilities {
+  const unicodeSupported =
+    process.env.TERM !== 'dumb' &&
+    process.env.LANG !== 'C' &&
+    !process.env.NO_UNICODE;
+
+  const colorSupported =
+    process.env.FORCE_COLOR !== '0' &&
+    (process.env.FORCE_COLOR ||
+      (process.stdout.isTTY &&
+        process.env.TERM !== 'dumb' &&
+        (!process.env.CI || process.env.CI === 'false')));
+
+  return {
+    useFancy: Boolean(unicodeSupported && colorSupported),
+    terminalWidth: process.stdout.columns || Infinity,
+  };
+}
+
+/**
  * Find and report import cycles between modules or directories.
- * 
+ *
  * Module cycles: Direct import cycles between TypeScript files
  * Directory cycles: Cycles between directories containing modules
  */
@@ -55,56 +98,90 @@ export async function runCycles(
   directory: string,
   options: CyclesOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ) {
   const absoluteDirectory = normalizePath(directory);
   const repoRoot = findGitRepoRoot(absoluteDirectory);
-  const db = openStorage(debugOptions, { verbose: false, inMemory: false }); // Silent for clean cycle output
-  await updateStorage(repoRoot, db, false, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: false,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  }); // Silent for clean cycle output
+  await updateStorage(repoRoot, db, false, fileSystem, writer);
+
+  const capabilities = detectTerminalCapabilities();
 
   if (options.directories) {
-    await findDirectoryCycles(db, absoluteDirectory, options, fileSystem);
+    await findCycles(
+      db,
+      absoluteDirectory,
+      options,
+      fileSystem,
+      buildDirectoryGraph,
+      'directories',
+      { capabilities, cwd: options.cwd },
+    );
   } else {
-    await findModuleCycles(db, absoluteDirectory, options, fileSystem);
+    await findCycles(
+      db,
+      absoluteDirectory,
+      options,
+      fileSystem,
+      buildModuleGraph,
+      'modules',
+      { capabilities, cwd: options.cwd },
+    );
   }
 
   db.save();
 }
 
-/**
- * Find cycles between individual modules (TypeScript files).
- */
-async function findModuleCycles(
+async function findCycles(
   db: Storage,
   directory: string,
   options: CyclesOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
+  graphBuilder: (
+    db: Storage,
+    filePaths: Set<string>,
+  ) => ReadonlyMap<string, ReadonlySet<string>>,
+  label: string,
+  ctx: ReportContext,
 ) {
-  // First, discover all TypeScript files in the target directory
   const filePaths = await getTypeScriptFilePaths(directory, fileSystem);
-  const fileSet = new Set(filePaths);
-  
-  // Build dependency graph only for files in scope
-  const graph = buildModuleGraph(db, fileSet);
+  const graph = graphBuilder(db, new Set(filePaths));
 
-  // Find and report cycles
-  const cycles = findStronglyConnectedComponents(graph);
-  const cyclesFound = cycles.filter(cycle => cycle.length > 1);
+  const cycles = findSCCs(graph).filter((cycle) => cycle.length > 1);
 
   if (options.graphviz) {
-    reportModuleCyclesGraphviz(cyclesFound, graph);
-  } else if (options.fancy) {
-    reportModuleCyclesFancy(cyclesFound, graph);
-  } else if (options.ascii) {
-    reportModuleCyclesAscii(cyclesFound, graph);
+    reportCyclesGraphviz(cycles, graph, label, ctx.cwd);
+  } else if (options.ascii || (options.fancy && !ctx.capabilities.useFancy)) {
+    reportCyclesAscii(
+      cycles,
+      graph,
+      label,
+      ctx.cwd,
+      ctx.capabilities.terminalWidth,
+    );
+  } else if (options.fancy && ctx.capabilities.useFancy) {
+    reportCyclesFancy(
+      cycles,
+      graph,
+      label,
+      ctx.cwd,
+      ctx.capabilities.terminalWidth,
+    );
   } else {
-    reportModuleCycles(cyclesFound);
+    reportCycles(cycles, label, ctx.cwd);
   }
 }
 
 function getExporterPathIfInScope(
   importObj: Obj,
-  filePaths: Set<string>
+  filePaths: Set<string>,
 ): string | null {
   if (!isObjWithExporterPath(importObj)) {
     return null;
@@ -115,156 +192,121 @@ function getExporterPathIfInScope(
   return importObj.exporter.path;
 }
 
-/**
- * Build dependency graph for a specific set of module files.
- */
-function buildModuleGraph(db: Storage, filePaths: Set<string>): Map<string, Set<string>> {
+function addEdge(
+  graph: Map<string, Set<string>>,
+  from: string,
+  to: string,
+): void {
+  let deps = graph.get(from);
+  if (!deps) {
+    deps = new Set();
+    graph.set(from, deps);
+  }
+  deps.add(to);
+}
+
+function buildModuleGraph(
+  db: Storage,
+  filePaths: Set<string>,
+): Map<string, Set<string>> {
   const graph = new Map<string, Set<string>>();
-  
+
   for (const filePath of filePaths) {
-    const imports = db.getImportsFromFile(filePath);
-    for (const importObj of imports) {
+    for (const importObj of db.getImportsFromFile(filePath)) {
       const exporterPath = getExporterPathIfInScope(importObj, filePaths);
       if (exporterPath) {
-        let deps = graph.get(filePath);
-        if (!deps) {
-          deps = new Set();
-          graph.set(filePath, deps);
-        }
-        deps.add(exporterPath);
+        addEdge(graph, filePath, exporterPath);
       }
     }
   }
-  
+
   return graph;
 }
 
-/**
- * Report module cycles in a clean format.
- */
-function reportModuleCycles(cycles: string[][]) {
+function reportCycles(cycles: SCC[], label: string, cwd: string) {
   if (cycles.length === 0) {
-    console.log('No import cycles found between modules.');
+    console.log(`No import cycles found between ${label}.`);
     return;
   }
 
-  console.log(`Found ${cycles.length} import cycle(s) between modules:`);
+  console.log(`Found ${cycles.length} import cycle(s) between ${label}:`);
   console.log();
 
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
+  for (const [i, cycle] of cycles.entries()) {
     console.log(`Cycle ${i + 1}:`);
-    for (const module of cycle) {
-      console.log(`  ${denormalizePath(module, cwd)}`);
+    for (const member of cycle) {
+      console.log(`  ${denormalizePath(member, cwd)}`);
     }
     console.log();
   }
 }
 
-/**
- * Report module cycles in Graphviz DOT format.
- */
-function reportModuleCyclesGraphviz(cycles: string[][], graph: Map<string, Set<string>>) {
+function reportCyclesGraphviz(
+  cycles: SCC[],
+  graph: AdjacencyMap,
+  label: string,
+  cwd: string,
+) {
   if (cycles.length === 0) {
-    console.log('// No import cycles found between modules');
+    console.log(`// No import cycles found between ${label}`);
     return;
   }
 
-  console.log('digraph ModuleCycles {');
+  const isDirectory = label === 'directories';
+  const graphTitle = isDirectory ? 'DirectoryCycles' : 'ModuleCycles';
+  const nodeShape = isDirectory
+    ? 'shape=folder, style=filled, fillcolor=lightblue'
+    : 'shape=box, style=rounded';
+  const nodeStyle = isDirectory
+    ? 'color=red, penwidth=2, fillcolor=pink'
+    : 'color=red, penwidth=2';
+  const sectionLabel = isDirectory ? 'Directories' : 'Nodes';
+
+  console.log(`digraph ${graphTitle} {`);
   console.log('  rankdir=LR;');
-  console.log('  node [shape=box, style=rounded];');
+  console.log(`  node [${nodeShape}];`);
   console.log('');
 
-  const cwd = process.cwd();
-  const cycleNodes = new Set<string>();
-  
-  // Collect all nodes that are part of cycles
-  for (const cycle of cycles) {
-    for (const module of cycle) {
-      cycleNodes.add(module);
-    }
-  }
-  
-  // Define nodes with cycle highlighting
-  console.log('  // Nodes');
+  const cycleNodes = collectCycleNodes(cycles);
+
+  console.log(`  // ${sectionLabel}`);
   for (const node of cycleNodes) {
     const displayName = denormalizePath(node, cwd);
     const nodeId = getNodeId(node);
-    console.log(`  ${nodeId} [label="${displayName}", color=red, penwidth=2];`);
+    console.log(`  ${nodeId} [label="${displayName}", ${nodeStyle}];`);
   }
   console.log('');
-  
-  // Define edges between cycle nodes
-  console.log('  // Edges within cycles');
-  for (const node of cycleNodes) {
-    const dependencies = graph.get(node);
-    if (dependencies) {
-      for (const dep of dependencies) {
-        if (cycleNodes.has(dep)) {
-          const fromId = getNodeId(node);
-          const toId = getNodeId(dep);
-          console.log(`  ${fromId} -> ${toId} [color=red, penwidth=2];`);
-        }
-      }
-    }
-  }
-  
+
+  printCycleEdges(graph, cycleNodes);
   console.log('}');
 }
 
-/**
- * Report directory cycles in Graphviz DOT format.
- */
-function reportDirectoryCyclesGraphviz(cycles: string[][], graph: Map<string, Set<string>>) {
-  if (cycles.length === 0) {
-    console.log('// No import cycles found between directories');
-    return;
-  }
-
-  console.log('digraph DirectoryCycles {');
-  console.log('  rankdir=LR;');
-  console.log('  node [shape=folder, style=filled, fillcolor=lightblue];');
-  console.log('');
-
-  const cwd = process.cwd();
-  const cycleNodes = new Set<string>();
-  
-  // Collect all nodes that are part of cycles
+function collectCycleNodes(cycles: SCC[]): Set<string> {
+  const nodes = new Set<string>();
   for (const cycle of cycles) {
-    for (const dir of cycle) {
-      cycleNodes.add(dir);
+    for (const member of cycle) {
+      nodes.add(member);
     }
   }
-  
-  // Define nodes with cycle highlighting
-  console.log('  // Directories');
-  for (const node of cycleNodes) {
-    const displayName = denormalizePath(node, cwd);
-    const nodeId = getNodeId(node);
-    console.log(`  ${nodeId} [label="${displayName}", color=red, penwidth=2, fillcolor=pink];`);
-  }
-  console.log('');
-  
-  // Define edges between cycle nodes
-  console.log('  // Dependencies within cycles');
+  return nodes;
+}
+
+function printCycleEdges(graph: AdjacencyMap, cycleNodes: Set<string>): void {
+  console.log('  // Edges within cycles');
   for (const node of cycleNodes) {
     const dependencies = graph.get(node);
-    if (dependencies) {
-      for (const dep of dependencies) {
-        if (cycleNodes.has(dep)) {
-          const fromId = getNodeId(node);
-          const toId = getNodeId(dep);
-          console.log(`  ${fromId} -> ${toId} [color=red, penwidth=2];`);
-        }
+    if (!dependencies) {
+      continue;
+    }
+    for (const dep of dependencies) {
+      if (!cycleNodes.has(dep)) {
+        continue;
       }
+      const fromId = getNodeId(node);
+      const toId = getNodeId(dep);
+      console.log(`  ${fromId} -> ${toId} [color=red, penwidth=2];`);
     }
   }
-  
-  console.log('}');
 }
 
 /**
@@ -282,24 +324,187 @@ function truncatePathForTerminal(path: string, maxWidth: number): string {
   if (path.length <= maxWidth) {
     return path;
   }
-  
+
+  // Not enough room for a meaningful prefix + "..." + suffix; hard-truncate
   if (maxWidth < 7) {
-    // Not enough space for meaningful truncation
     return path.substring(0, maxWidth);
   }
-  
+
   const prefixLength = Math.floor((maxWidth - 3) / 2);
   const suffixLength = maxWidth - 3 - prefixLength;
-  
-  return path.substring(0, prefixLength) + '...' + path.substring(path.length - suffixLength);
+  return (
+    path.substring(0, prefixLength) +
+    '...' +
+    path.substring(path.length - suffixLength)
+  );
+}
+
+interface CycleGlyphs {
+  node: string;
+  horizontal: string;
+  vertical: string;
+  arrowLeft: string;
+  arrowRight: string;
+  cornerTopLeft: string;
+  cornerTopRight: string;
+  cornerBottomLeft: string;
+  cornerBottomRight: string;
+  cross: string;
+  immutable: Set<string>;
+}
+
+const ASCII_GLYPHS: CycleGlyphs = {
+  node: 'o',
+  horizontal: '-',
+  vertical: '|',
+  arrowLeft: '<',
+  arrowRight: '>',
+  cornerTopLeft: '.',
+  cornerTopRight: '.',
+  cornerBottomLeft: '`',
+  cornerBottomRight: '`',
+  cross: '+',
+  immutable: new Set(['o', '<', '>', '`', '.', '+']),
+};
+
+const FANCY_GLYPHS: CycleGlyphs = {
+  node: UNICODE_CHARS.node,
+  horizontal: UNICODE_CHARS.horizontal,
+  vertical: UNICODE_CHARS.vertical,
+  arrowLeft: UNICODE_CHARS.arrowLeft,
+  arrowRight: UNICODE_CHARS.arrowRight,
+  cornerTopLeft: UNICODE_CHARS.cornerTopLeft,
+  cornerTopRight: UNICODE_CHARS.cornerTopRight,
+  cornerBottomLeft: UNICODE_CHARS.cornerBottomLeft,
+  cornerBottomRight: UNICODE_CHARS.cornerBottomRight,
+  cross: UNICODE_CHARS.cross,
+  immutable: new Set([
+    UNICODE_CHARS.node,
+    UNICODE_CHARS.arrowLeft,
+    UNICODE_CHARS.arrowRight,
+    UNICODE_CHARS.cornerTopLeft,
+    UNICODE_CHARS.cornerTopRight,
+    UNICODE_CHARS.cornerBottomLeft,
+    UNICODE_CHARS.cornerBottomRight,
+    UNICODE_CHARS.cross,
+  ]),
+};
+
+function setGridChar(
+  grid: string[][],
+  row: number,
+  col: number,
+  char: string,
+  glyphs: CycleGlyphs,
+): void {
+  const gridRow = grid.at(row);
+  if (gridRow === undefined) {
+    return;
+  }
+  const current = gridRow[col];
+  if (current === undefined || glyphs.immutable.has(current)) {
+    return;
+  }
+  if (
+    (current === glyphs.vertical && char === glyphs.horizontal) ||
+    (current === glyphs.horizontal && char === glyphs.vertical)
+  ) {
+    gridRow[col] = glyphs.cross;
+  } else {
+    gridRow[col] = char;
+  }
+}
+
+function drawArrow(
+  grid: string[][],
+  sourcePos: [number, number],
+  targetPos: [number, number],
+  glyphs: CycleGlyphs,
+): void {
+  const [sourceRow, sourceCol] = sourcePos;
+  const [targetRow, targetCol] = targetPos;
+  const rowDelta = targetRow - sourceRow;
+  const colDelta = targetCol - sourceCol;
+
+  if (rowDelta === 0) {
+    drawHorizontalArrow(
+      grid,
+      sourceRow,
+      sourceCol,
+      targetCol,
+      colDelta,
+      glyphs,
+    );
+    return;
+  }
+
+  drawDiagonalArrow(
+    grid,
+    sourceRow,
+    sourceCol,
+    targetRow,
+    targetCol,
+    rowDelta,
+    glyphs,
+  );
+}
+
+function drawHorizontalArrow(
+  grid: string[][],
+  row: number,
+  sourceCol: number,
+  targetCol: number,
+  colDelta: number,
+  glyphs: CycleGlyphs,
+): void {
+  const startCol = Math.min(sourceCol, targetCol) + 1;
+  const endCol = Math.max(sourceCol, targetCol) - 1;
+  for (let col = startCol; col <= endCol; col++) {
+    setGridChar(grid, row, col, glyphs.horizontal, glyphs);
+  }
+  if (colDelta > 0) {
+    setGridChar(grid, row, targetCol - 1, glyphs.arrowRight, glyphs);
+  } else {
+    setGridChar(grid, row, targetCol + 1, glyphs.arrowLeft, glyphs);
+  }
+}
+
+function drawDiagonalArrow(
+  grid: string[][],
+  sourceRow: number,
+  sourceCol: number,
+  targetRow: number,
+  targetCol: number,
+  rowDelta: number,
+  glyphs: CycleGlyphs,
+): void {
+  if (rowDelta > 0) {
+    for (let row = sourceRow + 1; row < targetRow; row++) {
+      setGridChar(grid, row, sourceCol, glyphs.vertical, glyphs);
+    }
+    setGridChar(grid, targetRow, sourceCol, glyphs.cornerBottomLeft, glyphs);
+    for (let col = sourceCol + 1; col < targetCol; col++) {
+      setGridChar(grid, targetRow, col, glyphs.horizontal, glyphs);
+    }
+    setGridChar(grid, targetRow, targetCol - 1, glyphs.arrowRight, glyphs);
+  } else {
+    for (let row = sourceRow - 1; row > targetRow; row--) {
+      setGridChar(grid, row, sourceCol, glyphs.vertical, glyphs);
+    }
+    setGridChar(grid, targetRow, sourceCol, glyphs.cornerTopRight, glyphs);
+    for (let col = sourceCol - 1; col > targetCol + 1; col--) {
+      setGridChar(grid, targetRow, col, glyphs.horizontal, glyphs);
+    }
+    setGridChar(grid, targetRow, targetCol + 1, glyphs.arrowLeft, glyphs);
+  }
 }
 
 function drawCycleArrows(
-  cycle: string[],
-  graph: Map<string, Set<string>>,
+  cycle: SCC,
+  graph: AdjacencyMap,
   nodePositions: Map<string, [number, number]>,
   grid: string[][],
-  drawFn: (grid: string[][], source: [number, number], target: [number, number]) => void
+  glyphs: CycleGlyphs,
 ): void {
   for (const source of cycle) {
     const dependencies = graph.get(source);
@@ -315,564 +520,220 @@ function drawCycleArrows(
       if (sourcePos === undefined || targetPos === undefined) {
         continue;
       }
-      drawFn(grid, sourcePos, targetPos);
+      drawArrow(grid, sourcePos, targetPos, glyphs);
     }
   }
 }
 
-/**
- * Render a single cycle as ASCII art.
- */
-function renderCycleAsAscii(cycle: string[], graph: Map<string, Set<string>>, cwd: string): string[] {
+interface CycleRenderer {
+  glyphs: CycleGlyphs;
+  colorizeLine?: (line: string) => string;
+  colorizePath?: (path: string) => string;
+}
+
+function renderCycle(
+  cycle: SCC,
+  graph: AdjacencyMap,
+  cwd: string,
+  renderer: CycleRenderer,
+  terminalWidth: number,
+): string[] {
   if (cycle.length === 0) {
     return [];
   }
-  
-  // Calculate grid dimensions
+
   const nodeCount = cycle.length;
-  const gridWidth = (nodeCount - 1) * 3 + 1; // Node positions: 0, 3, 6, 9...
-  const gridHeight = (nodeCount - 1) * 2 + 1; // Node positions: 0, 2, 4, 6...
-  
-  // Initialize grid with spaces
+  const gridWidth = (nodeCount - 1) * 3 + 1;
+  const gridHeight = (nodeCount - 1) * 2 + 1;
+
   const grid: string[][] = [];
   for (let row = 0; row < gridHeight; row++) {
     grid[row] = Array.from({ length: gridWidth }, () => ' ');
   }
 
-  // Place nodes at diagonal positions
   const nodePositions = new Map<string, [number, number]>();
   for (const [i, cycleNode] of cycle.entries()) {
     const col = i * 3;
     const row = i * 2;
-    const rowCells = grid.at(row);
-    if (rowCells === undefined) {
-      throw new Error('Grid row out of bounds');
-    }
-    rowCells[col] = 'o';
+    // biome-ignore lint/style/noNonNullAssertion: row = i * 2 < gridHeight = (cycle.length - 1) * 2 + 1 for i < cycle.length
+    const rowCells = grid[row]!;
+    rowCells[col] = renderer.glyphs.node;
     nodePositions.set(cycleNode, [row, col]);
   }
 
-  // Draw arrows based on actual dependencies in the graph
-  drawCycleArrows(cycle, graph, nodePositions, grid, drawArrow);
-
-  // Convert grid to strings and add path labels
-  return gridToLines(grid, gridHeight, cycle, cwd);
+  drawCycleArrows(cycle, graph, nodePositions, grid, renderer.glyphs);
+  return gridToLines(grid, cycle, cwd, renderer, terminalWidth);
 }
 
 function gridToLines(
   grid: string[][],
-  gridHeight: number,
-  cycle: string[],
-  cwd: string
+  cycle: SCC,
+  cwd: string,
+  renderer: CycleRenderer,
+  terminalWidth: number,
 ): string[] {
   const lines: string[] = [];
-  const terminalWidth = process.stdout.columns || Infinity;
+  const colorizePath = renderer.colorizePath;
+  const colorizeLine = renderer.colorizeLine;
 
-  for (let row = 0; row < gridHeight; row++) {
-    const gridRow = grid.at(row);
-    if (gridRow === undefined) {
-      continue;
-    }
+  for (const [nodeIndex, cycleNode] of cycle.entries()) {
+    const row = nodeIndex * 2;
+    // biome-ignore lint/style/noNonNullAssertion: row = nodeIndex * 2 < gridHeight for nodeIndex < cycle.length
+    const gridRow = grid[row]!;
     let line = gridRow.join('');
 
-    // Add path label for nodes
-    const nodeIndex = Math.floor(row / 2);
-    if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const cycleNode = cycle.at(nodeIndex);
-      if (cycleNode === undefined) {
-        continue;
-      }
-      const path = denormalizePath(cycleNode, cwd);
-      const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
-      const truncatedPath = truncatePathForTerminal(path, availableWidth);
-      line += '  ' + truncatedPath;
-    }
+    const path = denormalizePath(cycleNode, cwd);
+    const availableWidth = terminalWidth - line.length - 2;
+    const truncatedPath = truncatePathForTerminal(path, availableWidth);
+    const displayPath = colorizePath
+      ? colorizePath(truncatedPath)
+      : truncatedPath;
+    line += '  ' + displayPath;
+    lines.push(colorizeLine ? colorizeLine(line.trimEnd()) : line.trimEnd());
 
-    lines.push(line.trimEnd()); // Remove trailing spaces
+    if (nodeIndex < cycle.length - 1) {
+      // biome-ignore lint/style/noNonNullAssertion: row + 1 < gridHeight for nodeIndex < cycle.length - 1
+      const spacerRow = grid[row + 1]!;
+      const spacerLine = spacerRow.join('').trimEnd();
+      lines.push(colorizeLine ? colorizeLine(spacerLine) : spacerLine);
+    }
   }
 
   return lines;
 }
 
-/**
- * Render a single cycle as fancy Unicode art with colors.
- */
-function renderCycleAsFancy(cycle: string[], graph: Map<string, Set<string>>, cwd: string): string[] {
-  if (cycle.length === 0) {
-    return [];
-  }
-  
-  // Calculate grid dimensions (same as ASCII version)
-  const nodeCount = cycle.length;
-  const gridWidth = (nodeCount - 1) * 3 + 1;
-  const gridHeight = (nodeCount - 1) * 2 + 1;
-  
-  // Initialize grid with spaces
-  const grid: string[][] = [];
-  for (let row = 0; row < gridHeight; row++) {
-    grid[row] = Array.from({ length: gridWidth }, () => ' ');
-  }
-
-  // Place nodes at diagonal positions
-  const nodePositions = new Map<string, [number, number]>();
-  for (const [i, cycleNode] of cycle.entries()) {
-    const col = i * 3;
-    const row = i * 2;
-    const rowCells = grid.at(row);
-    if (rowCells === undefined) {
-      throw new Error('Grid row out of bounds');
-    }
-    rowCells[col] = UNICODE_CHARS.node;
-    nodePositions.set(cycleNode, [row, col]);
-  }
-
-  // Draw arrows based on actual dependencies in the graph
-  drawCycleArrows(cycle, graph, nodePositions, grid, drawFancyArrow);
-
-  // Convert grid to strings and add colored path labels
-  return fancyGridToLines(grid, gridHeight, cycle, cwd);
-}
-
-function fancyGridToLines(
-  grid: string[][],
-  gridHeight: number,
-  cycle: string[],
-  cwd: string
+function renderCycleAsAscii(
+  cycle: SCC,
+  graph: AdjacencyMap,
+  cwd: string,
+  terminalWidth: number,
 ): string[] {
-  const lines: string[] = [];
-  const terminalWidth = process.stdout.columns || Infinity;
-
-  for (let row = 0; row < gridHeight; row++) {
-    const gridRow = grid.at(row);
-    if (gridRow === undefined) {
-      continue;
-    }
-    let line = gridRow.join('');
-
-    // Add path label for nodes
-    const nodeIndex = Math.floor(row / 2);
-    if (row % 2 === 0 && nodeIndex < cycle.length) {
-      const cycleNode = cycle.at(nodeIndex);
-      if (cycleNode === undefined) {
-        continue;
-      }
-      const path = denormalizePath(cycleNode, cwd);
-      const availableWidth = terminalWidth - line.length - 2; // 2 for spacing
-      const truncatedPath = truncatePathForTerminal(path, availableWidth);
-      const colorizedPath = colorizeFilePath(truncatedPath);
-      line += '  ' + colorizedPath;
-    }
-
-    // Apply colors to the ASCII art part
-    line = colorizeAsciiArt(line);
-    lines.push(line.trimEnd()); // Remove trailing spaces
-  }
-
-  return lines;
-}
-
-/**
- * Draw a fancy arrow with Unicode characters from source position to target position on the grid.
- */
-function drawFancyDiagonalArrow(
-  grid: string[][],
-  sourceRow: number, sourceCol: number,
-  targetRow: number, targetCol: number,
-  rowDelta: number
-): void {
-  if (rowDelta > 0) {
-    for (let row = sourceRow + 1; row < targetRow; row++) {
-      setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
-    }
-    setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerBottomLeft);
-    for (let col = sourceCol + 1; col < targetCol; col++) {
-      setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
-    }
-    setFancyGridChar(grid, targetRow, targetCol - 1, UNICODE_CHARS.arrowRight);
-  } else {
-    for (let row = sourceRow - 1; row > targetRow; row--) {
-      setFancyGridChar(grid, row, sourceCol, UNICODE_CHARS.vertical);
-    }
-    setFancyGridChar(grid, targetRow, sourceCol, UNICODE_CHARS.cornerTopRight);
-    for (let col = sourceCol - 1; col > targetCol + 1; col--) {
-      setFancyGridChar(grid, targetRow, col, UNICODE_CHARS.horizontal);
-    }
-    setFancyGridChar(grid, targetRow, targetCol + 1, UNICODE_CHARS.arrowLeft);
-  }
-}
-
-function drawFancyArrow(grid: string[][], sourcePos: [number, number], targetPos: [number, number]) {
-  const [sourceRow, sourceCol] = sourcePos;
-  const [targetRow, targetCol] = targetPos;
-  const rowDelta = targetRow - sourceRow;
-  const colDelta = targetCol - sourceCol;
-  
-  if (rowDelta === 0) {
-    const startCol = Math.min(sourceCol, targetCol) + 1;
-    const endCol = Math.max(sourceCol, targetCol) - 1;
-    for (let col = startCol; col <= endCol; col++) {
-      setFancyGridChar(grid, sourceRow, col, UNICODE_CHARS.horizontal);
-    }
-    if (colDelta > 0) {
-      setFancyGridChar(grid, targetRow, targetCol - 1, UNICODE_CHARS.arrowRight);
-    } else {
-      setFancyGridChar(grid, targetRow, targetCol + 1, UNICODE_CHARS.arrowLeft);
-    }
-  } else {
-    drawFancyDiagonalArrow(grid, sourceRow, sourceCol, targetRow, targetCol, rowDelta);
-  }
-}
-
-/**
- * Set a Unicode character on the grid, handling crossing rules.
- */
-function setFancyGridChar(grid: string[][], row: number, col: number, char: string) {
-  const gridRow = grid.at(row);
-  if (gridRow === undefined) {
-    return;
-  }
-  const current = gridRow[col];
-
-  // Cannot overwrite these characters
-  if (current === UNICODE_CHARS.node || current === UNICODE_CHARS.arrowLeft ||
-      current === UNICODE_CHARS.arrowRight || current === UNICODE_CHARS.cornerTopLeft ||
-      current === UNICODE_CHARS.cornerTopRight || current === UNICODE_CHARS.cornerBottomLeft ||
-      current === UNICODE_CHARS.cornerBottomRight) {
-    return;
-  }
-  
-  // Handle crossing rules
-  if ((current === UNICODE_CHARS.vertical && char === UNICODE_CHARS.horizontal) ||
-      (current === UNICODE_CHARS.horizontal && char === UNICODE_CHARS.vertical)) {
-    gridRow[col] = UNICODE_CHARS.cross;
-  } else {
-    gridRow[col] = char;
-  }
-}
-
-/**
- * Colorize file path with syntax highlighting.
- */
-function colorizeFilePath(path: string): string {
-  const parts = path.split('/');
-  const filename = parts[parts.length - 1];
-  const directories = parts.slice(0, -1);
-  
-  const coloredDirs = directories.map(dir => COLORS.directory(dir)).join('/');
-  const coloredFilename = COLORS.filename(filename);
-  
-  return directories.length > 0 ? `${coloredDirs}/${coloredFilename}` : coloredFilename;
-}
-
-/**
- * Detect terminal capabilities for Unicode and color support.
- */
-function hasTerminalCapabilities(): { unicode: boolean; color: boolean } {
-  // Check for color support
-  const colorSupport = process.env.FORCE_COLOR !== '0' && (
-    process.env.FORCE_COLOR ||
-    process.stdout.isTTY && (
-      process.env.TERM !== 'dumb' &&
-      (!process.env.CI || process.env.CI === 'false')
-    )
+  return renderCycle(
+    cycle,
+    graph,
+    cwd,
+    { glyphs: ASCII_GLYPHS },
+    terminalWidth,
   );
-
-  /*
-    Basic Unicode support detection - assume modern terminals support it
-    unless explicitly disabled.
-  */
-  const unicodeSupport = process.env.TERM !== 'dumb' && 
-                        process.env.LANG !== 'C' &&
-                        !process.env.NO_UNICODE;
-
-  return {
-    unicode: unicodeSupport,
-    color: Boolean(colorSupport)
-  };
 }
 
-/**
- * Apply colors to the ASCII art portion of the line.
- */
-function colorizeAsciiArt(line: string): string {
-  let colorized = line;
-  
-  // Color nodes
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.node, 'g'), COLORS.cycleNode(UNICODE_CHARS.node));
-  
-  // Color line connections (including arrowheads)
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.arrowLeft, 'g'), COLORS.lineConnections(UNICODE_CHARS.arrowLeft));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.arrowRight, 'g'), COLORS.lineConnections(UNICODE_CHARS.arrowRight));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.horizontal, 'g'), COLORS.lineConnections(UNICODE_CHARS.horizontal));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.vertical, 'g'), COLORS.lineConnections(UNICODE_CHARS.vertical));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.cornerTopLeft, 'g'), COLORS.lineConnections(UNICODE_CHARS.cornerTopLeft));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.cornerTopRight, 'g'), COLORS.lineConnections(UNICODE_CHARS.cornerTopRight));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.cornerBottomLeft, 'g'), COLORS.lineConnections(UNICODE_CHARS.cornerBottomLeft));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.cornerBottomRight, 'g'), COLORS.lineConnections(UNICODE_CHARS.cornerBottomRight));
-  colorized = colorized.replace(new RegExp(UNICODE_CHARS.cross, 'g'), COLORS.lineConnections(UNICODE_CHARS.cross));
-  
+function renderCycleAsFancy(
+  cycle: SCC,
+  graph: AdjacencyMap,
+  cwd: string,
+  terminalWidth: number,
+): string[] {
+  return renderCycle(
+    cycle,
+    graph,
+    cwd,
+    {
+      glyphs: FANCY_GLYPHS,
+      colorizeLine: (line) => colorizeAsciiArt(line, FANCY_GLYPHS),
+      colorizePath: colorizeFilePath,
+    },
+    terminalWidth,
+  );
+}
+
+function colorizeFilePath(p: string): string {
+  // denormalizePath uses path.relative() which produces paths with path.sep
+  const lastSep = p.lastIndexOf(sep);
+  if (lastSep === -1) {
+    return COLORS.filename(p);
+  }
+  const dirPath = p.slice(0, lastSep);
+  const filename = p.slice(lastSep + 1);
+  const coloredDirs = dirPath
+    .split(sep)
+    .map((dir) => COLORS.directory(dir))
+    .join(sep);
+  return `${coloredDirs}${sep}${COLORS.filename(filename)}`;
+}
+
+function colorizeAsciiArt(line: string, glyphs: CycleGlyphs): string {
+  let colorized = line.replaceAll(glyphs.node, COLORS.cycleNode(glyphs.node));
+  for (const char of [
+    glyphs.arrowLeft,
+    glyphs.arrowRight,
+    glyphs.horizontal,
+    glyphs.vertical,
+    glyphs.cornerTopLeft,
+    glyphs.cornerTopRight,
+    glyphs.cornerBottomLeft,
+    glyphs.cornerBottomRight,
+    glyphs.cross,
+  ]) {
+    colorized = colorized.replaceAll(char, COLORS.lineConnections(char));
+  }
   return colorized;
 }
 
-/**
- * Draw an arrow from source position to target position on the grid.
- */
-function drawDiagonalArrow(
-  grid: string[][],
-  sourceRow: number, sourceCol: number,
-  targetRow: number, targetCol: number,
-  rowDelta: number
-): void {
-  if (rowDelta > 0) {
-    for (let row = sourceRow + 1; row < targetRow; row++) {
-      setGridChar(grid, row, sourceCol, '|');
-    }
-    setGridChar(grid, targetRow, sourceCol, '`');
-    for (let col = sourceCol + 1; col < targetCol; col++) {
-      setGridChar(grid, targetRow, col, '-');
-    }
-    setGridChar(grid, targetRow, targetCol - 1, '>');
-  } else {
-    for (let row = sourceRow - 1; row > targetRow; row--) {
-      setGridChar(grid, row, sourceCol, '|');
-    }
-    setGridChar(grid, targetRow, sourceCol, '.');
-    for (let col = sourceCol - 1; col > targetCol + 1; col--) {
-      setGridChar(grid, targetRow, col, '-');
-    }
-    setGridChar(grid, targetRow, targetCol + 1, '<');
-  }
-}
-
-function drawArrow(grid: string[][], sourcePos: [number, number], targetPos: [number, number]) {
-  const [sourceRow, sourceCol] = sourcePos;
-  const [targetRow, targetCol] = targetPos;
-  const rowDelta = targetRow - sourceRow;
-  const colDelta = targetCol - sourceCol;
-  
-  if (rowDelta === 0) {
-    const startCol = Math.min(sourceCol, targetCol) + 1;
-    const endCol = Math.max(sourceCol, targetCol) - 1;
-    for (let col = startCol; col <= endCol; col++) {
-      setGridChar(grid, sourceRow, col, '-');
-    }
-    if (colDelta > 0) {
-      setGridChar(grid, targetRow, targetCol - 1, '>');
-    } else {
-      setGridChar(grid, targetRow, targetCol + 1, '<');
-    }
-  } else {
-    drawDiagonalArrow(grid, sourceRow, sourceCol, targetRow, targetCol, rowDelta);
-  }
-}
-
-/**
- * Set a character on the grid, handling crossing rules.
- */
-function setGridChar(grid: string[][], row: number, col: number, char: string) {
-  const gridRow = grid.at(row);
-  if (gridRow === undefined) {
-    return;
-  }
-  const current = gridRow[col];
-
-  // Cannot overwrite these characters
-  if (current === 'o' || current === '<' || current === '>' || current === '`' || current === '.') {
-    return;
-  }
-
-  // Handle crossing rules
-  if ((current === '|' && char === '-') || (current === '-' && char === '|')) {
-    gridRow[col] = '+';
-  } else {
-    gridRow[col] = char;
-  }
-}
-
-/**
- * Report module cycles in ASCII art format.
- */
-function reportModuleCyclesAscii(cycles: string[][], graph: Map<string, Set<string>>) {
-  if (cycles.length === 0) {
-    console.log('No import cycles found between modules.');
-    return;
-  }
-
-  console.log(`Found ${cycles.length} import cycle(s) between modules:`);
-  console.log();
-
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
-    const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
-
-    for (const line of asciiLines) {
-      console.log(line);
-    }
-
-    // Add empty line between cycles (except after the last one)
-    if (i < cycles.length - 1) {
-      console.log();
-    }
-  }
-}
-
-/**
- * Report module cycles in fancy Unicode art format with colors.
- */
-function reportModuleCyclesFancy(cycles: string[][], graph: Map<string, Set<string>>) {
-  if (cycles.length === 0) {
-    console.log('No import cycles found between modules.');
-    return;
-  }
-
-  const capabilities = hasTerminalCapabilities();
-  
-  // Fallback to ASCII if Unicode not supported
-  if (!capabilities.unicode) {
-    console.log('Unicode not supported, falling back to ASCII rendering...');
-    reportModuleCyclesAscii(cycles, graph);
-    return;
-  }
-
-  console.log(COLORS.cycleHeader(`Found ${cycles.length} import cycle(s) between modules:`));
-  console.log();
-
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
-    const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
-
-    for (const line of fancyLines) {
-      console.log(line);
-    }
-
-    // Add empty line between cycles (except after the last one)
-    if (i < cycles.length - 1) {
-      console.log();
-    }
-  }
-}
-
-/**
- * Report directory cycles in ASCII art format.
- */
-function reportDirectoryCyclesAscii(cycles: string[][], graph: Map<string, Set<string>>) {
-  if (cycles.length === 0) {
-    console.log('No import cycles found between directories.');
-    return;
-  }
-
-  console.log(`Found ${cycles.length} import cycle(s) between directories:`);
-  console.log();
-
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
-    const asciiLines = renderCycleAsAscii(cycle, graph, cwd);
-
-    for (const line of asciiLines) {
-      console.log(line);
-    }
-
-    // Add empty line between cycles (except after the last one)
-    if (i < cycles.length - 1) {
-      console.log();
-    }
-  }
-}
-
-/**
- * Report directory cycles in fancy Unicode art format with colors.
- */
-function reportDirectoryCyclesFancy(cycles: string[][], graph: Map<string, Set<string>>) {
-  if (cycles.length === 0) {
-    console.log('No import cycles found between directories.');
-    return;
-  }
-
-  const capabilities = hasTerminalCapabilities();
-  
-  // Fallback to ASCII if Unicode not supported
-  if (!capabilities.unicode) {
-    console.log('Unicode not supported, falling back to ASCII rendering...');
-    reportDirectoryCyclesAscii(cycles, graph);
-    return;
-  }
-
-  console.log(COLORS.cycleHeader(`Found ${cycles.length} import cycle(s) between directories:`));
-  console.log();
-
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
-    const fancyLines = renderCycleAsFancy(cycle, graph, cwd);
-
-    for (const line of fancyLines) {
-      console.log(line);
-    }
-
-    // Add empty line between cycles (except after the last one)
-    if (i < cycles.length - 1) {
-      console.log();
-    }
-  }
-}
-
-/**
- * Find cycles between directories containing modules.
- */
-async function findDirectoryCycles(
-  db: Storage,
-  directory: string,
-  options: CyclesOptions,
-  fileSystem: FileSystem
+function reportCyclesAscii(
+  cycles: SCC[],
+  graph: AdjacencyMap,
+  label: string,
+  cwd: string,
+  terminalWidth: number,
 ) {
-  // First, discover all TypeScript files in the target directory
-  const filePaths = await getTypeScriptFilePaths(directory, fileSystem);
-  const fileSet = new Set(filePaths);
-  
-  // Build directory-level dependency graph
-  const dirGraph = buildDirectoryGraph(db, fileSet);
+  if (cycles.length === 0) {
+    console.log(`No import cycles found between ${label}.`);
+    return;
+  }
 
-  // Find and report cycles
-  const cycles = findStronglyConnectedComponents(dirGraph);
-  const cyclesFound = cycles.filter(cycle => cycle.length > 1);
+  console.log(`Found ${cycles.length} import cycle(s) between ${label}:`);
+  console.log();
 
-  if (options.graphviz) {
-    reportDirectoryCyclesGraphviz(cyclesFound, dirGraph);
-  } else if (options.fancy) {
-    reportDirectoryCyclesFancy(cyclesFound, dirGraph);
-  } else if (options.ascii) {
-    reportDirectoryCyclesAscii(cyclesFound, dirGraph);
-  } else {
-    reportDirectoryCycles(cyclesFound);
+  for (const [i, cycle] of cycles.entries()) {
+    const asciiLines = renderCycleAsAscii(cycle, graph, cwd, terminalWidth);
+    for (const line of asciiLines) {
+      console.log(line);
+    }
+    if (i < cycles.length - 1) {
+      console.log();
+    }
   }
 }
 
-/**
- * Build directory dependency graph for a specific set of module files.
- */
-function buildDirectoryGraph(db: Storage, filePaths: Set<string>): Map<string, Set<string>> {
-  const dirGraph = new Map<string, Set<string>>();
-  
+function reportCyclesFancy(
+  cycles: SCC[],
+  graph: AdjacencyMap,
+  label: string,
+  cwd: string,
+  terminalWidth: number,
+) {
+  if (cycles.length === 0) {
+    console.log(`No import cycles found between ${label}.`);
+    return;
+  }
+
+  console.log(
+    COLORS.cycleHeader(
+      `Found ${cycles.length} import cycle(s) between ${label}:`,
+    ),
+  );
+  console.log();
+
+  for (const [i, cycle] of cycles.entries()) {
+    const fancyLines = renderCycleAsFancy(cycle, graph, cwd, terminalWidth);
+    for (const line of fancyLines) {
+      console.log(line);
+    }
+    if (i < cycles.length - 1) {
+      console.log();
+    }
+  }
+}
+
+function buildDirectoryGraph(
+  db: Storage,
+  filePaths: Set<string>,
+): Map<string, Set<string>> {
+  const graph = new Map<string, Set<string>>();
+
   for (const filePath of filePaths) {
-    const imports = db.getImportsFromFile(filePath);
     const importerDir = dirname(filePath);
-    
-    for (const importObj of imports) {
+    for (const importObj of db.getImportsFromFile(filePath)) {
       const exporterPath = getExporterPathIfInScope(importObj, filePaths);
       if (!exporterPath) {
         continue;
@@ -881,122 +742,9 @@ function buildDirectoryGraph(db: Storage, filePaths: Set<string>): Map<string, S
       if (importerDir === exporterDir) {
         continue;
       }
-      let deps = dirGraph.get(importerDir);
-      if (!deps) {
-        deps = new Set();
-        dirGraph.set(importerDir, deps);
-      }
-      deps.add(exporterDir);
+      addEdge(graph, importerDir, exporterDir);
     }
   }
-  
-  return dirGraph;
+
+  return graph;
 }
-
-/**
- * Report directory cycles in a clean format.
- */
-function reportDirectoryCycles(cycles: string[][]) {
-  if (cycles.length === 0) {
-    console.log('No import cycles found between directories.');
-    return;
-  }
-
-  console.log(`Found ${cycles.length} import cycle(s) between directories:`);
-  console.log();
-
-  const cwd = process.cwd();
-  for (let i = 0; i < cycles.length; i++) {
-    const cycle = cycles.at(i);
-    if (cycle === undefined) {
-      continue;
-    }
-    console.log(`Cycle ${i + 1}:`);
-    for (const dir of cycle) {
-      console.log(`  ${denormalizePath(dir, cwd)}`);
-    }
-    console.log();
-  }
-}
-
-/**
- * Tarjan's algorithm for finding strongly connected components (cycles).
- */
-function findStronglyConnectedComponents<T>(graph: Map<T, Set<T>>): T[][] {
-  const index = new Map<T, number>();
-  const lowlink = new Map<T, number>();
-  const onStack = new Set<T>();
-  const stack: T[] = [];
-  const components: T[][] = [];
-  let indexCounter = 0;
-
-  function strongConnect(v: T) {
-    index.set(v, indexCounter);
-    lowlink.set(v, indexCounter);
-    indexCounter++;
-    stack.push(v);
-    onStack.add(v);
-
-    const neighbors = graph.get(v) || new Set();
-    for (const w of neighbors) {
-      updateLowlink(v, w);
-    }
-
-    if (isRootOfComponent(v)) {
-      popComponent(v);
-    }
-  }
-
-  function updateLowlink(v: T, w: T): void {
-    if (!index.has(w)) {
-      strongConnect(w);
-      updateLowlinkFromChild(v, w);
-    } else if (onStack.has(w)) {
-      updateLowlinkFromStack(v, w);
-    }
-  }
-
-  function updateLowlinkFromChild(v: T, w: T): void {
-    const lowlinkV = lowlink.get(v);
-    const lowlinkW = lowlink.get(w);
-    if (lowlinkV !== undefined && lowlinkW !== undefined) {
-      lowlink.set(v, Math.min(lowlinkV, lowlinkW));
-    }
-  }
-
-  function updateLowlinkFromStack(v: T, w: T): void {
-    const lowlinkV = lowlink.get(v);
-    const indexW = index.get(w);
-    if (lowlinkV !== undefined && indexW !== undefined) {
-      lowlink.set(v, Math.min(lowlinkV, indexW));
-    }
-  }
-
-  function isRootOfComponent(v: T): boolean {
-    const lowlinkV = lowlink.get(v);
-    const indexV = index.get(v);
-    return lowlinkV !== undefined && indexV !== undefined && lowlinkV === indexV;
-  }
-
-  function popComponent(v: T): void {
-    const component: T[] = [];
-    do {
-      const w = stack.pop();
-      if (w === undefined) {
-        throw new Error('Stack underflow in Tarjan\'s');
-      }
-      onStack.delete(w);
-      component.push(w);
-    } while (component[component.length - 1] !== v);
-    components.push(component);
-  }
-
-  for (const v of graph.keys()) {
-    if (!index.has(v)) {
-      strongConnect(v);
-    }
-  }
-
-  return components;
-}
-
