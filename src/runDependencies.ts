@@ -1,10 +1,11 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
-import { openStorage, Storage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { resolveCommandScope } from "./commandScope";
-import { FileSystem } from "./filesystem";
-import { assertDefined } from "./invariant";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot, getTsconfigPathForFile } from './project';
+import { openStorage, Storage } from './storage';
+import { DebugOptions } from './objstore';
+import { resolveCommandScope } from './commandScope';
+import { FileSystem } from './filesystem';
+import { CliError } from './errors';
+import { invariant } from './invariant';
 
 /**
  * Output interface for dependencies results.
@@ -40,6 +41,16 @@ export interface DependenciesOptions {
    * is up-to-date and for persisting any changes.
    */
   storage?: Storage;
+  /**
+   * When true, delete the existing index database before opening storage.
+   */
+  fresh?: boolean;
+  /**
+   * Callback for indexing progress messages. Required when `storage` is not
+   * provided (i.e., when the function opens its own storage and runs indexing).
+   * Tests can supply a stub to suppress or capture output.
+   */
+  writer?: (message: string) => void;
 }
 
 /**
@@ -57,10 +68,10 @@ export async function runDependencies(
   modulePaths: string[],
   options: DependenciesOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<void> {
   if (modulePaths.length === 0) {
-    throw new Error('No module paths provided');
+    throw new CliError('No module paths provided');
   }
 
   const output = options.output ?? {
@@ -74,17 +85,12 @@ export async function runDependencies(
   const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
 
   if (moduleSet.size === 0) {
-    throw new Error('Input paths resolved to no TypeScript modules');
+    throw new CliError('Input paths resolved to no TypeScript modules');
   }
 
-  /*
-    Extract one representative path from the set so we can resolve the
-    repo root and tsconfig scope. The set is guaranteed non-empty by the
-    guard above; assertDefined narrows the type and provides a runtime
-    safety net.
-  */
-  const tsPathValue = moduleSet.values().next().value;
-  assertDefined(tsPathValue, 'moduleSet is guaranteed non-empty by guard above');
+  // Extract a representative path for repo root and tsconfig resolution.
+  // biome-ignore lint/style/noNonNullAssertion: moduleSet.size > 0 guard above guarantees values().next().value is defined
+  const tsPathValue = moduleSet.values().next().value!;
 
   const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPathValue);
 
@@ -92,9 +98,20 @@ export async function runDependencies(
     Open storage before the try block so `db` is definitely assigned.
     The try/finally below only covers the read-phase and save cleanup.
   */
-  const db = options.storage ?? openStorage(debugOptions, { verbose: true, inMemory: false });
+  const db =
+    options.storage ??
+    openStorage(debugOptions, {
+      verbose: true,
+      ...(options.fresh !== undefined && { fresh: options.fresh }),
+      basePath: repoRoot,
+      inMemory: false,
+    });
   if (!options.storage) {
-    await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+    invariant(
+      options.writer,
+      'writer is required when storage is not provided',
+    );
+    await updateStorage(repoRoot, db, true, fileSystem, options.writer);
   }
 
   try {
@@ -117,7 +134,7 @@ function dumpDependenciesFor(
   tsPath: string,
   seen: Set<string>,
   tsconfigPathScope: string | null,
-  output: DependenciesOutput
+  output: DependenciesOutput,
 ): void {
   if (seen.has(tsPath)) {
     return;
