@@ -1,6 +1,6 @@
 /**
  * Bug #4: extractTypeReferences() doesn't analyze interface method signatures
- * 
+ *
  * When extracting an interface with methods that reference types,
  * those type references aren't being detected as dependencies.
  * This causes the extracted interface to be missing required imports.
@@ -30,17 +30,17 @@ export interface Operations {
   cleanup(logger: Logger): Promise<void>;
 }
 `;
-    
+
     const sourceFile = project.createSourceFile('test.ts', sourceCode);
     const moduleInfo = parseModule(sourceFile);
-    
+
     // Check that Operations interface is detected as an export
     expect(moduleInfo.exportedNames.has('Operations')).toBe(true);
-    
+
     // Check that type references from method signatures are detected
     const operationsIdentifiers = moduleInfo.identifierUses.get('Operations');
     expect(operationsIdentifiers).toBeDefined();
-    
+
     // Should include Logger, RequestHandler, and BackendOps from method parameters
     expect(operationsIdentifiers).toContain('Logger');
     expect(operationsIdentifiers).toContain('RequestHandler');
@@ -58,13 +58,13 @@ export interface UserService {
   updateUser(user: User): Result<User>;
 }
 `;
-    
+
     const sourceFile = project.createSourceFile('test.ts', sourceCode);
     const moduleInfo = parseModule(sourceFile);
-    
+
     const identifiers = moduleInfo.identifierUses.get('UserService');
     expect(identifiers).toBeDefined();
-    
+
     // Should detect User from both parameter and return types
     expect(identifiers).toContain('User');
     // Should detect Result from return type
@@ -89,13 +89,13 @@ export interface ComplexOps {
   transform(input: Data, logger?: Logger): Data | null;
 }
 `;
-    
+
     const sourceFile = project.createSourceFile('test.ts', sourceCode);
     const moduleInfo = parseModule(sourceFile);
-    
+
     const identifiers = moduleInfo.identifierUses.get('ComplexOps');
     expect(identifiers).toBeDefined();
-    
+
     // Should detect all types used in method signatures
     expect(identifiers).toContain('Logger');
     expect(identifiers).toContain('Config');
@@ -119,13 +119,13 @@ export interface Service {
   getPartial: (data: Partial<Config>) => Config;
 }
 `;
-    
+
     const sourceFile = project.createSourceFile('test.ts', sourceCode);
     const moduleInfo = parseModule(sourceFile);
-    
+
     const identifiers = moduleInfo.identifierUses.get('Service');
     expect(identifiers).toBeDefined();
-    
+
     // Should detect Config from Pick<Config, 'serverFolder'> and Partial<Config>
     expect(identifiers).toContain('Config');
     expect(identifiers).toContain('Logger');
