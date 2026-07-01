@@ -1,17 +1,17 @@
 /**
  * Test for type-only default import handling bug
- * 
+ *
  * This test reproduces the issue where tslor fails to properly handle
  * type-only default imports when splitting a module.
- * 
- * Bug: When splitting MyInterface which has a property referencing a 
+ *
+ * Bug: When splitting MyInterface which has a property referencing a
  * type-only default import (import type ExternalType from './external'),
  * the split operation should preserve the type-only default import syntax
  * in the new module, but currently it may generate incorrect import syntax.
  */
 
 import { assert, test } from 'vitest';
-import { Project, SourceFile, Diagnostic, ts } from 'ts-morph';
+import { Project, Diagnostic, ts } from 'ts-morph';
 import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
 import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing';
 import {
@@ -23,15 +23,8 @@ import {
   generateNewModuleSource,
   removeSymbolsFromSource,
   removeUnusedImports,
-  addImportForMovedSymbols
+  addImportForMovedSymbols,
 } from './splitModule';
-
-/**
- * Create a source file from source code for testing
- */
-function createTestSourceFile(project: Project, filename: string, sourceCode: string): SourceFile {
-  return project.createSourceFile(filename, sourceCode);
-}
 
 function diagMessageText(diag: Diagnostic): string {
   return ts.flattenDiagnosticMessageText(diag.compilerObject.messageText, '\n');
@@ -39,7 +32,7 @@ function diagMessageText(diag: Diagnostic): string {
 
 /**
  * Test: Type-only default imports should be preserved
- * 
+ *
  * This is the minimal reproduction from test-minimal/ and test-expected/
  */
 test('Default type import: preserve type-only default import syntax', () => {
@@ -81,18 +74,24 @@ export { MyInterface } from "./target";
 
   // Create project with both files
   const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = createTestSourceFile(project, 'source.ts', sourceInput);
-  createTestSourceFile(project, 'external.ts', externalInput);
+  const sourceFile = project.createSourceFile('source.ts', sourceInput);
+  project.createSourceFile('external.ts', externalInput);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
   if (initialDiagnostics.length > 0) {
     console.error('Initial type errors:');
     for (const diag of initialDiagnostics) {
-      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`);
+      console.error(
+        `  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`,
+      );
     }
   }
-  assert.equal(initialDiagnostics.length, 0, 'Should have no type errors initially');
+  assert.equal(
+    initialDiagnostics.length,
+    0,
+    'Should have no type errors initially',
+  );
 
   // Parse the source
   const moduleInfo = parseIsolatedSourceCode(sourceInput);
@@ -115,7 +114,7 @@ export { MyInterface } from "./target";
 
   // Generate the split using the REAL code path from runProposeSplit
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  
+
   // THIS IS THE KEY: Use the same code path as runProposeSplit
   const staticModuleInfo = parseModule(sourceFile);
   const importUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
@@ -134,32 +133,47 @@ export { MyInterface } from "./target";
   assert.include(
     actualTarget,
     'import type ExternalType from',
-    'Target should have type-only default import for ExternalType'
+    'Target should have type-only default import for ExternalType',
   );
 
   assert.include(
     actualTarget,
     'export interface MyInterface',
-    'Target should have MyInterface'
+    'Target should have MyInterface',
   );
 
   assert.include(
     actualTarget,
     'field: ExternalType',
-    'MyInterface should reference ExternalType'
+    'MyInterface should reference ExternalType',
   );
 
   // Generate modified source module
   let actualSource = removeSymbolsFromSource(sourceFile, symbolsToMove);
 
-  const sourceFileAfterRemoval = project.createSourceFile(`temp-after-removal-${Date.now()}.ts`, actualSource);
-  actualSource = removeUnusedImports(sourceFileAfterRemoval, symbolsToMove, onlyUsedByTarget);
+  const sourceFileAfterRemoval = project.createSourceFile(
+    `temp-after-removal-${Date.now()}.ts`,
+    actualSource,
+  );
+  actualSource = removeUnusedImports(
+    sourceFileAfterRemoval,
+    symbolsToMove,
+    onlyUsedByTarget,
+  );
 
-  const sourceFileAfterCleanup = project.createSourceFile(`temp-after-cleanup-${Date.now()}.ts`, actualSource);
-  
+  const sourceFileAfterCleanup = project.createSourceFile(
+    `temp-after-cleanup-${Date.now()}.ts`,
+    actualSource,
+  );
+
   // Only re-export symbols that were actually moved (have definitions), not external dependencies
-  const actuallyMovedSymbols = new Set(symbolDefinitions.map(def => def.name));
-  actualSource = addImportForMovedSymbols(sourceFileAfterCleanup, actuallyMovedSymbols, './target', true);
+  const actuallyMovedSymbols = new Set(symbolDefinitions.map((def) => def.name));
+  actualSource = addImportForMovedSymbols(
+    sourceFileAfterCleanup,
+    actuallyMovedSymbols,
+    './target',
+    true,
+  );
 
   console.log('=== ACTUAL SOURCE ===');
   console.log(actualSource);
@@ -169,13 +183,25 @@ export { MyInterface } from "./target";
   // Source should keep helperFunc and re-export MyInterface
   assert.include(actualSource, 'helperFunc', 'Source should keep helperFunc');
   assert.include(actualSource, 'from "./target"', 'Source should import from target');
-  assert.include(actualSource, 'export { MyInterface }', 'Source should re-export MyInterface');
+  assert.include(
+    actualSource,
+    'export { MyInterface }',
+    'Source should re-export MyInterface',
+  );
 
   // Source should NOT have MyInterface definition
-  assert.notInclude(actualSource, 'interface MyInterface {', 'Source should not have MyInterface definition');
+  assert.notInclude(
+    actualSource,
+    'interface MyInterface {',
+    'Source should not have MyInterface definition',
+  );
 
   // Source should NOT have ExternalType import (since MyInterface moved)
-  assert.notInclude(actualSource, 'ExternalType', 'Source should not import ExternalType anymore');
+  assert.notInclude(
+    actualSource,
+    'ExternalType',
+    'Source should not import ExternalType anymore',
+  );
 
   // Now verify the split code compiles without errors
   project.createSourceFile('target.ts', actualTarget);
@@ -189,14 +215,16 @@ export { MyInterface } from "./target";
       const file = diag.getSourceFile();
       const filePath = file?.getFilePath() || 'unknown';
       const lineAndChar = file?.getLineAndColumnAtPos(diag.getStart() || 0);
-      console.error(`  ${filePath}:${lineAndChar?.line}:${lineAndChar?.column}: ${diagMessageText(diag)}`);
+      console.error(
+        `  ${filePath}:${lineAndChar?.line}:${lineAndChar?.column}: ${diagMessageText(diag)}`,
+      );
     }
   }
 
   assert.equal(
     finalDiagnostics.length,
     0,
-    'Should have no type errors after split - type-only default import should work correctly'
+    'Should have no type errors after split - type-only default import should work correctly',
   );
 
   console.log('✅ Type-only default import preserved correctly!');
@@ -218,8 +246,8 @@ export default value;
 `;
 
   const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = createTestSourceFile(project, 'source.ts', sourceInput);
-  createTestSourceFile(project, 'external.ts', externalInput);
+  const sourceFile = project.createSourceFile('source.ts', sourceInput);
+  project.createSourceFile('external.ts', externalInput);
 
   // Verify no initial type errors
   const initialDiagnostics = project.getPreEmitDiagnostics();
@@ -248,17 +276,40 @@ export default value;
   console.log(actualTarget);
 
   // Should have regular default import (no 'type' keyword)
-  assert.include(actualTarget, 'import ExternalValue from', 'Target should have default import');
-  assert.notInclude(actualTarget, 'import type ExternalValue', 'Should NOT be type-only since value is used at runtime');
+  assert.include(
+    actualTarget,
+    'import ExternalValue from',
+    'Target should have default import',
+  );
+  assert.notInclude(
+    actualTarget,
+    'import type ExternalValue',
+    'Should NOT be type-only since value is used at runtime',
+  );
 
   let actualSource = removeSymbolsFromSource(sourceFile, symbolsToMove);
-  const sourceFileAfterRemoval = project.createSourceFile(`temp-after-removal-${Date.now()}.ts`, actualSource);
-  actualSource = removeUnusedImports(sourceFileAfterRemoval, symbolsToMove, onlyUsedByTarget);
-  const sourceFileAfterCleanup = project.createSourceFile(`temp-after-cleanup-${Date.now()}.ts`, actualSource);
-  
+  const sourceFileAfterRemoval = project.createSourceFile(
+    `temp-after-removal-${Date.now()}.ts`,
+    actualSource,
+  );
+  actualSource = removeUnusedImports(
+    sourceFileAfterRemoval,
+    symbolsToMove,
+    onlyUsedByTarget,
+  );
+  const sourceFileAfterCleanup = project.createSourceFile(
+    `temp-after-cleanup-${Date.now()}.ts`,
+    actualSource,
+  );
+
   // Only re-export symbols that were actually moved (have definitions), not external dependencies
-  const actuallyMovedSymbols = new Set(symbolDefinitions.map(def => def.name));
-  actualSource = addImportForMovedSymbols(sourceFileAfterCleanup, actuallyMovedSymbols, './target', true);
+  const actuallyMovedSymbols = new Set(symbolDefinitions.map((def) => def.name));
+  actualSource = addImportForMovedSymbols(
+    sourceFileAfterCleanup,
+    actuallyMovedSymbols,
+    './target',
+    true,
+  );
 
   // Verify compilation
   project.createSourceFile('target.ts', actualTarget);
@@ -268,11 +319,17 @@ export default value;
   if (finalDiagnostics.length > 0) {
     console.error('Type errors:');
     for (const diag of finalDiagnostics) {
-      console.error(`  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`);
+      console.error(
+        `  ${diag.getSourceFile()?.getFilePath()}: ${diagMessageText(diag)}`,
+      );
     }
   }
 
-  assert.equal(finalDiagnostics.length, 0, 'Should compile correctly with regular default import');
+  assert.equal(
+    finalDiagnostics.length,
+    0,
+    'Should compile correctly with regular default import',
+  );
 
   console.log('✅ Regular default import handled correctly!');
 });
