@@ -1,11 +1,6 @@
 import { assert, test } from 'vitest';
-import { Project } from 'ts-morph';
 import { normalizeNamespaceImportsInFile } from './runNormalizeNamespaceImports';
-
-function createTestSourceFile(sourceCode: string) {
-  const project = new Project({ useInMemoryFileSystem: true });
-  return project.createSourceFile('test.ts', sourceCode);
-}
+import { createTestSourceFile } from './testUtils';
 
 test('normalizeNamespaceImportsInFile converts import * as X to named imports', () => {
   const sourceFile = createTestSourceFile(`
@@ -18,11 +13,13 @@ export function doStuff() {
 
   const changes = normalizeNamespaceImportsInFile(sourceFile);
 
-  assert.lengthOf(changes, 1, 'Should produce one change for one namespace import');
-  const [change] = changes;
-  if (change === undefined) {
-    throw new Error('Expected change');
-  }
+  assert.lengthOf(
+    changes,
+    1,
+    'Should produce one change for one namespace import',
+  );
+  // biome-ignore lint/style/noNonNullAssertion: assert.lengthOf(changes, 1) guarantees changes[0] is defined
+  const change = changes[0]!;
   assert.equal(change.moduleSpec, './utils');
   assert.sameMembers(change.accessedMembers, ['foo', 'bar']);
 
@@ -93,7 +90,11 @@ export const x = doSomething(utils);
 `);
 
   const changes = normalizeNamespaceImportsInFile(sourceFile);
-  assert.lengthOf(changes, 0, 'Should skip when namespace is used as a value, not just member access');
+  assert.lengthOf(
+    changes,
+    0,
+    'Should skip when namespace is used as a value, not just member access',
+  );
 });
 
 test('normalizeNamespaceImportsInFile handles name conflicts by skipping', () => {
@@ -105,7 +106,11 @@ export const x = utils.foo + foo;
 `);
 
   const changes = normalizeNamespaceImportsInFile(sourceFile);
-  assert.lengthOf(changes, 0, 'Should skip when a member name conflicts with a local binding');
+  assert.lengthOf(
+    changes,
+    0,
+    'Should skip when a member name conflicts with a local binding',
+  );
 });
 
 test('normalizeNamespaceImportsInFile uses inline type keyword for type-only members in mixed imports', () => {
@@ -128,7 +133,10 @@ export function claimRequest(request: dtos.ClaimRequestDto): dtos.ResponseDto | 
     ClaimRequestDto and ResponseDto are only used in type positions (QualifiedName)
     isValidRequest is used in value position (PropertyAccessExpression)
   */
-  assert.include(result, "import { type ClaimRequestDto, type ResponseDto, isValidRequest } from './dtos'");
+  assert.include(
+    result,
+    "import { type ClaimRequestDto, type ResponseDto, isValidRequest } from './dtos'",
+  );
   assert.notInclude(result, 'import * as dtos');
 });
 
@@ -143,7 +151,11 @@ export function test() {
 `);
 
   const changes = normalizeNamespaceImportsInFile(sourceFile);
-  assert.lengthOf(changes, 0, 'Should skip when a member name conflicts with a nested variable');
+  assert.lengthOf(
+    changes,
+    0,
+    'Should skip when a member name conflicts with a nested variable',
+  );
 
   // Source should be unchanged
   const result = sourceFile.getFullText();
