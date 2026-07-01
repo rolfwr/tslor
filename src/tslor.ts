@@ -33,6 +33,7 @@ import { DebugOptions } from './objstore';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
 const isInteractive = process.stdout.isTTY && !process.env.CI;
+const currentCwd = process.cwd();
 
 /**
  * Extract global options from a subcommand's parent (the program).
@@ -156,11 +157,23 @@ program
 
 program
   .command('symbol-usage <project> <symbolName>')
-  .description('Find all places where a specific symbol is used within a project')
-  .action(async (project: string, symbolName: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+  .description('Find all modules in a project that import a named symbol')
+  .option(
+    '--repo <path>',
+    'Repository root to resolve relative project path against',
+  )
+  .action(async (project: string, symbolName: string, opts, cmd) => {
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runSymbolUsage(project, symbolName, debugOptions, fileSystem);
+    const repoRoot = typeof opts.repo === 'string' ? opts.repo : undefined;
+    await runSymbolUsage(
+      project,
+      symbolName,
+      { traceId },
+      { repoRoot, fresh, cwd: currentCwd },
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program
