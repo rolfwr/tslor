@@ -1,26 +1,47 @@
 /**
  * TSLOR indexing and import resolution.
- * 
+ *
  * This module implements the two-phase indexing process:
  * 1. Static AST analysis - Extract imports/exports without filesystem access
  * 2. Import resolution - Resolve module specifiers to absolute paths
- * 
+ *
  * The system uses static analysis only (no TypeScript semantic analysis)
  * for performance reasons. This trades some accuracy for dramatic speed
  * improvements on large codebases.
  */
 
-import { Project, ProjectOptions, QuoteKind, SourceFile, SyntaxKind, ts, Node, ExportSpecifier,
-  TypeReferenceNode, ExpressionWithTypeArguments, IndexedAccessTypeNode, MappedTypeNode,
-  FunctionTypeNode, TypeLiteralNode, TypeQueryNode,
-  FunctionDeclaration, InterfaceDeclaration, ClassDeclaration, MethodDeclaration, MethodSignature,
-} from "ts-morph";
-import { getTsconfigPathForFile, getTypeScriptFilePaths } from "./project";
-import { dirname, relative, resolve } from "path";
-import { CompilerOptions, modulePathSpec, modulePathToImportSpecAlias } from "./importSpec";
-import { Storage } from "./storage";
-import { TransformingFileSystem } from "./transformingFileSystem";
-import { FileSystem, InMemoryFileSystem, isEnoentError } from "./filesystem";
+import {
+  Project,
+  ProjectOptions,
+  QuoteKind,
+  SourceFile,
+  SyntaxKind,
+  ts,
+  Node,
+  ExportSpecifier,
+  TypeReferenceNode,
+  ExpressionWithTypeArguments,
+  IndexedAccessTypeNode,
+  MappedTypeNode,
+  FunctionTypeNode,
+  TypeLiteralNode,
+  TypeQueryNode,
+  FunctionDeclaration,
+  InterfaceDeclaration,
+  ClassDeclaration,
+  MethodDeclaration,
+  MethodSignature,
+} from 'ts-morph';
+import { getTsconfigPathForFile, getTypeScriptFilePaths } from './project';
+import { dirname, relative, resolve } from 'path';
+import {
+  CompilerOptions,
+  modulePathSpec,
+  modulePathToImportSpecAlias,
+} from './importSpec';
+import { Storage } from './storage';
+import { TransformingFileSystem } from './transformingFileSystem';
+import { FileSystem, InMemoryFileSystem, isEnoentError } from './filesystem';
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';
@@ -276,7 +297,10 @@ interface AsyncQueueReader<T> {
   take(): Promise<T | null>;
 }
 
-function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueueReader<T> } {
+function createAsyncQueue<T>(): {
+  writer: AsyncQueueWriter<T>;
+  reader: AsyncQueueReader<T>;
+} {
   const items: T[] = [];
   const waiters: Array<(item: T | null) => void> = [];
   let closed = false;
@@ -317,7 +341,7 @@ function createAsyncQueue<T>(): { writer: AsyncQueueWriter<T>; reader: AsyncQueu
       if (closed) {
         return Promise.resolve(null);
       }
-      return new Promise<T | null>(resolve => waiters.push(resolve));
+      return new Promise<T | null>((resolve) => waiters.push(resolve));
     },
   };
 
@@ -338,8 +362,10 @@ async function indexImportFromFilesParallel(
   let statDone = false;
   const abort = { value: false };
 
-  const { writer: queueWriter, reader } =
-    createAsyncQueue<{ path: string; mtimeMs: number }>();
+  const { writer: queueWriter, reader } = createAsyncQueue<{
+    path: string;
+    mtimeMs: number;
+  }>();
 
   let lastProgressAt = 0;
   function printProgress(force: boolean): void {
@@ -362,9 +388,7 @@ async function indexImportFromFilesParallel(
           '\x1b[K',
       );
     } else if (changedCount > 0) {
-      writer(
-        '\rIndexing ' + processedCount + '/' + changedCount + '\x1b[K',
-      );
+      writer('\rIndexing ' + processedCount + '/' + changedCount + '\x1b[K');
     } else {
       writer('\rChecked ' + paths.length + ' files (no changes)\x1b[K');
     }
@@ -403,7 +427,7 @@ async function indexImportFromFilesParallel(
     msg: unknown,
     currentItem: { path: string; mtimeMs: number },
     nextItem: { path: string; mtimeMs: number } | null,
-    wrapper: WorkerWrapper
+    wrapper: WorkerWrapper,
   ): Promise<void> {
     if (nextItem) {
       wrapper.send(nextItem.path, repoRoot);
@@ -419,7 +443,12 @@ async function indexImportFromFilesParallel(
     }
     if (moduleInfo) {
       try {
-        await storeImportsFromFile(moduleInfo, db, currentItem.mtimeMs, fileSystem);
+        await storeImportsFromFile(
+          moduleInfo,
+          db,
+          currentItem.mtimeMs,
+          fileSystem,
+        );
       } catch (error) {
         throw makeFileProcessingError(currentItem.path, error);
       }
@@ -462,7 +491,9 @@ async function indexImportFromFilesParallel(
     }
   }
 
-  const workers = Array.from({ length: numWorkers }, () => createWorkerWrapper(workerFile));
+  const workers = Array.from({ length: numWorkers }, () =>
+    createWorkerWrapper(workerFile),
+  );
   await Promise.all([statPromise, ...workers.map(runWorkerSafe)]);
 
   printProgress(true);
@@ -483,11 +514,18 @@ export interface ModuleInfo {
   importOfUnresolvedSpec: ExternalImport[];
   reExports: ReExport[];
   needs: {
-    nodejs: boolean | Array<{ identifier: string; line: number; column: number }>;
+    nodejs:
+      | boolean
+      | Array<{ identifier: string; line: number; column: number }>;
   };
 }
 
-async function refreshImportsFromFile(db: Storage, somePath: string, repoRoot: string, fileSystem: FileSystem) {
+async function refreshImportsFromFile(
+  db: Storage,
+  somePath: string,
+  repoRoot: string,
+  fileSystem: FileSystem,
+) {
   try {
     const stats = await fileSystem.stat(somePath);
     const mtimeMs = stats.mtimeMs;
@@ -520,7 +558,11 @@ export interface StaticModuleInfo {
   exportedNames: Set<string>;
   reExports: ReExport[];
   usesNodejsGlobals: boolean;
-  nodejsGlobalUsages?: Array<{ identifier: string; line: number; column: number }>;
+  nodejsGlobalUsages?: Array<{
+    identifier: string;
+    line: number;
+    column: number;
+  }>;
 }
 
 export interface ImportUsage {
@@ -528,15 +570,22 @@ export interface ImportUsage {
   usesImports: Array<{
     moduleSpec: string;
     importedName: string;
-    isDefault: boolean;      // Whether this is a default import
-    isTypeOnly: boolean;     // Whether this is a type-only import
+    isDefault: boolean; // Whether this is a default import
+    isTypeOnly: boolean; // Whether this is a type-only import
   }>;
-
 }
 
-export async function inspectModule(repoRoot: string, tsFilePath: string, fileSystem: FileSystem): Promise<ModuleInfo | null> {
+export async function inspectModule(
+  repoRoot: string,
+  tsFilePath: string,
+  fileSystem: FileSystem,
+): Promise<ModuleInfo | null> {
   try {
-    const importerTsConfig = await getTsconfigPathForFile(repoRoot, tsFilePath, fileSystem);
+    const importerTsConfig = await getTsconfigPathForFile(
+      repoRoot,
+      tsFilePath,
+      fileSystem,
+    );
     if (!importerTsConfig) {
       return null;
     }
@@ -560,7 +609,12 @@ export async function inspectModule(repoRoot: string, tsFilePath: string, fileSy
 
     const resolvedPathsBySpec = new Map<string, string>();
     for (const spec of importSpecs) {
-      const resolvedPath = await resolveImportSpec(repoRoot, tsFilePath, spec, fileSystem);
+      const resolvedPath = await resolveImportSpec(
+        repoRoot,
+        tsFilePath,
+        spec,
+        fileSystem,
+      );
       if (resolvedPath) {
         resolvedPathsBySpec.set(spec, resolvedPath);
       }
@@ -585,7 +639,9 @@ export async function inspectModule(repoRoot: string, tsFilePath: string, fileSy
       importOfUnresolvedSpec: [],
       reExports: resolvedReExports,
       needs: {
-        nodejs: staticModuleInfo.nodejsGlobalUsages || staticModuleInfo.usesNodejsGlobals,
+        nodejs:
+          staticModuleInfo.nodejsGlobalUsages ||
+          staticModuleInfo.usesNodejsGlobals,
       },
     };
 
@@ -622,11 +678,16 @@ export async function inspectModule(repoRoot: string, tsFilePath: string, fileSy
  * Intended for use in worker threads, where one inspector is created per worker.
  * Files are processed sequentially (never concurrently), so the caches are safe.
  */
-export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string, tsFilePath: string) => Promise<ModuleInfo> {
+export function createModuleInspector(
+  fileSystem: FileSystem,
+): (repoRoot: string, tsFilePath: string) => Promise<ModuleInfo> {
   const tsconfigPathByDir = new Map<string, string | null>();
   const compilerOptionsByTsconfig = new Map<string, CompilerOptions>();
 
-  async function cachedGetTsconfigPath(repoRoot: string, filePath: string): Promise<string | null> {
+  async function cachedGetTsconfigPath(
+    repoRoot: string,
+    filePath: string,
+  ): Promise<string | null> {
     const dir = dirname(filePath);
     const cached = tsconfigPathByDir.get(dir);
     if (cached !== undefined) {
@@ -637,7 +698,9 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
     return result;
   }
 
-  async function cachedGetCompilerOptions(tsconfigFile: string): Promise<CompilerOptions> {
+  async function cachedGetCompilerOptions(
+    tsconfigFile: string,
+  ): Promise<CompilerOptions> {
     const cached = compilerOptionsByTsconfig.get(tsconfigFile);
     if (cached !== undefined) {
       return cached;
@@ -647,22 +710,36 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
     return result;
   }
 
-  async function resolveSpecCached(repoRoot: string, tsFilePath: string, spec: string, tsconfigPath: string): Promise<string | null> {
+  async function resolveSpecCached(
+    repoRoot: string,
+    tsFilePath: string,
+    spec: string,
+    tsconfigPath: string,
+  ): Promise<string | null> {
     const compilerOptions = await cachedGetCompilerOptions(tsconfigPath);
     if (spec.startsWith('.')) {
-      const resolvedPath = await resolveSourceFile(spec, dirname(tsFilePath), fileSystem);
+      const resolvedPath = await resolveSourceFile(
+        spec,
+        dirname(tsFilePath),
+        fileSystem,
+      );
       if (resolvedPath !== null) {
         return resolvedPath;
       }
     }
-    return importSpecAliasToModulePath(compilerOptions, dirname(tsconfigPath), spec, fileSystem);
+    return importSpecAliasToModulePath(
+      compilerOptions,
+      dirname(tsconfigPath),
+      spec,
+      fileSystem,
+    );
   }
 
   async function resolveSpecPaths(
     staticModuleInfo: StaticModuleInfo,
     repoRoot: string,
     tsFilePath: string,
-    importerTsConfig: string
+    importerTsConfig: string,
   ): Promise<Map<string, string>> {
     const importSpecs = new Set<string>();
     for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
@@ -670,7 +747,12 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
     }
     const resolvedPathsBySpec = new Map<string, string>();
     for (const spec of importSpecs) {
-      const resolvedPath = await resolveSpecCached(repoRoot, tsFilePath, spec, importerTsConfig);
+      const resolvedPath = await resolveSpecCached(
+        repoRoot,
+        tsFilePath,
+        spec,
+        importerTsConfig,
+      );
       if (resolvedPath) {
         resolvedPathsBySpec.set(spec, resolvedPath);
       }
@@ -681,7 +763,7 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
   function populateModuleInfoImports(
     moduleInfo: ModuleInfo,
     staticModuleInfo: StaticModuleInfo,
-    resolvedPathsBySpec: Map<string, string>
+    resolvedPathsBySpec: Map<string, string>,
   ): void {
     for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
       const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
@@ -703,7 +785,10 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
 
   return async (repoRoot: string, tsFilePath: string): Promise<ModuleInfo> => {
     try {
-      const importerTsConfig = await cachedGetTsconfigPath(repoRoot, tsFilePath);
+      const importerTsConfig = await cachedGetTsconfigPath(
+        repoRoot,
+        tsFilePath,
+      );
       if (!importerTsConfig) {
         throw new Error('No tsconfig found');
       }
@@ -719,17 +804,31 @@ export function createModuleInspector(fileSystem: FileSystem): (repoRoot: string
         importOfUnresolvedSpec: [],
         reExports: staticModuleInfo.reExports,
         needs: {
-          nodejs: staticModuleInfo.nodejsGlobalUsages || staticModuleInfo.usesNodejsGlobals,
+          nodejs:
+            staticModuleInfo.nodejsGlobalUsages ||
+            staticModuleInfo.usesNodejsGlobals,
         },
       };
 
-      const resolvedPathsBySpec = await resolveSpecPaths(staticModuleInfo, repoRoot, tsFilePath, importerTsConfig);
-      populateModuleInfoImports(moduleInfo, staticModuleInfo, resolvedPathsBySpec);
+      const resolvedPathsBySpec = await resolveSpecPaths(
+        staticModuleInfo,
+        repoRoot,
+        tsFilePath,
+        importerTsConfig,
+      );
+      populateModuleInfoImports(
+        moduleInfo,
+        staticModuleInfo,
+        resolvedPathsBySpec,
+      );
 
       return moduleInfo;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to inspect module ${tsFilePath}: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to inspect module ${tsFilePath}: ${errorMessage}`,
+      );
     }
   };
 }
@@ -774,12 +873,12 @@ interface ReExport {
 function addIdentifierUses(
   staticModuleInfo: StaticModuleInfo,
   symbolName: string,
-  uses: string[]
+  uses: string[],
 ): void {
   if (uses.length === 0) {
     return;
   }
-  
+
   let usedIds = staticModuleInfo.identifierUses.get(symbolName);
   if (!usedIds) {
     usedIds = [];
@@ -795,19 +894,22 @@ function trackExportedSymbol(
   staticModuleInfo: StaticModuleInfo,
   name: string,
   node: Node,
-  isExported: boolean
+  isExported: boolean,
 ): void {
   if (isExported) {
     staticModuleInfo.exportedNames.add(name);
   }
-  
+
   const typeUses = extractTypeReferences(node);
   addIdentifierUses(staticModuleInfo, name, typeUses);
 }
 
 type TypeRefCallback = (name: string) => void;
 
-function traverseTypeReferenceNode(typeNode: TypeReferenceNode, fn: TypeRefCallback): void {
+function traverseTypeReferenceNode(
+  typeNode: TypeReferenceNode,
+  fn: TypeRefCallback,
+): void {
   const typeName = typeNode.getTypeName();
   if (typeName.isKind(SyntaxKind.Identifier)) {
     fn(typeName.getText());
@@ -817,7 +919,10 @@ function traverseTypeReferenceNode(typeNode: TypeReferenceNode, fn: TypeRefCallb
   }
 }
 
-function traverseExpressionWithTypeArgsNode(typeNode: ExpressionWithTypeArguments, fn: TypeRefCallback): void {
+function traverseExpressionWithTypeArgsNode(
+  typeNode: ExpressionWithTypeArguments,
+  fn: TypeRefCallback,
+): void {
   const expression = typeNode.getExpression();
   if (expression.isKind(SyntaxKind.Identifier)) {
     fn(expression.getText());
@@ -827,12 +932,18 @@ function traverseExpressionWithTypeArgsNode(typeNode: ExpressionWithTypeArgument
   }
 }
 
-function traverseIndexedAccessNode(typeNode: IndexedAccessTypeNode, fn: TypeRefCallback): void {
+function traverseIndexedAccessNode(
+  typeNode: IndexedAccessTypeNode,
+  fn: TypeRefCallback,
+): void {
   traverseTypeNodeWith(typeNode.getObjectTypeNode(), fn);
   traverseTypeNodeWith(typeNode.getIndexTypeNode(), fn);
 }
 
-function traverseMappedTypeNode(typeNode: MappedTypeNode, fn: TypeRefCallback): void {
+function traverseMappedTypeNode(
+  typeNode: MappedTypeNode,
+  fn: TypeRefCallback,
+): void {
   const typeParam = typeNode.getTypeParameter();
   const constraint = typeParam.getConstraint();
   if (constraint) {
@@ -841,14 +952,20 @@ function traverseMappedTypeNode(typeNode: MappedTypeNode, fn: TypeRefCallback): 
   traverseTypeNodeWith(typeNode.getTypeNode(), fn);
 }
 
-function traverseFunctionTypeNode(typeNode: FunctionTypeNode, fn: TypeRefCallback): void {
+function traverseFunctionTypeNode(
+  typeNode: FunctionTypeNode,
+  fn: TypeRefCallback,
+): void {
   for (const param of typeNode.getParameters()) {
     traverseTypeNodeWith(param.getTypeNode(), fn);
   }
   traverseTypeNodeWith(typeNode.getReturnTypeNode(), fn);
 }
 
-function traverseTypeLiteralNode(typeNode: TypeLiteralNode, fn: TypeRefCallback): void {
+function traverseTypeLiteralNode(
+  typeNode: TypeLiteralNode,
+  fn: TypeRefCallback,
+): void {
   for (const member of typeNode.getMembers()) {
     if (member.isKind(SyntaxKind.PropertySignature)) {
       traverseTypeNodeWith(member.getTypeNode(), fn);
@@ -856,14 +973,20 @@ function traverseTypeLiteralNode(typeNode: TypeLiteralNode, fn: TypeRefCallback)
   }
 }
 
-function traverseTypeQueryNode(typeNode: TypeQueryNode, fn: TypeRefCallback): void {
+function traverseTypeQueryNode(
+  typeNode: TypeQueryNode,
+  fn: TypeRefCallback,
+): void {
   const exprName = typeNode.getExprName();
   if (exprName.isKind(SyntaxKind.Identifier)) {
     fn(exprName.getText());
   }
 }
 
-function traverseTypeNodeWith(typeNode: Node | undefined, fn: TypeRefCallback): void {
+function traverseTypeNodeWith(
+  typeNode: Node | undefined,
+  fn: TypeRefCallback,
+): void {
   if (!typeNode) {
     return;
   }
@@ -875,7 +998,10 @@ function traverseTypeNodeWith(typeNode: Node | undefined, fn: TypeRefCallback): 
     traverseExpressionWithTypeArgsNode(typeNode, fn);
     return;
   }
-  if (typeNode.isKind(SyntaxKind.UnionType) || typeNode.isKind(SyntaxKind.IntersectionType)) {
+  if (
+    typeNode.isKind(SyntaxKind.UnionType) ||
+    typeNode.isKind(SyntaxKind.IntersectionType)
+  ) {
     for (const type of typeNode.getTypeNodes()) {
       traverseTypeNodeWith(type, fn);
     }
@@ -906,7 +1032,10 @@ function traverseTypeNodeWith(typeNode: Node | undefined, fn: TypeRefCallback): 
   }
 }
 
-function traverseParamsAndReturn(node: FunctionDeclaration | MethodDeclaration | MethodSignature, fn: TypeRefCallback): void {
+function traverseParamsAndReturn(
+  node: FunctionDeclaration | MethodDeclaration | MethodSignature,
+  fn: TypeRefCallback,
+): void {
   for (const param of node.getParameters()) {
     traverseTypeNodeWith(param.getTypeNode(), fn);
   }
@@ -914,7 +1043,10 @@ function traverseParamsAndReturn(node: FunctionDeclaration | MethodDeclaration |
   traverseTypeNodeWith(returnTypeNode, fn);
 }
 
-function traverseHeritageClauses(node: InterfaceDeclaration | ClassDeclaration, fn: TypeRefCallback): void {
+function traverseHeritageClauses(
+  node: InterfaceDeclaration | ClassDeclaration,
+  fn: TypeRefCallback,
+): void {
   for (const clause of node.getHeritageClauses()) {
     for (const type of clause.getTypeNodes()) {
       traverseTypeNodeWith(type, fn);
@@ -922,17 +1054,26 @@ function traverseHeritageClauses(node: InterfaceDeclaration | ClassDeclaration, 
   }
 }
 
-function traverseClassMethods(methods: Array<MethodDeclaration | MethodSignature>, fn: TypeRefCallback): void {
+function traverseClassMethods(
+  methods: Array<MethodDeclaration | MethodSignature>,
+  fn: TypeRefCallback,
+): void {
   for (const method of methods) {
     traverseParamsAndReturn(method, fn);
   }
 }
 
-function extractTypeRefsFromFunctionDecl(node: FunctionDeclaration, fn: TypeRefCallback): void {
+function extractTypeRefsFromFunctionDecl(
+  node: FunctionDeclaration,
+  fn: TypeRefCallback,
+): void {
   traverseParamsAndReturn(node, fn);
 }
 
-function extractTypeRefsFromInterfaceDecl(node: InterfaceDeclaration, fn: TypeRefCallback): void {
+function extractTypeRefsFromInterfaceDecl(
+  node: InterfaceDeclaration,
+  fn: TypeRefCallback,
+): void {
   traverseHeritageClauses(node, fn);
   for (const prop of node.getProperties()) {
     traverseTypeNodeWith(prop.getTypeNode(), fn);
@@ -940,7 +1081,10 @@ function extractTypeRefsFromInterfaceDecl(node: InterfaceDeclaration, fn: TypeRe
   traverseClassMethods(node.getMethods(), fn);
 }
 
-function extractTypeRefsFromClassDecl(node: ClassDeclaration, fn: TypeRefCallback): void {
+function extractTypeRefsFromClassDecl(
+  node: ClassDeclaration,
+  fn: TypeRefCallback,
+): void {
   traverseHeritageClauses(node, fn);
   for (const prop of node.getProperties()) {
     const propTypeNode = prop.getTypeNode();
@@ -989,27 +1133,35 @@ function extractTypeReferences(node: Node): string[] {
  */
 type ImportMetadata = { isTypeOnly: boolean; isDefault: boolean };
 
-function buildImportMetadata(moduleInfo: StaticModuleInfo): Map<string, ImportMetadata> {
+function buildImportMetadata(
+  moduleInfo: StaticModuleInfo,
+): Map<string, ImportMetadata> {
   const importMetadata = new Map<string, ImportMetadata>();
   for (const imp of moduleInfo.imports) {
     for (const name of imp.names) {
       importMetadata.set(`${imp.moduleSpec}:${name}`, {
         isTypeOnly: imp.typeOnly,
-        isDefault: name === 'default'
+        isDefault: name === 'default',
       });
     }
   }
   return importMetadata;
 }
 
-type UseImport = { moduleSpec: string; importedName: string; isDefault: boolean; isTypeOnly: boolean };
+type UseImport = {
+  moduleSpec: string;
+  importedName: string;
+  isDefault: boolean;
+  isTypeOnly: boolean;
+};
 
 function resolveIdentifierImport(
   usedIdentifier: string,
   importMetadata: Map<string, ImportMetadata>,
-  moduleInfo: StaticModuleInfo
+  moduleInfo: StaticModuleInfo,
 ): UseImport | null {
-  const importInfo = moduleInfo.unresolvedExportsByImportNames.get(usedIdentifier);
+  const importInfo =
+    moduleInfo.unresolvedExportsByImportNames.get(usedIdentifier);
   if (!importInfo) {
     return null;
   }
@@ -1020,40 +1172,51 @@ function resolveIdentifierImport(
       moduleSpec: importInfo.moduleSpec,
       importedName: metadata.isDefault ? usedIdentifier : importInfo.name,
       isDefault: metadata.isDefault,
-      isTypeOnly: metadata.isTypeOnly
+      isTypeOnly: metadata.isTypeOnly,
     };
   }
   return {
     moduleSpec: importInfo.moduleSpec,
     importedName: importInfo.name,
     isDefault: false,
-    isTypeOnly: false
+    isTypeOnly: false,
   };
 }
 
-export function analyzeImportUsageFromStaticInfo(moduleInfo: StaticModuleInfo): ImportUsage[] {
+export function analyzeImportUsageFromStaticInfo(
+  moduleInfo: StaticModuleInfo,
+): ImportUsage[] {
   const result: ImportUsage[] = [];
   const importMetadata = buildImportMetadata(moduleInfo);
-  
+
   for (const [symbolName, usedIdentifiers] of moduleInfo.identifierUses) {
     const usesImports: UseImport[] = [];
-    
+
     for (const usedIdentifier of usedIdentifiers) {
-      const imp = resolveIdentifierImport(usedIdentifier, importMetadata, moduleInfo);
+      const imp = resolveIdentifierImport(
+        usedIdentifier,
+        importMetadata,
+        moduleInfo,
+      );
       if (imp) {
         usesImports.push(imp);
       }
     }
-    
-    const uniqueImports = Array.from(new Map(
-      usesImports.map(imp => [`${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}:${imp.isTypeOnly}`, imp])
-    ).values());
-    
+
+    const uniqueImports = Array.from(
+      new Map(
+        usesImports.map((imp) => [
+          `${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}:${imp.isTypeOnly}`,
+          imp,
+        ]),
+      ).values(),
+    );
+
     if (usedIdentifiers.length > 0) {
       result.push({ symbol: symbolName, usesImports: uniqueImports });
     }
   }
-  
+
   return result;
 }
 
@@ -1122,7 +1285,10 @@ function isInTypeContext(node: ts.Node): boolean {
  * Checks if a node is within a conditional block guarded by a typeof check.
  * Example: code inside `if (typeof process !== 'undefined') { ... }`
  */
-function isTypeofGuardCondition(condition: ts.Expression, globalName: string): boolean {
+function isTypeofGuardCondition(
+  condition: ts.Expression,
+  globalName: string,
+): boolean {
   if (!ts.isBinaryExpression(condition)) {
     return false;
   }
@@ -1138,7 +1304,10 @@ function isWithinGuardedBlock(node: ts.Node, globalName: string): boolean {
   let current = node.parent;
 
   while (current) {
-    if (ts.isIfStatement(current) && isTypeofGuardCondition(current.expression, globalName)) {
+    if (
+      ts.isIfStatement(current) &&
+      isTypeofGuardCondition(current.expression, globalName)
+    ) {
       return true;
     }
     current = current.parent;
@@ -1235,7 +1404,7 @@ function isPropertyName(node: ts.Node): boolean {
 function processNodeForGlobals(
   node: import('ts-morph').Node,
   sourceFile: SourceFile,
-  usages: Array<{ identifier: string; line: number; column: number }>
+  usages: Array<{ identifier: string; line: number; column: number }>,
 ): void {
   if (node.getKind() !== SyntaxKind.Identifier) {
     return;
@@ -1257,7 +1426,9 @@ function processNodeForGlobals(
   if (isWithinGuardedBlock(compilerNode, identifierText)) {
     return;
   }
-  const pos = sourceFile.compilerNode.getLineAndCharacterOfPosition(compilerNode.getStart());
+  const pos = sourceFile.compilerNode.getLineAndCharacterOfPosition(
+    compilerNode.getStart(),
+  );
   usages.push({
     identifier: identifierText,
     line: pos.line + 1,
@@ -1269,7 +1440,8 @@ function detectNodejsGlobals(sourceFile: SourceFile): {
   usesNodejsGlobals: boolean;
   usages: Array<{ identifier: string; line: number; column: number }>;
 } {
-  const usages: Array<{ identifier: string; line: number; column: number }> = [];
+  const usages: Array<{ identifier: string; line: number; column: number }> =
+    [];
 
   sourceFile.forEachDescendant((node) => {
     processNodeForGlobals(node, sourceFile, usages);
@@ -1288,15 +1460,17 @@ function collectIdentifierReferences(node: Node): string[] {
   const identifiers: Node[] = node.isKind(SyntaxKind.Identifier)
     ? [node]
     : node.getDescendantsOfKind(SyntaxKind.Identifier);
-  
+
   const references: string[] = [];
   for (const id of identifiers) {
     const usedName = id.getText();
-    
+
     // Skip identifiers that are property/method names in property access expressions
     const parent = id.getParent();
     if (parent && parent.getKind() === SyntaxKind.PropertyAccessExpression) {
-      const propertyAccess = parent.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+      const propertyAccess = parent.asKindOrThrow(
+        SyntaxKind.PropertyAccessExpression,
+      );
       // Skip if this identifier is the property name (right side of the dot)
       if (propertyAccess.getName() === usedName) {
         continue;
@@ -1309,7 +1483,9 @@ function collectIdentifierReferences(node: Node): string[] {
       Note: shorthand `{ myVar }` uses ShorthandPropertyAssignment, not PropertyAssignment
     */
     if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-      const propAssignment = parent.asKindOrThrow(SyntaxKind.PropertyAssignment);
+      const propAssignment = parent.asKindOrThrow(
+        SyntaxKind.PropertyAssignment,
+      );
       if (propAssignment.getNameNode() === id) {
         continue;
       }
@@ -1326,22 +1502,24 @@ function collectIdentifierReferences(node: Node): string[] {
  */
 function collectLocalNames(funcDecl: FunctionDeclaration): Set<string> {
   const localNames = new Set<string>();
-  
+
   // Add parameter names
   const parameters = funcDecl.getParameters();
   for (const param of parameters) {
     localNames.add(param.getName());
   }
-  
+
   // Add local variable names (const, let, var declarations within function)
   const body = funcDecl.getBody();
   if (body) {
-    const variableDeclarations = body.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
+    const variableDeclarations = body.getDescendantsOfKind(
+      SyntaxKind.VariableDeclaration,
+    );
     for (const varDecl of variableDeclarations) {
       localNames.add(varDecl.getName());
     }
   }
-  
+
   return localNames;
 }
 
@@ -1350,13 +1528,13 @@ function collectLocalNames(funcDecl: FunctionDeclaration): Set<string> {
  */
 function parseImportDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const idecl = node.asKind(SyntaxKind.ImportDeclaration);
   if (!idecl) {
     return;
   }
-  
+
   const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
   invariant(moduleSpecifier, 'No module specifier found');
   const moduleSpec = moduleSpecifier.getLiteralText();
@@ -1378,8 +1556,10 @@ function parseImportDeclaration(
 
   const names: string[] = [];
   const isTypeOnly = importClause.isTypeOnly();
-  
-  const namedBindings = importClause.getFirstChildByKind(SyntaxKind.NamedImports);
+
+  const namedBindings = importClause.getFirstChildByKind(
+    SyntaxKind.NamedImports,
+  );
 
   if (namedBindings) {
     namedBindings.forEachChild((child: Node) => {
@@ -1406,16 +1586,26 @@ function parseImportDeclaration(
       });
     });
   } else {
-    const namespaceImport = importClause.getFirstChildByKind(SyntaxKind.NamespaceImport);
+    const namespaceImport = importClause.getFirstChildByKind(
+      SyntaxKind.NamespaceImport,
+    );
     if (namespaceImport) {
       const nsName = namespaceImport.getName();
       names.push('*');
-      staticModuleInfo.unresolvedExportsByImportNames.set(nsName, { name: '*', moduleSpec });
+      staticModuleInfo.unresolvedExportsByImportNames.set(nsName, {
+        name: '*',
+        moduleSpec,
+      });
     } else {
-      const defaultBinding = importClause.getFirstChildByKind(SyntaxKind.Identifier);
+      const defaultBinding = importClause.getFirstChildByKind(
+        SyntaxKind.Identifier,
+      );
       if (defaultBinding) {
         names.push('default');
-        staticModuleInfo.unresolvedExportsByImportNames.set(defaultBinding.getText(), { name: 'default', moduleSpec });
+        staticModuleInfo.unresolvedExportsByImportNames.set(
+          defaultBinding.getText(),
+          { name: 'default', moduleSpec },
+        );
       }
     }
   }
@@ -1434,7 +1624,7 @@ function parseImportDeclaration(
  */
 function parseVariableStatement(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const varStatement = node.asKind(SyntaxKind.VariableStatement);
   if (!varStatement) {
@@ -1460,11 +1650,11 @@ function parseVariableStatement(
   const decls = varStatement.getDeclarations();
   for (const decl of decls) {
     const name = decl.getName();
-    
+
     // Track type dependencies
     const typeUses = extractTypeReferences(decl);
     addIdentifierUses(staticModuleInfo, name, typeUses);
-    
+
     // Track value dependencies from initializer
     const initializer = decl.getInitializer();
     if (initializer) {
@@ -1479,13 +1669,13 @@ function parseVariableStatement(
  */
 function parseFunctionDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const funcDecl = node.asKind(SyntaxKind.FunctionDeclaration);
   if (!funcDecl) {
     return;
   }
-  
+
   /*
     We should not use funcDecl.isNamedExport() here, since that causes file
     system access, trying to check if the file specified by the module
@@ -1500,7 +1690,7 @@ function parseFunctionDeclaration(
 
   const name = funcDecl.getName();
   invariant(name, 'Do not know how to deal with named export without name');
-  
+
   const body = funcDecl.getBody();
 
   /*
@@ -1511,14 +1701,14 @@ function parseFunctionDeclaration(
   if (body) {
     const localNames = collectLocalNames(funcDecl);
     const allRefs = collectIdentifierReferences(body);
-    const valueUses = allRefs.filter(name => !localNames.has(name));
+    const valueUses = allRefs.filter((name) => !localNames.has(name));
 
     addIdentifierUses(staticModuleInfo, name, valueUses);
 
     if (exported) {
       staticModuleInfo.exportedNames.add(name);
     }
-    
+
     const typeUses = extractTypeReferences(funcDecl);
     addIdentifierUses(staticModuleInfo, name, typeUses);
   }
@@ -1529,16 +1719,16 @@ function parseFunctionDeclaration(
  */
 function parseInterfaceDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const interfaceDecl = node.asKind(SyntaxKind.InterfaceDeclaration);
   if (!interfaceDecl) {
     return;
   }
-  
+
   const exported = interfaceDecl.hasModifier(SyntaxKind.ExportKeyword);
   const name = interfaceDecl.getName();
-  
+
   trackExportedSymbol(staticModuleInfo, name, interfaceDecl, exported);
 }
 
@@ -1547,16 +1737,16 @@ function parseInterfaceDeclaration(
  */
 function parseTypeAliasDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const typeAliasDecl = node.asKind(SyntaxKind.TypeAliasDeclaration);
   if (!typeAliasDecl) {
     return;
   }
-  
+
   const exported = typeAliasDecl.hasModifier(SyntaxKind.ExportKeyword);
   const name = typeAliasDecl.getName();
-  
+
   trackExportedSymbol(staticModuleInfo, name, typeAliasDecl, exported);
 }
 
@@ -1565,7 +1755,7 @@ function parseTypeAliasDeclaration(
  */
 function parseClassDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const classDecl = node.asKind(SyntaxKind.ClassDeclaration);
   if (!classDecl) {
@@ -1594,7 +1784,7 @@ function parseClassDeclaration(
  */
 function parseExportDeclaration(
   node: Node,
-  staticModuleInfo: StaticModuleInfo
+  staticModuleInfo: StaticModuleInfo,
 ): void {
   const exportDecl = node.asKind(SyntaxKind.ExportDeclaration);
   if (!exportDecl) {
@@ -1693,7 +1883,11 @@ export function parseModule(sourceFile: SourceFile): StaticModuleInfo {
 
   const newExports = new Map<string, ImplementationInfo>();
   for (const name of staticModuleInfo.exportedNames) {
-    const uses = calculateAccumulatedExports(staticModuleInfo, usedExportsByName, name);
+    const uses = calculateAccumulatedExports(
+      staticModuleInfo,
+      usedExportsByName,
+      name,
+    );
     newExports.set(name, { uses: Array.from(uses) });
   }
 
@@ -1715,7 +1909,11 @@ export function parseModule(sourceFile: SourceFile): StaticModuleInfo {
   return staticModuleInfo;
 }
 
-function calculateAccumulatedExports(staticModuleInfo: StaticModuleInfo, usedExportsByName: Map<string, Set<UnresolvedExport>>, name: string): Set<UnresolvedExport> {
+function calculateAccumulatedExports(
+  staticModuleInfo: StaticModuleInfo,
+  usedExportsByName: Map<string, Set<UnresolvedExport>>,
+  name: string,
+): Set<UnresolvedExport> {
   const seen = usedExportsByName.get(name);
   if (seen) {
     return seen;
@@ -1729,13 +1927,18 @@ function calculateAccumulatedExports(staticModuleInfo: StaticModuleInfo, usedExp
   }
 
   for (const usedName of used) {
-    const exports = staticModuleInfo.unresolvedExportsByImportNames.get(usedName);
+    const exports =
+      staticModuleInfo.unresolvedExportsByImportNames.get(usedName);
     if (exports) {
       result.add(exports);
       continue;
     }
 
-    const subResult = calculateAccumulatedExports(staticModuleInfo, usedExportsByName, usedName);
+    const subResult = calculateAccumulatedExports(
+      staticModuleInfo,
+      usedExportsByName,
+      usedName,
+    );
     for (const subExport of subResult) {
       result.add(subExport);
     }
@@ -1744,24 +1947,34 @@ function calculateAccumulatedExports(staticModuleInfo: StaticModuleInfo, usedExp
   return result;
 }
 
-
-
-async function storeImportsFromFile(moduleInfo: ModuleInfo, db: Storage, mtimeMs: number, fileSystem: FileSystem) {
+async function storeImportsFromFile(
+  moduleInfo: ModuleInfo,
+  db: Storage,
+  mtimeMs: number,
+  fileSystem: FileSystem,
+) {
   db.deleteImporterPath(moduleInfo.path);
 
   let pos = 0;
-  for (const imp of moduleInfo.importOfNamedExports)
-  {
-    const exporterTsConfig = await getTsconfigPathForFile(moduleInfo.repoRoot, imp.path, fileSystem);
+  for (const imp of moduleInfo.importOfNamedExports) {
+    const exporterTsConfig = await getTsconfigPathForFile(
+      moduleInfo.repoRoot,
+      imp.path,
+      fileSystem,
+    );
     if (!exporterTsConfig) {
       throw new Error('No tsconfig found');
     }
-    db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, { path: imp.path, tsconfig: exporterTsConfig });
+    db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, {
+      path: imp.path,
+      tsconfig: exporterTsConfig,
+    });
   }
 
-  for (const imp of moduleInfo.importOfUnresolvedSpec)
-  {
-    db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, { spec: imp.moduleSpecifier });
+  for (const imp of moduleInfo.importOfUnresolvedSpec) {
+    db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, {
+      spec: imp.moduleSpecifier,
+    });
   }
 
   // Store re-exports
@@ -1777,19 +1990,25 @@ async function storeImportsFromFile(moduleInfo: ModuleInfo, db: Storage, mtimeMs
 
   // Convert needs to boolean for storage (array means true)
   const needsBoolean = {
-    nodejs: Array.isArray(moduleInfo.needs.nodejs) ? moduleInfo.needs.nodejs.length > 0 : moduleInfo.needs.nodejs
+    nodejs: Array.isArray(moduleInfo.needs.nodejs)
+      ? moduleInfo.needs.nodejs.length > 0
+      : moduleInfo.needs.nodejs,
   };
   db.putModuleNeeds(moduleInfo.path, needsBoolean);
   db.addFileTimestamp(moduleInfo.path, mtimeMs);
 }
 
-
-
-export async function loadSourceFile(srcPath: string, fileSystem: FileSystem, fileContents?: Map<string, string>) {
+export async function loadSourceFile(
+  srcPath: string,
+  fileSystem: FileSystem,
+  fileContents?: Map<string, string>,
+) {
   // Determine if we're using in-memory filesystem based on the filesystem type
   const isInMemory = fileSystem instanceof InMemoryFileSystem;
 
-  const project = isInMemory ? new Project(inMemoryProjectOptions(fileContents ?? new Map())) : createProject();
+  const project = isInMemory
+    ? new Project(inMemoryProjectOptions(fileContents ?? new Map()))
+    : createProject();
 
   if (!isInMemory) {
     // Verify that the source file exists first using the filesystem abstraction
@@ -1811,7 +2030,8 @@ export async function loadSourceFile(srcPath: string, fileSystem: FileSystem, fi
       For in-memory, create the source file with content.
       If fileContents was not provided, read from the InMemoryFileSystem.
     */
-    const content = fileContents?.get(srcPath) ?? await fileSystem.readFile(srcPath);
+    const content =
+      fileContents?.get(srcPath) ?? (await fileSystem.readFile(srcPath));
     project.createSourceFile(srcPath, content);
   }
 
@@ -1832,36 +2052,49 @@ export function defaultProjectOptions(): ProjectOptions {
     skipFileDependencyResolution: true,
     skipLoadingLibFiles: true,
     manipulationSettings: {
-      quoteKind: QuoteKind.Single
+      quoteKind: QuoteKind.Single,
     },
     fileSystem: new TransformingFileSystem(),
   };
 }
 
-export function inMemoryProjectOptions(fileContents: Map<string, string>): ProjectOptions {
+export function inMemoryProjectOptions(
+  fileContents: Map<string, string>,
+): ProjectOptions {
   return {
     skipAddingFilesFromTsConfig: true,
     skipFileDependencyResolution: true,
     skipLoadingLibFiles: true,
     manipulationSettings: {
-      quoteKind: QuoteKind.Single
+      quoteKind: QuoteKind.Single,
     },
     fileSystem: {
       isCaseSensitive: () => true,
-      delete: () => Promise.reject(new Error("delete not implemented")),
-      deleteSync: () => { throw new Error("deleteSync not implemented"); },
+      delete: () => Promise.reject(new Error('delete not implemented')),
+      deleteSync: () => {
+        throw new Error('deleteSync not implemented');
+      },
       readDirSync: () => [],
       readFile: async (filePath: string) => fileContents.get(filePath) || '',
       readFileSync: (filePath: string) => fileContents.get(filePath) || '',
-      writeFile: () => Promise.reject(new Error("writeFile not implemented")),
-      writeFileSync: () => { throw new Error("writeFileSync not implemented"); },
-      mkdir: () => Promise.reject(new Error("mkdir not implemented")),
-      mkdirSync: () => { throw new Error("mkdirSync not implemented"); },
-      move: () => Promise.reject(new Error("move not implemented")),
-      moveSync: () => { throw new Error("moveSync not implemented"); },
-      copy: () => Promise.reject(new Error("copy not implemented")),
-      copySync: () => { throw new Error("copySync not implemented"); },
-      fileExists: async (filePath: string) => Promise.resolve(fileContents.has(filePath)),
+      writeFile: () => Promise.reject(new Error('writeFile not implemented')),
+      writeFileSync: () => {
+        throw new Error('writeFileSync not implemented');
+      },
+      mkdir: () => Promise.reject(new Error('mkdir not implemented')),
+      mkdirSync: () => {
+        throw new Error('mkdirSync not implemented');
+      },
+      move: () => Promise.reject(new Error('move not implemented')),
+      moveSync: () => {
+        throw new Error('moveSync not implemented');
+      },
+      copy: () => Promise.reject(new Error('copy not implemented')),
+      copySync: () => {
+        throw new Error('copySync not implemented');
+      },
+      fileExists: async (filePath: string) =>
+        Promise.resolve(fileContents.has(filePath)),
       fileExistsSync: (filePath: string) => fileContents.has(filePath),
       directoryExists: () => Promise.resolve(false),
       directoryExistsSync: () => false,
@@ -1873,8 +2106,17 @@ export function inMemoryProjectOptions(fileContents: Map<string, string>): Proje
   };
 }
 
-export async function resolveImportSpec(repoRoot: string, tsFilePath: string, importSpec: string, fileSystem: FileSystem) {
-  const tsconfigPath = await getTsconfigPathForFile(repoRoot, tsFilePath, fileSystem);
+export async function resolveImportSpec(
+  repoRoot: string,
+  tsFilePath: string,
+  importSpec: string,
+  fileSystem: FileSystem,
+) {
+  const tsconfigPath = await getTsconfigPathForFile(
+    repoRoot,
+    tsFilePath,
+    fileSystem,
+  );
   if (!tsconfigPath) {
     throw new Error('No tsconfig found');
   }
@@ -1883,22 +2125,34 @@ export async function resolveImportSpec(repoRoot: string, tsFilePath: string, im
 
   let resolvedPath: string | null = null;
   if (importSpec.startsWith('.')) {
-    resolvedPath = await resolveSourceFile(importSpec, dirname(tsFilePath), fileSystem);
+    resolvedPath = await resolveSourceFile(
+      importSpec,
+      dirname(tsFilePath),
+      fileSystem,
+    );
   }
 
   if (resolvedPath === null) {
-    resolvedPath = await importSpecAliasToModulePath(compilerOptions, dirname(tsconfigPath), importSpec, fileSystem);
+    resolvedPath = await importSpecAliasToModulePath(
+      compilerOptions,
+      dirname(tsconfigPath),
+      importSpec,
+      fileSystem,
+    );
   }
   return resolvedPath;
 }
 
-export async function getCompilerOptions(tsconfigFile: string, fileSystem: FileSystem): Promise<CompilerOptions> {
+export async function getCompilerOptions(
+  tsconfigFile: string,
+  fileSystem: FileSystem,
+): Promise<CompilerOptions> {
   const tsconfigContent = await fileSystem.readFile(tsconfigFile);
   const tsconfig = ts.parseConfigFileTextToJson(tsconfigFile, tsconfigContent);
   if (tsconfig.error) {
     throw new Error('Failed to read tsconfig');
   }
-  const paths = tsconfig.config.compilerOptions?.paths ?? {}
+  const paths = tsconfig.config.compilerOptions?.paths ?? {};
 
   const baseUrl = tsconfig.config.compilerOptions?.baseUrl || null;
   const rootDir = tsconfig.config.compilerOptions?.rootDir || null;
@@ -1910,14 +2164,19 @@ export async function getCompilerOptions(tsconfigFile: string, fileSystem: FileS
   };
 }
 
-async function resolveSourceFile(spec: string, baseDir: string, fileSystem: FileSystem) {
+async function resolveSourceFile(
+  spec: string,
+  baseDir: string,
+  fileSystem: FileSystem,
+) {
   const absSpec = resolve(baseDir, spec);
 
   let isDir = false;
   const parentDir = dirname(absSpec);
   try {
     const stat = await fileSystem.stat(parentDir);
-    if (stat.isFile()) { // Parent should be a directory, not a file
+    if (stat.isFile()) {
+      // Parent should be a directory, not a file
       return null;
     }
   } catch (err) {
@@ -1953,7 +2212,7 @@ async function resolvePathWithBaseUrl(
   relPath: string,
   tsconfigDir: string,
   baseUrl: string | null | undefined,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<string | null> {
   const sourcePath = await resolveSourceFile(relPath, tsconfigDir, fileSystem);
   if (sourcePath) {
@@ -1961,12 +2220,17 @@ async function resolvePathWithBaseUrl(
   }
   if (baseUrl) {
     const baseDir = resolve(tsconfigDir, baseUrl);
-    return await resolveSourceFile(relPath, baseDir, fileSystem) ?? null;
+    return (await resolveSourceFile(relPath, baseDir, fileSystem)) ?? null;
   }
   return null;
 }
 
-async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsconfigDir: string, importSpec: string, fileSystem: FileSystem) {
+async function importSpecAliasToModulePath(
+  compilerOptions: CompilerOptions,
+  tsconfigDir: string,
+  importSpec: string,
+  fileSystem: FileSystem,
+) {
   for (const [alias, paths] of Object.entries(compilerOptions.paths)) {
     if (!alias.endsWith('/*')) {
       throw new Error('Unspported alias');
@@ -1984,7 +2248,12 @@ async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsc
       }
       const pathPrefix = path.slice(0, -1);
       const relPath = pathPrefix + importSpec.slice(aliasPrefix.length);
-      const sourcePath = await resolvePathWithBaseUrl(relPath, tsconfigDir, compilerOptions.baseUrl, fileSystem);
+      const sourcePath = await resolvePathWithBaseUrl(
+        relPath,
+        tsconfigDir,
+        compilerOptions.baseUrl,
+        fileSystem,
+      );
       if (sourcePath) {
         return sourcePath;
       }
@@ -1993,8 +2262,17 @@ async function importSpecAliasToModulePath(compilerOptions: CompilerOptions, tsc
   return null;
 }
 
-export async function resolveImportSpecAlias(repoRoot: string, tsFilePath: string, modulePath: string, fileSystem: FileSystem) {
-  const tsconfigPath = await getTsconfigPathForFile(repoRoot, tsFilePath, fileSystem);
+export async function resolveImportSpecAlias(
+  repoRoot: string,
+  tsFilePath: string,
+  modulePath: string,
+  fileSystem: FileSystem,
+) {
+  const tsconfigPath = await getTsconfigPathForFile(
+    repoRoot,
+    tsFilePath,
+    fileSystem,
+  );
   if (!tsconfigPath) {
     throw new Error('No tsconfig found');
   }
@@ -2002,7 +2280,11 @@ export async function resolveImportSpecAlias(repoRoot: string, tsFilePath: strin
   const tsconfigDir = dirname(tsconfigPath);
 
   const compilerOptions = await getCompilerOptions(tsconfigPath, fileSystem);
-  let importSpec = modulePathToImportSpecAlias(compilerOptions, tsconfigDir, modulePath);
+  let importSpec = modulePathToImportSpecAlias(
+    compilerOptions,
+    tsconfigDir,
+    modulePath,
+  );
   if (!importSpec) {
     const dirPrefix = tsconfigDir + '/';
     if (modulePath.startsWith(dirPrefix) && tsFilePath.startsWith(dirPrefix)) {
