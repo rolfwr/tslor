@@ -25,17 +25,33 @@ beforeEach(() => {
   cPath = join(testDir, 'c.ts');
 
   const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
+  storage = new Storage(objStore, {
+    jsonlPath: '/dev/null',
+    verbose: false,
+    inMemory: true,
+  });
 
-  storage.putImport(aPath, '/tsconfig.json', 0, 'b', { path: bPath, tsconfig: '/tsconfig.json' });
-  storage.putImport(bPath, '/tsconfig.json', 0, 'c', { path: cPath, tsconfig: '/tsconfig.json' });
+  storage.putImport(aPath, '/tsconfig.json', 0, 'b', {
+    path: bPath,
+    tsconfig: '/tsconfig.json',
+  });
+  storage.putImport(bPath, '/tsconfig.json', 0, 'c', {
+    path: cPath,
+    tsconfig: '/tsconfig.json',
+  });
 });
 
 describe('tsort directory expansion', () => {
   test('directory input expands to TypeScript files and sorts them', async () => {
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
-      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
+      [
+        join(testDir, 'a.ts'),
+        'import { b } from "./b";\nexport const a = 1;\n',
+      ],
+      [
+        join(testDir, 'b.ts'),
+        'import { c } from "./c";\nexport const b = 2;\n',
+      ],
       [join(testDir, 'c.ts'), 'export const c = 3;\n'],
       [join(testDir, 'b.js'), 'not typescript\n'],
     ]);
@@ -56,9 +72,21 @@ describe('tsort directory expansion', () => {
     );
 
     assert.equal(consoleOutput.length, 3, 'Should output 3 modules');
-    assert.equal(consoleOutput[0], join(testDir, 'c.ts'), 'c.ts (no imports) should come first');
-    assert.equal(consoleOutput[1], join(testDir, 'b.ts'), 'b.ts (imports c) should come second');
-    assert.equal(consoleOutput[2], join(testDir, 'a.ts'), 'a.ts (imports b) should come last');
+    assert.equal(
+      consoleOutput[0],
+      join(testDir, 'c.ts'),
+      'c.ts (no imports) should come first',
+    );
+    assert.equal(
+      consoleOutput[1],
+      join(testDir, 'b.ts'),
+      'b.ts (imports c) should come second',
+    );
+    assert.equal(
+      consoleOutput[2],
+      join(testDir, 'a.ts'),
+      'a.ts (imports b) should come last',
+    );
   });
 
   test('explicit file paths are sorted in dependency order', async () => {
@@ -84,8 +112,16 @@ describe('tsort directory expansion', () => {
     );
 
     assert.equal(consoleOutput.length, 3, 'Should output 3 modules');
-    assert.equal(consoleOutput[0], cPath, 'c.ts (no imports) should come first');
-    assert.equal(consoleOutput[1], bPath, 'b.ts (imports c) should come second');
+    assert.equal(
+      consoleOutput[0],
+      cPath,
+      'c.ts (no imports) should come first',
+    );
+    assert.equal(
+      consoleOutput[1],
+      bPath,
+      'b.ts (imports c) should come second',
+    );
     assert.equal(consoleOutput[2], aPath, 'a.ts (imports b) should come last');
   });
 });

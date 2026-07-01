@@ -207,7 +207,9 @@ describe('buildImportChain', () => {
   });
 
   test('reports not found when target is unreachable', () => {
-    const storage = createStorageWithImports([{ from: '/a.ts', to: '/b.ts' }]);
+    const storage = createStorageWithImports([
+      { from: '/a.ts', to: '/b.ts' },
+    ]);
 
     const result = buildImportChain(storage, '/b.ts', '/c.ts');
 
@@ -221,7 +223,9 @@ describe('buildImportChain', () => {
       Starting BFS from /leaf.ts can find no importers, so any
       other target is unreachable.
     */
-    const storage = createStorageWithImports([{ from: '/a.ts', to: '/b.ts' }]);
+    const storage = createStorageWithImports([
+      { from: '/a.ts', to: '/b.ts' },
+    ]);
 
     const result = buildImportChain(storage, '/leaf.ts', '/a.ts');
 
