@@ -550,8 +550,7 @@ async function refreshImportsFromFile(
     }
     await storeImportsFromFile(moduleInfo, db, mtimeMs, fileSystem);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to process file ${somePath}: ${errorMessage}`);
+    reThrowAsCliError(error, `Failed to process file ${somePath}`);
   }
 }
 
@@ -582,6 +581,19 @@ export interface ImportUsage {
     isDefault: boolean; // Whether this is a default import
     isTypeOnly: boolean; // Whether this is a type-only import
   }>;
+}
+
+function resolveReExports(
+  reExports: ReExport[],
+  resolvedPathsBySpec: Map<string, string>,
+): ReExport[] {
+  return reExports.map((reExport) => {
+    const resolvedPath = resolvedPathsBySpec.get(reExport.moduleSpec);
+    if (resolvedPath !== undefined) {
+      return { ...reExport, resolvedPath };
+    }
+    return reExport;
+  });
 }
 
 export async function inspectModule(
@@ -629,24 +641,16 @@ export async function inspectModule(
       }
     }
 
-    /*
-      Resolve re-export paths using the same resolution map.
-    */
-    const resolvedReExports = staticModuleInfo.reExports.map((reExport) => {
-      const resolvedPath = resolvedPathsBySpec.get(reExport.moduleSpec);
-      if (resolvedPath !== undefined) {
-        return { ...reExport, resolvedPath };
-      }
-      return reExport;
-    });
-
     const moduleInfo: ModuleInfo = {
       path: tsFilePath,
       repoRoot,
       tsconfig: importerTsConfig,
       importOfNamedExports: [],
       importOfUnresolvedSpec: [],
-      reExports: resolvedReExports,
+      reExports: resolveReExports(
+        staticModuleInfo.reExports,
+        resolvedPathsBySpec,
+      ),
       needs: {
         nodejs:
           staticModuleInfo.nodejsGlobalUsages ||
@@ -673,8 +677,7 @@ export async function inspectModule(
 
     return moduleInfo;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to inspect module ${tsFilePath}: ${errorMessage}`);
+    reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`);
   }
 }
 
@@ -689,7 +692,7 @@ export async function inspectModule(
  */
 export function createModuleInspector(
   fileSystem: FileSystem,
-): (repoRoot: string, tsFilePath: string) => Promise<ModuleInfo> {
+): (repoRoot: string, tsFilePath: string) => Promise<ModuleInfo | null> {
   const tsconfigPathByDir = new Map<string, string | null>();
   const compilerOptionsByTsconfig = new Map<string, CompilerOptions>();
 
@@ -792,32 +795,21 @@ export function createModuleInspector(
     }
   }
 
-  return async (repoRoot: string, tsFilePath: string): Promise<ModuleInfo> => {
+  return async (
+    repoRoot: string,
+    tsFilePath: string,
+  ): Promise<ModuleInfo | null> => {
     try {
       const importerTsConfig = await cachedGetTsconfigPath(
         repoRoot,
         tsFilePath,
       );
       if (!importerTsConfig) {
-        throw new Error('No tsconfig found');
+        return null;
       }
 
       const sourceFile = await loadSourceFile(tsFilePath, fileSystem);
       const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
-
-      const moduleInfo: ModuleInfo = {
-        path: tsFilePath,
-        repoRoot,
-        tsconfig: importerTsConfig,
-        importOfNamedExports: [],
-        importOfUnresolvedSpec: [],
-        reExports: staticModuleInfo.reExports,
-        needs: {
-          nodejs:
-            staticModuleInfo.nodejsGlobalUsages ||
-            staticModuleInfo.usesNodejsGlobals,
-        },
-      };
 
       const resolvedPathsBySpec = await resolveSpecPaths(
         staticModuleInfo,
@@ -825,6 +817,24 @@ export function createModuleInspector(
         tsFilePath,
         importerTsConfig,
       );
+
+      const moduleInfo: ModuleInfo = {
+        path: tsFilePath,
+        repoRoot,
+        tsconfig: importerTsConfig,
+        importOfNamedExports: [],
+        importOfUnresolvedSpec: [],
+        reExports: resolveReExports(
+          staticModuleInfo.reExports,
+          resolvedPathsBySpec,
+        ),
+        needs: {
+          nodejs:
+            staticModuleInfo.nodejsGlobalUsages ||
+            staticModuleInfo.usesNodejsGlobals,
+        },
+      };
+
       populateModuleInfoImports(
         moduleInfo,
         staticModuleInfo,
@@ -833,11 +843,7 @@ export function createModuleInspector(
 
       return moduleInfo;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Failed to inspect module ${tsFilePath}: ${errorMessage}`,
-      );
+      reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`);
     }
   };
 }
@@ -1972,7 +1978,7 @@ async function storeImportsFromFile(
       fileSystem,
     );
     if (!exporterTsConfig) {
-      throw new Error('No tsconfig found');
+      throw new CliError('No tsconfig found');
     }
     db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, {
       path: imp.path,
@@ -2024,11 +2030,11 @@ export async function loadSourceFile(
     try {
       const stat = await fileSystem.stat(srcPath);
       if (!stat.isFile()) {
-        throw new Error('Not a file: ' + srcPath);
+        throw new CliError('Not a file: ' + srcPath);
       }
     } catch (err) {
       if (isEnoentError(err)) {
-        throw new Error('Not found: ' + srcPath);
+        throw new CliError('Not found: ' + srcPath);
       }
       throw err;
     }
@@ -2046,7 +2052,7 @@ export async function loadSourceFile(
 
   const sourceFile = project.getSourceFile(srcPath);
   if (!sourceFile) {
-    throw new Error('Source file not found');
+    throw new CliError('Source file not found');
   }
   return sourceFile;
 }
@@ -2127,7 +2133,7 @@ export async function resolveImportSpec(
     fileSystem,
   );
   if (!tsconfigPath) {
-    throw new Error('No tsconfig found');
+    throw new CliError('No tsconfig found');
   }
 
   const compilerOptions = await getCompilerOptions(tsconfigPath, fileSystem);
@@ -2159,7 +2165,7 @@ export async function getCompilerOptions(
   const tsconfigContent = await fileSystem.readFile(tsconfigFile);
   const tsconfig = ts.parseConfigFileTextToJson(tsconfigFile, tsconfigContent);
   if (tsconfig.error) {
-    throw new Error('Failed to read tsconfig');
+    throw new CliError('Failed to read tsconfig');
   }
   const paths = tsconfig.config.compilerOptions?.paths ?? {};
 
@@ -2242,18 +2248,22 @@ async function importSpecAliasToModulePath(
 ) {
   for (const [alias, paths] of Object.entries(compilerOptions.paths)) {
     if (!alias.endsWith('/*')) {
-      throw new Error('Unspported alias');
+      throw new CliError(`Alias "${alias}" does not end with "/*"`);
     }
     const aliasPrefix = alias.slice(0, -1);
     if (!importSpec.startsWith(aliasPrefix)) {
       continue;
     }
     if (paths.length !== 1) {
-      throw new Error('Unsupported alias path count');
+      throw new CliError(
+        `Alias "${alias}" has ${paths.length} path(s); exactly 1 is required`,
+      );
     }
     for (const path of paths) {
       if (!path.endsWith('/*')) {
-        throw new Error('Unsupported alias path');
+        throw new CliError(
+          `Alias "${alias}" path "${path}" does not end with "/*"`,
+        );
       }
       const pathPrefix = path.slice(0, -1);
       const relPath = pathPrefix + importSpec.slice(aliasPrefix.length);
@@ -2283,7 +2293,7 @@ export async function resolveImportSpecAlias(
     fileSystem,
   );
   if (!tsconfigPath) {
-    throw new Error('No tsconfig found');
+    throw new CliError('No tsconfig found');
   }
 
   const tsconfigDir = dirname(tsconfigPath);
