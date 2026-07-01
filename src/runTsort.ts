@@ -195,14 +195,12 @@ function buildEdgesForModule(
 function shouldSkipExporter(
   modulePath: string,
   exporter: { path: string; tsconfig: string },
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | null,
 ): boolean {
-  if (moduleTsconfigMap === null) {
-    return false;
-  }
-  const moduleTsconfig = moduleTsconfigMap.get(modulePath);
+  const moduleTsconfig = moduleTsconfigMap?.get(modulePath);
+  // No tsconfig info: include all dependencies rather than silently dropping them.
   if (moduleTsconfig === undefined) {
-    return true;
+    return false;
   }
   return moduleTsconfig !== exporter.tsconfig;
 }
