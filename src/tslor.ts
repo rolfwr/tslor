@@ -133,11 +133,13 @@ program
 
 program
   .command('mv <oldPath> <newPath>')
-  .description('Move a TypeScript file and update imports')
+  .description(
+    'Move a TypeScript or Vue SFC file and update all imports that reference it',
+  )
   .action(async (oldPath: string, newPath: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runMv(oldPath, newPath, debugOptions, fileSystem);
+    await runMv(oldPath, newPath, { traceId }, fresh, fileSystem, writeStderr);
   });
 
 program

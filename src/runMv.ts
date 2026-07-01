@@ -1,46 +1,73 @@
-import { basename, resolve } from "path";
-import { normalizeAndValidatePath, normalizePath } from "./pathUtils";
-import { findGitRepoRoot, getTsconfigPathForFile, getTypeScriptFilePaths } from "./project";
-import { existsSync, promises as fsp } from "fs";
-import { spawn } from "child_process";
-import { openStorage } from "./storage";
-import { Storage } from "./storage";
-import { indexImportFromFiles, loadSourceFile, NamedExport, resolveImportSpec, resolveImportSpecAlias } from "./indexing";
-import { Node, ImportDeclaration, SyntaxKind } from "ts-morph";
-import { DebugOptions } from "./objstore";
-import { FileSystem } from "./filesystem";
+import { spawn } from 'child_process';
+import { existsSync, promises as fsp } from 'fs';
+import { basename, dirname, relative, resolve } from 'path';
+import { ImportDeclaration, Node, SourceFile, SyntaxKind } from 'ts-morph';
+import { CliError } from './errors';
+import { FileSystem } from './filesystem';
+import { modulePathSpec } from './importSpec';
+import {
+  indexImportFromFiles,
+  loadSourceFile,
+  NamedExport,
+  resolveImportSpec,
+  resolveImportSpecAlias,
+} from './indexing';
+import { invariant } from './invariant';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath } from './pathUtils';
+import {
+  findGitRepoRoot,
+  getTsconfigPathForFile,
+  getTypeScriptFilePaths,
+} from './project';
+import { openStorage, Storage } from './storage';
 
 interface FileMove {
   oldPath: string;
   newPath: string;
 }
 
-export async function runMv(oldPathArg: string, newPathArg: string, debugOptions: DebugOptions, fileSystem: FileSystem) {
+export async function runMv(
+  oldPathArg: string,
+  newPathArg: string,
+  debugOptions: DebugOptions,
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   if (!oldPathArg || !newPathArg) {
-    throw new Error('Missing path arguments');
+    throw new CliError('Missing path arguments');
   }
 
-  const oldPath = normalizeAndValidatePath(oldPathArg, "Source file", false);
-  let newPath = normalizePath(newPathArg);
+  const oldPath = normalizeAndValidatePath(oldPathArg, 'Source file', false);
+  const repoRoot = findGitRepoRoot(oldPath);
+
+  /*
+    Resolve newPathArg relative to the repo root, not the current working
+    directory. This ensures that `tslor mv src/a.ts dest` from a subdirectory
+    places the file at <repo>/dest/a.ts rather than <cwd>/dest/a.ts.
+  */
+  let newPath = resolve(repoRoot, newPathArg);
 
   // If new path is a directory, append the base name of the old path
   const stat = await fsp.stat(newPath).catch(() => null);
   if (stat && stat.isDirectory()) {
-    newPath = normalizePath(resolve(newPath, basename(oldPath)));
+    newPath = resolve(newPath, basename(oldPath));
   }
 
-  let repoRoot = findGitRepoRoot(oldPath);
+  if (oldPath === newPath) {
+    throw new CliError(`Source and destination are the same file: ${oldPath}`);
+  }
 
   if (!existsSync(newPath)) {
     if (!existsSync(oldPath)) {
-      throw new Error('Neither old nor new path exists');
+      throw new CliError('Neither old nor new path exists');
     }
-
 
     // Run "git mv" command
     const cmd = 'git';
     const args = ['mv', oldPath, newPath];
-    console.log('+ ' + cmd + ' ' + args.join(' '));
+    writer('+ ' + cmd + ' ' + args.join(' ') + '\n');
     const git = spawn(cmd, args, { cwd: repoRoot, stdio: 'inherit' });
     await new Promise((resolve, reject) => {
       git.on('close', (code: number) => {
@@ -53,76 +80,177 @@ export async function runMv(oldPathArg: string, newPathArg: string, debugOptions
     });
   }
 
-
-  
   const fixupFileMove: FileMove = {
     oldPath,
     newPath,
   };
 
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await mvCore(db, repoRoot, fixupFileMove, fileSystem);
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await mvCore(db, repoRoot, fixupFileMove, fileSystem, writer);
   db.save();
 }
 
-
+/**
+ * Describes a single export that needs to be rewritten after a file move.
+ *
+ * `oldExport` points to the location importers currently reference;
+ * `newExport` points to the location after the move.
+ */
 interface MoveFixup {
   oldExport: NamedExport;
   newExport: NamedExport;
-};
+}
 
-async function fixAliasesInMovedFile(
+function toRelativeModuleSpec(fromPath: string, toPath: string): string {
+  const relPath = relative(dirname(fromPath), toPath);
+  const spec = relPath.startsWith('.') ? relPath : './' + relPath;
+  return modulePathSpec(spec);
+}
+
+async function resolveNewSpecifier(
+  repoRoot: string,
+  fromPath: string,
+  resolvedPath: string,
+  fileSystem: FileSystem,
+): Promise<string> {
+  try {
+    const alias = await resolveImportSpecAlias(
+      repoRoot,
+      fromPath,
+      resolvedPath,
+      fileSystem,
+    );
+    if (alias) {
+      return alias;
+    }
+  } catch {
+    // Alias resolution failed (no tsconfig or I/O error); fall back to relative path
+  }
+  return toRelativeModuleSpec(fromPath, resolvedPath);
+}
+
+async function fixImportsInMovedFile(
   repoRoot: string,
   fixupFileMove: FileMove,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<void> {
-  const oldTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.oldPath, fileSystem);
-  const newTsconfigPath = await getTsconfigPathForFile(repoRoot, fixupFileMove.newPath, fileSystem);
-  if (!oldTsconfigPath || !newTsconfigPath || oldTsconfigPath === newTsconfigPath) {
-    return;
-  }
+  const oldTsconfigPath = await getTsconfigPathForFile(
+    repoRoot,
+    fixupFileMove.oldPath,
+    fileSystem,
+  );
+  const newTsconfigPath = await getTsconfigPathForFile(
+    repoRoot,
+    fixupFileMove.newPath,
+    fileSystem,
+  );
+  const sameTsconfig =
+    oldTsconfigPath !== null &&
+    newTsconfigPath !== null &&
+    oldTsconfigPath === newTsconfigPath;
+
   const movedModule = await loadSourceFile(fixupFileMove.newPath, fileSystem);
-  const importDecls = movedModule.getImportDeclarations();
-  for (const imp of importDecls) {
+  for (const imp of movedModule.getImportDeclarations()) {
     const moduleSpecifier = imp.getModuleSpecifierValue();
-    const resolvedPath = await resolveImportSpec(repoRoot, fixupFileMove.oldPath, moduleSpecifier, fileSystem);
-    if (resolvedPath) {
-      const newImportAliasSpec = await resolveImportSpecAlias(repoRoot, fixupFileMove.newPath, resolvedPath, fileSystem);
-      if (newImportAliasSpec) {
-        imp.setModuleSpecifier(newImportAliasSpec);
-      }
+
+    /*
+      Resolve the original specifier from the old location. Alias imports
+      require a tsconfig; relative imports resolve without one.
+    */
+    let resolvedPath: string | null = null;
+    try {
+      resolvedPath = await resolveImportSpec(
+        repoRoot,
+        fixupFileMove.oldPath,
+        moduleSpecifier,
+        fileSystem,
+      );
+    } catch {
+      // Old file has no tsconfig; alias imports can't be resolved
+      continue;
+    }
+    if (!resolvedPath) {
+      continue;
+    }
+
+    /*
+      Alias imports within the same tsconfig don't need rewriting.
+    */
+    if (!moduleSpecifier.startsWith('.') && sameTsconfig) {
+      continue;
+    }
+
+    const newSpecifier = moduleSpecifier.startsWith('.')
+      ? toRelativeModuleSpec(fixupFileMove.newPath, resolvedPath)
+      : await resolveNewSpecifier(
+          repoRoot,
+          fixupFileMove.newPath,
+          resolvedPath,
+          fileSystem,
+        );
+
+    if (newSpecifier !== moduleSpecifier) {
+      imp.setModuleSpecifier(newSpecifier);
     }
   }
   if (!movedModule.isSaved()) {
     await movedModule.save();
-    console.log('M ' + movedModule.getFilePath());
+    writer('M ' + movedModule.getFilePath() + '\n');
   }
 }
 
-async function mvCore(db: Storage, repoRoot: string, fixupFileMove: FileMove, fileSystem: FileSystem) {
+async function mvCore(
+  db: Storage,
+  repoRoot: string,
+  fixupFileMove: FileMove,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   const srcPath = fixupFileMove.newPath;
   if (!existsSync(srcPath)) {
-    console.log('Fixup File Move New Path does not exist:', srcPath);
+    writer('Fixup File Move New Path does not exist: ' + srcPath + '\n');
     return;
   }
 
-  await fixAliasesInMovedFile(repoRoot, fixupFileMove, fileSystem);
+  await fixImportsInMovedFile(repoRoot, fixupFileMove, fileSystem, writer);
 
-  const moveFixups: MoveFixup[] = await getFixups(srcPath, fixupFileMove.oldPath, fileSystem);
+  const moveFixups: MoveFixup[] = await getFixups(
+    srcPath,
+    fixupFileMove.oldPath,
+    fileSystem,
+  );
   if (moveFixups.length === 0) {
-    console.log('No fixups needed');
+    writer('No fixups needed\n');
     return;
   }
 
   const paths: string[] = await getTypeScriptFilePaths(repoRoot, fileSystem);
   for (const fixup of moveFixups) {
-    await applyFixup(db, repoRoot, paths, fixup, fileSystem);
+    await applyFixup(db, repoRoot, paths, fixup, fileSystem, writer);
   }
 }
 
-async function getFixups(srcPath: string, oldPath: string, fileSystem: FileSystem) {
+/**
+ * Scan the moved file and return fixup records for every named export
+ * it declares, mapping each export from `oldPath` to `srcPath`.
+ *
+ * @param srcPath - Absolute path to the file at its new location
+ * @param oldPath - Absolute path to the file at its previous location
+ * @param fileSystem - Filesystem abstraction for loading the source
+ * @returns Array of fixup records, one per exported symbol
+ */
+export async function getFixups(
+  srcPath: string,
+  oldPath: string,
+  fileSystem: FileSystem,
+): Promise<MoveFixup[]> {
   const sourceFile = await loadSourceFile(srcPath, fileSystem);
-
   const exports: NamedExport[] = [];
 
   sourceFile.forEachChild((node) => {
@@ -131,88 +259,125 @@ async function getFixups(srcPath: string, oldPath: string, fileSystem: FileSyste
       case SyntaxKind.TypeAliasDeclaration:
       case SyntaxKind.FunctionDeclaration:
       case SyntaxKind.ClassDeclaration:
+      case SyntaxKind.EnumDeclaration:
+        collectDeclarationExports(node, srcPath, exports);
         break;
-      default:
-        return;
-    }
-    let hasExportKeyword = false;
-    let identifier: Node | undefined;
-    let isDefault = false;
-    node.forEachChild((child) => {
-      const kind = child.getKind();
-      if (kind === SyntaxKind.ExportKeyword) {
-        hasExportKeyword = true;
-      } else if (kind === SyntaxKind.Identifier) {
-        identifier = child;
-      } else if (kind === SyntaxKind.DefaultKeyword) {
-        isDefault = true;
-      }
-    });
-    if (!hasExportKeyword) {
-      return;
-    }
-
-    if (!identifier) {
-      throw new Error('No identifier found for export');
-    }
-
-    const name = identifier.getText();
-
-    exports.push({
-      type: 'NamedExport',
-      path: srcPath,
-      name,
-    });
-
-    if (isDefault) {
-      exports.push({
-        type: 'NamedExport',
-        path: srcPath,
-        name: 'default',
-      });
+      case SyntaxKind.VariableStatement:
+        collectVariableExports(node, srcPath, exports);
+        break;
     }
   });
 
-  const moveFixups: MoveFixup[] = [];
-  for (const exp of exports) {
-    if (exp.path !== srcPath) {
-      throw new Error('Export path mismatch');
-    }
-    moveFixups.push({
-      oldExport: {
-        type: 'NamedExport',
-        path: oldPath,
-        name: exp.name,
-      },
-      newExport: exp,
-    });
-  }
-
-  return moveFixups;
+  return exports.map((exp) => ({
+    oldExport: {
+      type: 'NamedExport' as const,
+      path: oldPath,
+      name: exp.name,
+    },
+    newExport: exp,
+  }));
 }
 
-async function applyFixup(db: Storage, repoRoot: string, paths: string[], fixup: MoveFixup, fileSystem: FileSystem) {
+function collectDeclarationExports(
+  node: Node,
+  srcPath: string,
+  exports: NamedExport[],
+): void {
+  let hasExportKeyword = false;
+  let identifier: Node | undefined;
+  let isDefault = false;
+
+  node.forEachChild((child) => {
+    switch (child.getKind()) {
+      case SyntaxKind.ExportKeyword:
+        hasExportKeyword = true;
+        break;
+      case SyntaxKind.Identifier:
+        identifier = child;
+        break;
+      case SyntaxKind.DefaultKeyword:
+        isDefault = true;
+        break;
+    }
+  });
+
+  if (!hasExportKeyword) {
+    return;
+  }
+
+  /*
+    For `export default function foo()`, `foo` is a local binding, not a
+    named export. Only push the identifier for non-default exports.
+  */
+  if (isDefault) {
+    exports.push({ type: 'NamedExport', path: srcPath, name: 'default' });
+  } else {
+    invariant(
+      identifier,
+      `Exported declaration in ${srcPath} has no identifier`,
+    );
+    exports.push({
+      type: 'NamedExport',
+      path: srcPath,
+      name: identifier.getText(),
+    });
+  }
+}
+
+function collectVariableExports(
+  node: Node,
+  srcPath: string,
+  exports: NamedExport[],
+): void {
+  const varStatement = node.asKind(SyntaxKind.VariableStatement);
+  if (!varStatement || !varStatement.hasModifier(SyntaxKind.ExportKeyword)) {
+    return;
+  }
+  for (const decl of varStatement.getDeclarations()) {
+    const name = decl.getName();
+    exports.push({ type: 'NamedExport', path: srcPath, name });
+  }
+}
+
+async function applyFixup(
+  db: Storage,
+  repoRoot: string,
+  paths: string[],
+  fixup: MoveFixup,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   /*
     TODO: Instead of rescanning all files, we can keep track of which files have
     modified between each fixup.
   */
 
-  await indexImportFromFiles(paths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
+  await indexImportFromFiles(paths, db, repoRoot, true, fileSystem, writer);
 
-  const importers = db.getImportersOfExport(fixup.oldExport.path, fixup.oldExport.name);
+  const importers = db.getImportersOfExport(
+    fixup.oldExport.path,
+    fixup.oldExport.name,
+  );
 
   for (const importer of importers) {
-    await updateImportDeclarations(importer, repoRoot, fixup, fileSystem);
+    await updateImportDeclarations(
+      importer,
+      repoRoot,
+      fixup,
+      fileSystem,
+      writer,
+    );
   }
 }
-
 
 interface UnresolvedImportDecls {
   node: ImportDeclaration;
   moduleSpec: string;
 }
 
-function collectUnresolvedImports(sourceFile: import("ts-morph").SourceFile): UnresolvedImportDecls[] {
+function collectUnresolvedImports(
+  sourceFile: SourceFile,
+): UnresolvedImportDecls[] {
   const unresolvedImports: UnresolvedImportDecls[] = [];
   sourceFile.forEachChild((node) => {
     const importDecl = node.asKind(SyntaxKind.ImportDeclaration);
@@ -220,10 +385,11 @@ function collectUnresolvedImports(sourceFile: import("ts-morph").SourceFile): Un
       return;
     }
     const moduleSpecifier = importDecl.getModuleSpecifier();
-    if (!moduleSpecifier) {
-      throw new Error('No module specifier found');
-    }
-    unresolvedImports.push({ node: importDecl, moduleSpec: moduleSpecifier.getLiteralText() });
+    invariant(moduleSpecifier !== undefined, 'No module specifier found');
+    unresolvedImports.push({
+      node: importDecl,
+      moduleSpec: moduleSpecifier.getLiteralText(),
+    });
   });
   return unresolvedImports;
 }
@@ -231,12 +397,13 @@ function collectUnresolvedImports(sourceFile: import("ts-morph").SourceFile): Un
 function moveDefaultExport(
   unres: UnresolvedImportDecls,
   targetDecl: ImportDeclaration,
-  fixup: MoveFixup
+  fixup: MoveFixup,
 ): void {
   const oldDefaultImport = unres.node.getDefaultImport();
-  if (!oldDefaultImport) {
-    throw new Error('No default import found for fixup ' + JSON.stringify(fixup));
-  }
+  invariant(
+    oldDefaultImport,
+    'No default import found for fixup ' + JSON.stringify(fixup),
+  );
   const localDefaultName = oldDefaultImport.getText();
   unres.node.removeDefaultImport();
   targetDecl.setDefaultImport(localDefaultName);
@@ -245,19 +412,21 @@ function moveDefaultExport(
 function moveNamedExport(
   unres: UnresolvedImportDecls,
   targetDecl: ImportDeclaration,
-  fixup: MoveFixup
+  fixup: MoveFixup,
 ): boolean {
   const oldNamedImports = unres.node.getNamedImports();
   const oldNamespaceImport = unres.node.getNamespaceImport();
 
   if (oldNamespaceImport) {
-    throw new Error('Namespace imports not supported');
+    throw new CliError('Namespace imports not supported');
   }
   if (oldNamedImports.length === 0) {
-    throw new Error('No named imports found');
+    return false;
   }
 
-  const oldNamedImport = oldNamedImports.find((ni) => ni.getName() === fixup.oldExport.name);
+  const oldNamedImport = oldNamedImports.find(
+    (ni) => ni.getName() === fixup.oldExport.name,
+  );
   if (!oldNamedImport) {
     return false;
   }
@@ -265,39 +434,56 @@ function moveNamedExport(
   const localName = oldNamedImport.getName();
   oldNamedImport.remove();
   if (localName !== fixup.newExport.name) {
-    throw new Error('Aliases not supported');
+    throw new CliError('Aliases not supported');
   }
   targetDecl.addNamedImport(fixup.newExport.name);
   return true;
 }
 
-async function updateImportDeclarations(importer: string, repoRoot: string, fixup: MoveFixup, fileSystem: FileSystem) {
+async function updateImportDeclarations(
+  importer: string,
+  repoRoot: string,
+  fixup: MoveFixup,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   const importerSourceFile = await loadSourceFile(importer, fileSystem);
   const unresolvedImports = collectUnresolvedImports(importerSourceFile);
 
-  const newImportAliasSpec = await resolveImportSpecAlias(repoRoot, importer, fixup.newExport.path, fileSystem);
-  if (!newImportAliasSpec) {
-    throw new Error('Failed to resolve import alias for module path ' + fixup.newExport.path + ' referenced from ' + importer);
-  }
+  const moduleSpecifier = await resolveNewSpecifier(
+    repoRoot,
+    importer,
+    fixup.newExport.path,
+    fileSystem,
+  );
 
   for (const unres of unresolvedImports) {
-    const resolvedPath = await resolveImportSpec(repoRoot, importer, unres.moduleSpec, fileSystem);
+    let resolvedPath: string | null = null;
+    try {
+      resolvedPath = await resolveImportSpec(
+        repoRoot,
+        importer,
+        unres.moduleSpec,
+        fileSystem,
+      );
+    } catch {
+      // Importer has no tsconfig; alias imports can't be resolved
+      continue;
+    }
     if (!resolvedPath || resolvedPath !== fixup.oldExport.path) {
       continue;
     }
 
     const indexAfter = unres.node.getChildIndex() + 1;
     const targetDecl = importerSourceFile.insertImportDeclaration(indexAfter, {
-      moduleSpecifier: newImportAliasSpec,
+      moduleSpecifier,
     });
 
     if (fixup.oldExport.name === 'default') {
       moveDefaultExport(unres, targetDecl, fixup);
-    } else {
-      const moved = moveNamedExport(unres, targetDecl, fixup);
-      if (!moved) {
-        continue;
-      }
+    } else if (!moveNamedExport(unres, targetDecl, fixup)) {
+      targetDecl.remove();
+      continue;
     }
 
     if (isEmptyImportDecl(unres.node)) {
@@ -307,23 +493,14 @@ async function updateImportDeclarations(importer: string, repoRoot: string, fixu
 
   if (!importerSourceFile.isSaved()) {
     await importerSourceFile.save();
-    console.log('M ' + importerSourceFile.getFilePath());
+    writer('M ' + importerSourceFile.getFilePath() + '\n');
   }
 }
 
-
-function isEmptyImportDecl(imp: ImportDeclaration) {
-  if (imp.getDefaultImport()) {
-    return false;
-  }
-
-  if (imp.getNamedImports().length > 0) {
-    return false;
-  }
-
-  if (imp.getNamespaceImport()) {
-    return false;
-  }
-
-  return true;
+function isEmptyImportDecl(imp: ImportDeclaration): boolean {
+  return (
+    !imp.getDefaultImport() &&
+    imp.getNamedImports().length === 0 &&
+    !imp.getNamespaceImport()
+  );
 }
