@@ -1,8 +1,5 @@
-
-
-import { assert, test } from 'vitest'
-import { ObjStore } from './objstore';
-
+import { assert, test } from 'vitest';
+import { ObjStore, saveObjStoreAsJsonl } from './objstore';
 
 test('objstore', () => {
   const store = new ObjStore({ traceId: null });
@@ -16,17 +13,36 @@ test('objstore', () => {
   assert.equal(store.get('c')?.id, 'c');
   assert.equal(store.get('d')?.id, 'd');
 
-  const g1Ids = store.getGroup('g1').map(obj => obj.id);
+  const g1Ids = store.getGroup('g1').map((obj) => obj.id);
   assert.lengthOf(g1Ids, 2);
   assert.includeMembers(g1Ids, ['b', 'c']);
 
-  const g2Ids = store.getGroup('g2').map(obj => obj.id);
+  const g2Ids = store.getGroup('g2').map((obj) => obj.id);
   assert.lengthOf(g2Ids, 2);
   assert.includeMembers(g2Ids, ['b', 'd']);
 
   store.delete('b');
 
   assert.equal(store.get('b'), undefined);
-  const g1Ids2 = store.getGroup('g1').map(obj => obj.id);
+  const g1Ids2 = store.getGroup('g1').map((obj) => obj.id);
   assert.deepEqual(g1Ids2, ['c']);
+});
+
+test('saveObjStoreAsJsonl invokes onVerbose callback', () => {
+  const store = new ObjStore({ traceId: null });
+
+  const messages: string[] = [];
+  saveObjStoreAsJsonl(
+    '/dev/null',
+    store,
+    function () {},
+    function (msg) {
+      messages.push(msg);
+    },
+  );
+
+  assert.lengthOf(messages, 1);
+  // biome-ignore lint/style/noNonNullAssertion: length assertion guarantees index 0 exists
+  const firstMessage = messages[0]!;
+  assert.ok(firstMessage.includes('Saved'), 'verbose callback not invoked');
 });
