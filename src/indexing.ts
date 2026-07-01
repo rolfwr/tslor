@@ -49,79 +49,6 @@ import { CliError, reThrowAsCliError } from './errors';
 import { invariant } from './invariant';
 
 /**
- * Canonical names of Node.js built-in modules.
- *
- * Used to detect when a module imports from a Node.js built-in.
- * The `node:` prefix form is handled by stripping the prefix before lookup.
- */
-const NODEJS_BUILTINS = new Set([
-  'assert',
-  'async_hooks',
-  'buffer',
-  'child_process',
-  'cluster',
-  'console',
-  'constants',
-  'crypto',
-  'dgram',
-  'diagnostics_channel',
-  'dns',
-  'domain',
-  'events',
-  'fs',
-  'http',
-  'http2',
-  'https',
-  'inspector',
-  'module',
-  'net',
-  'os',
-  'path',
-  'perf_hooks',
-  'process',
-  'punycode',
-  'querystring',
-  'readline',
-  'repl',
-  'stream',
-  'string_decoder',
-  'sys',
-  'timers',
-  'tls',
-  'trace_events',
-  'tty',
-  'url',
-  'util',
-  'v8',
-  'vm',
-  'wasi',
-  'worker_threads',
-  'zlib',
-]);
-
-/**
- * Check if a module specifier refers to a Node.js built-in module.
- *
- * Handles both `fs` and `node:fs` forms.
- */
-function isNodejsBuiltIn(specifier: string): boolean {
-  const name = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
-  return NODEJS_BUILTINS.has(name);
-}
-
-/**
- * Check if any of the import specifiers in a module are Node.js built-ins.
- */
-function hasNodejsBuiltInImport(imports: UnresolvedImports[]): boolean {
-  for (const imp of imports) {
-    if (isNodejsBuiltIn(imp.moduleSpec)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Update the index with all TypeScript files in the repository.
  *
  * This is the main entry point for building a complete index.
@@ -1250,6 +1177,77 @@ export const NODEJS_GLOBALS = new Set([
   'exports',
   '__esModule',
 ]);
+
+/**
+ * Node.js built-in module names that indicate the module requires Node.js runtime.
+ * Covers all stable built-ins through Node.js 22.x.
+ * The `node:` prefix form is handled by stripping the prefix before lookup.
+ */
+const NODEJS_BUILTINS = new Set([
+  'assert',
+  'async_hooks',
+  'buffer',
+  'child_process',
+  'cluster',
+  'console',
+  'constants',
+  'crypto',
+  'dgram',
+  'diagnostics_channel',
+  'dns',
+  'domain',
+  'events',
+  'fs',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'os',
+  'path',
+  'perf_hooks',
+  'process',
+  'punycode',
+  'querystring',
+  'readline',
+  'repl',
+  'stream',
+  'string_decoder',
+  'sys',
+  'timers',
+  'tls',
+  'trace_events',
+  'tty',
+  'url',
+  'util',
+  'v8',
+  'vm',
+  'wasi',
+  'worker_threads',
+  'zlib',
+]);
+
+/**
+ * Check if an import specifier refers to a Node.js built-in module.
+ * Handles both bare form (`'fs'`) and prefixed form (`'node:fs'`).
+ */
+function isNodejsBuiltIn(specifier: string): boolean {
+  const name = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
+  return NODEJS_BUILTINS.has(name);
+}
+
+/**
+ * Check if any of the import specifiers in a module are Node.js built-ins.
+ */
+function hasNodejsBuiltInImport(imports: UnresolvedImports[]): boolean {
+  for (const imp of imports) {
+    if (isNodejsBuiltIn(imp.moduleSpec)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Checks if a Node.js global identifier is used in a type-only context.
