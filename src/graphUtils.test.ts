@@ -110,7 +110,10 @@ describe('findSCCs', () => {
   });
 
   test('linear chain A→B→C: each node is its own SCC', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'C']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'C'],
+    ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 3);
     const normalized = normalizeSCCs(sccs);
@@ -118,21 +121,33 @@ describe('findSCCs', () => {
   });
 
   test('mutual cycle A↔B: A and B share one SCC', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'A']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'A'],
+    ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 1);
     assert.deepEqual(sccs[0], ['A', 'B']);
   });
 
   test('three-node cycle A→B→C→A: all share one SCC', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'C'], ['C', 'A']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'C'],
+      ['C', 'A'],
+    ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 1);
     assert.deepEqual(sccs[0], ['A', 'B', 'C']);
   });
 
   test('diamond pattern A→B, A→C, B→D, C→D: four singleton SCCs', () => {
-    const graph = buildGraph([['A', 'B'], ['A', 'C'], ['B', 'D'], ['C', 'D']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['A', 'C'],
+      ['B', 'D'],
+      ['C', 'D'],
+    ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 4);
     const normalized = normalizeSCCs(sccs);
@@ -140,7 +155,10 @@ describe('findSCCs', () => {
   });
 
   test('disconnected components: A→B and C→D form separate SCCs', () => {
-    const graph = buildGraph([['A', 'B'], ['C', 'D']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['C', 'D'],
+    ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 4);
     const normalized = normalizeSCCs(sccs);
@@ -149,20 +167,26 @@ describe('findSCCs', () => {
 
   test('disconnected components with cycle: (A↔B) and (C↔D)', () => {
     const graph = buildGraph([
-      ['A', 'B'], ['B', 'A'],
-      ['C', 'D'], ['D', 'C'],
+      ['A', 'B'],
+      ['B', 'A'],
+      ['C', 'D'],
+      ['D', 'C'],
     ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 2);
     const normalized = normalizeSCCs(sccs);
-    assert.deepEqual(normalized, [['A', 'B'], ['C', 'D']]);
+    assert.deepEqual(normalized, [
+      ['A', 'B'],
+      ['C', 'D'],
+    ]);
   });
 
   test('mixed: cycle (A↔B) feeds into linear chain C→D', () => {
     const graph = buildGraph([
-      ['A', 'B'], ['B', 'A'], // A↔B cycle
-      ['A', 'C'],             // cycle feeds into C
-      ['C', 'D'],             // C→D
+      ['A', 'B'],
+      ['B', 'A'], // A↔B cycle
+      ['A', 'C'], // cycle feeds into C
+      ['C', 'D'], // C→D
     ]);
     const sccs = findSCCs(graph);
     assert.lengthOf(sccs, 3);
@@ -182,7 +206,10 @@ describe('findSCCs', () => {
 
 describe('condenseToDAG', () => {
   test('linear chain A→B→C: DAG mirrors original', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'C']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'C'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
 

@@ -416,7 +416,10 @@ export function computeLeafDistanceMatrix(
   const matrix = new Map<number, Map<number, number | null>>();
 
   for (const leafSccIndex of leaves) {
-    const allDistancesFromLeaf = shortestPathDistances(undirected, leafSccIndex);
+    const allDistancesFromLeaf = shortestPathDistances(
+      undirected,
+      leafSccIndex,
+    );
     const row = new Map<number, number | null>();
 
     for (const targetLeafSccIndex of leaves) {
@@ -443,7 +446,9 @@ function distanceWeight(distance: number | null | undefined): number {
   return distance ?? 0;
 }
 
-function clusterMembershipMaskFromAssignment(assignment: readonly boolean[]): string {
+function clusterMembershipMaskFromAssignment(
+  assignment: readonly boolean[],
+): string {
   return assignment.map((isInA) => (isInA ? '1' : '0')).join('');
 }
 
@@ -501,7 +506,7 @@ function selectBetterAssignment(
   candidate: readonly boolean[],
   candidateScore: number,
   best: readonly boolean[] | null,
-  bestScore: number
+  bestScore: number,
 ): readonly boolean[] | null {
   if (candidateScore > bestScore || best === null) {
     return [...candidate];
@@ -518,7 +523,7 @@ function selectBetterAssignment(
 
 function exactLeafPartitionAssignment(
   leaves: readonly number[],
-  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>
+  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>,
 ): { assignment: boolean[]; score: number } {
   const totalMasks = 1 << (leaves.length - 1);
   let bestAssignment: readonly boolean[] | null = null;
@@ -531,16 +536,22 @@ function exactLeafPartitionAssignment(
     }
 
     const score = clusterScore(leaves, matrix, assignment);
-    const selected = selectBetterAssignment(assignment, score, bestAssignment, bestScore);
+    const selected = selectBetterAssignment(
+      assignment,
+      score,
+      bestAssignment,
+      bestScore,
+    );
     if (selected !== bestAssignment) {
       bestAssignment = selected;
       bestScore = score;
     }
   }
 
-  if (bestAssignment === null) {
-    throw new Error('Unable to derive a non-trivial leaf SCC partition');
-  }
+  invariant(
+    bestAssignment !== null,
+    'Unable to derive a non-trivial leaf SCC partition',
+  );
 
   return {
     assignment: [...bestAssignment],
@@ -550,31 +561,24 @@ function exactLeafPartitionAssignment(
 
 function findFarthestLeafIndex(
   leaves: readonly number[],
-  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>
+  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>,
 ): number {
-  const firstLeaf = leaves[0];
-  if (firstLeaf === undefined) {
-    throw new Error('Expected at least one leaf SCC while seeding heuristic partition');
-  }
-
-  const firstLeafRow = getOrThrow(matrix, firstLeaf, `distance row for leaf SCC ${String(firstLeaf)}`);
+  const firstLeaf = leaves.at(0);
+  invariant(firstLeaf !== undefined, 'Expected at least one leaf SCC');
+  const firstLeafRow = matrix.get(firstLeaf);
+  invariant(
+    firstLeafRow !== undefined,
+    `distance row for leaf SCC ${String(firstLeaf)}`,
+  );
   let farthestLeafIndex = 1;
   let farthestLeafDistance = -1;
 
-  for (let i = 1; i < leaves.length; i++) {
-    const candidateLeaf = leaves[i];
-    invariant(
-      candidateLeaf !== undefined,
-      'Expected candidate leaf SCC while selecting heuristic seed',
-    );
+  for (const [i, candidateLeaf] of leaves.entries()) {
+    if (i === 0) {
+      continue;
+    }
 
-    const candidateDistance = distanceWeight(
-      getOrThrow(
-        firstLeafRow,
-        candidateLeaf,
-        `distance between leaf SCC ${String(firstLeaf)} and ${String(candidateLeaf)}`,
-      )
-    );
+    const candidateDistance = distanceWeight(firstLeafRow.get(candidateLeaf));
 
     if (candidateDistance > farthestLeafDistance) {
       farthestLeafDistance = candidateDistance;
@@ -587,7 +591,7 @@ function findFarthestLeafIndex(
 
 function greedyLeafPartitionAssignment(
   leaves: readonly number[],
-  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>
+  matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>,
 ): { assignment: boolean[]; score: number } {
   const assignment = Array.from<boolean>({ length: leaves.length }).fill(false);
   assignment[0] = true;
@@ -615,7 +619,7 @@ function greedyLeafPartitionAssignment(
 
 function clustersFromAssignment(
   leaves: readonly number[],
-  assignment: readonly boolean[]
+  assignment: readonly boolean[],
 ): { clusterA: number[]; clusterB: number[] } {
   const clusterA: number[] = [];
   const clusterB: number[] = [];
