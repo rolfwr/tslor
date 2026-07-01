@@ -523,6 +523,70 @@ function resolveReExports(
   });
 }
 
+function collectImportSpecs(staticModuleInfo: StaticModuleInfo): Set<string> {
+  const importSpecs = new Set<string>();
+  for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+    importSpecs.add(unresolved.moduleSpec);
+  }
+  /*
+    Also resolve re-export module specifiers so the inspect output
+    shows absolute paths, not raw specifiers.
+  */
+  for (const reExport of staticModuleInfo.reExports) {
+    importSpecs.add(reExport.moduleSpec);
+  }
+  return importSpecs;
+}
+
+async function resolveSpecs(
+  specs: Set<string>,
+  resolve: (spec: string) => Promise<string | null>,
+): Promise<Map<string, string>> {
+  const resolvedPathsBySpec = new Map<string, string>();
+  for (const spec of specs) {
+    const resolvedPath = await resolve(spec);
+    if (resolvedPath) {
+      resolvedPathsBySpec.set(spec, resolvedPath);
+    }
+  }
+  return resolvedPathsBySpec;
+}
+
+async function resolveImportSpecs(
+  staticModuleInfo: StaticModuleInfo,
+  repoRoot: string,
+  tsFilePath: string,
+  fileSystem: FileSystem,
+): Promise<Map<string, string>> {
+  const importSpecs = collectImportSpecs(staticModuleInfo);
+  return resolveSpecs(importSpecs, (spec) =>
+    resolveImportSpec(repoRoot, tsFilePath, spec, fileSystem),
+  );
+}
+
+function populateModuleInfoImports(
+  moduleInfo: ModuleInfo,
+  staticModuleInfo: StaticModuleInfo,
+  resolvedPathsBySpec: Map<string, string>,
+): void {
+  for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
+    const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
+    if (resolvedPath) {
+      moduleInfo.importOfNamedExports.push({
+        type: 'NamedExport',
+        path: resolvedPath,
+        name: unresolved.name,
+      });
+    } else {
+      moduleInfo.importOfUnresolvedSpec.push({
+        type: 'ExternalImport',
+        moduleSpecifier: unresolved.moduleSpec,
+        name: unresolved.name,
+      });
+    }
+  }
+}
+
 export async function inspectModule(
   repoRoot: string,
   tsFilePath: string,
@@ -541,32 +605,12 @@ export async function inspectModule(
 
     const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
 
-    const importSpecs = new Set<string>();
-
-    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-      importSpecs.add(unresolved.moduleSpec);
-    }
-
-    /*
-      Also resolve re-export module specifiers so the inspect output
-      shows absolute paths, not raw specifiers.
-    */
-    for (const reExport of staticModuleInfo.reExports) {
-      importSpecs.add(reExport.moduleSpec);
-    }
-
-    const resolvedPathsBySpec = new Map<string, string>();
-    for (const spec of importSpecs) {
-      const resolvedPath = await resolveImportSpec(
-        repoRoot,
-        tsFilePath,
-        spec,
-        fileSystem,
-      );
-      if (resolvedPath) {
-        resolvedPathsBySpec.set(spec, resolvedPath);
-      }
-    }
+    const resolvedPathsBySpec = await resolveImportSpecs(
+      staticModuleInfo,
+      repoRoot,
+      tsFilePath,
+      fileSystem,
+    );
 
     const moduleInfo: ModuleInfo = {
       path: tsFilePath,
@@ -585,22 +629,11 @@ export async function inspectModule(
       },
     };
 
-    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-      const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
-      if (resolvedPath) {
-        moduleInfo.importOfNamedExports.push({
-          type: 'NamedExport',
-          path: resolvedPath,
-          name: unresolved.name,
-        });
-      } else {
-        moduleInfo.importOfUnresolvedSpec.push({
-          type: 'ExternalImport',
-          moduleSpecifier: unresolved.moduleSpec,
-          name: unresolved.name,
-        });
-      }
-    }
+    populateModuleInfoImports(
+      moduleInfo,
+      staticModuleInfo,
+      resolvedPathsBySpec,
+    );
 
     return moduleInfo;
   } catch (error) {
