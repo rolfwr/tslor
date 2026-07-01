@@ -32,6 +32,7 @@ import { dirname, resolve } from 'path';
 import { DebugOptions } from './objstore';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
+const isInteractive = process.stdout.isTTY && !process.env.CI;
 
 /**
  * Extract global options from a subcommand's parent (the program).
@@ -80,11 +81,18 @@ program
 
 program
   .command('imports <path>')
-  .description('List modules importing the given module')
+  .description('List modules that directly import the given module')
   .action(async (path: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runImports(path, debugOptions, fileSystem);
+    await runImports(
+      path,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+      isInteractive,
+    );
   });
 
 program
