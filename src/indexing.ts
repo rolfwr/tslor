@@ -688,19 +688,30 @@ export function createModuleInspector(
     return result;
   }
 
-  async function loadSourceFileCached(
-    tsFilePath: string,
-  ): Promise<SourceFile> {
-    const sourceFile = project.getSourceFile(tsFilePath);
-    if (sourceFile) {
-      return sourceFile;
+  async function loadSourceFileCached(srcPath: string): Promise<SourceFile> {
+    try {
+      const stat = await fileSystem.stat(srcPath);
+      if (!stat.isFile()) {
+        throw new CliError('Not a file: ' + srcPath);
+      }
+    } catch (err) {
+      if (isEnoentError(err)) {
+        throw new CliError('Not found: ' + srcPath);
+      }
+      throw err;
     }
-    project.addSourceFileAtPath(tsFilePath);
-    const loaded = project.getSourceFile(tsFilePath);
-    if (!loaded) {
+    /*
+      Try existing source file first, then add to the shared project.
+    */
+    let sourceFile = project.getSourceFile(srcPath);
+    if (!sourceFile) {
+      project.addSourceFileAtPath(srcPath);
+      sourceFile = project.getSourceFile(srcPath);
+    }
+    if (!sourceFile) {
       throw new CliError('Source file not found');
     }
-    return loaded;
+    return sourceFile;
   }
 
   return async (
@@ -719,11 +730,29 @@ export function createModuleInspector(
       const sourceFile = await loadSourceFileCached(tsFilePath);
       const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
 
-      const resolvedPathsBySpec = await resolveImportSpecs(
-        staticModuleInfo,
-        repoRoot,
-        tsFilePath,
-        fileSystem,
+      const importSpecs = collectImportSpecs(staticModuleInfo);
+      const resolvedPathsBySpec = await resolveSpecs(
+        importSpecs,
+        async (spec) => {
+          const compilerOptions =
+            await cachedGetCompilerOptions(importerTsConfig);
+          if (spec.startsWith('.')) {
+            const resolvedPath = await resolveSourceFile(
+              spec,
+              dirname(tsFilePath),
+              fileSystem,
+            );
+            if (resolvedPath !== null) {
+              return resolvedPath;
+            }
+          }
+          return importSpecAliasToModulePath(
+            compilerOptions,
+            dirname(importerTsConfig),
+            spec,
+            fileSystem,
+          );
+        },
       );
 
       const moduleInfo: ModuleInfo = {
