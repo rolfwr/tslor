@@ -18,7 +18,7 @@ export async function runImportChain(fromPath: string, toPath: string, debugOpti
     }
 
     const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-    await updateStorage(repoRoot, db, true, fileSystem);
+    await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
     db.save();
 
     let node: NodeInfo | null = getImportChainDown(db, new Map(), resolvedFromPath, resolvedToPath);

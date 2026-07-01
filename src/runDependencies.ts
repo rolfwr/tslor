@@ -94,7 +94,7 @@ export async function runDependencies(
   */
   const db = options.storage ?? openStorage(debugOptions, { verbose: true, inMemory: false });
   if (!options.storage) {
-    await updateStorage(repoRoot, db, true, fileSystem);
+    await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
   }
 
   try {

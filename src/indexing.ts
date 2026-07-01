@@ -27,12 +27,28 @@ import { on } from 'node:events';
 
 /**
  * Update the index with all TypeScript files in the repository.
- * 
+ *
  * This is the main entry point for building a complete index.
+ *
+ * @param verbose - When true, progress messages are written via the writer callback
+ * @param scopeDir - Directory to scope indexing to; defaults to repoRoot
  */
-export async function updateStorage(repoRoot: string, db: Storage, verbose: boolean, fileSystem: FileSystem, scopeDir?: string) {
-  const paths: string[] = await getTypeScriptFilePaths(scopeDir ?? repoRoot, fileSystem);
-  await indexImportFromFiles(paths, db, repoRoot, verbose, fileSystem);
+export async function updateStorage(
+  repoRoot: string,
+  db: Storage,
+  verbose: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  scopeDir?: string,
+) {
+  const paths: string[] = await getTypeScriptFilePaths(
+    scopeDir ?? repoRoot,
+    fileSystem,
+  );
+  if (verbose) {
+    writer('Found ' + paths.length + ' TypeScript files.');
+  }
+  await indexImportFromFiles(paths, db, repoRoot, verbose, fileSystem, writer);
 }
 
 /**
@@ -43,16 +59,46 @@ export async function updateStorage(repoRoot: string, db: Storage, verbose: bool
  *
  * For refactoring operations, this fails fast on any file processing error
  * to ensure atomicity across the entire codebase.
+ *
+ * @param writer - Callback for progress messages
  */
-export async function indexImportFromFiles(paths: string[], db: Storage, repoRoot: string, verbose: boolean, fileSystem: FileSystem) {
+export async function indexImportFromFiles(
+  paths: string[],
+  db: Storage,
+  repoRoot: string,
+  verbose: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   if (fileSystem instanceof InMemoryFileSystem) {
-    await indexImportFromFilesSequential(paths, db, repoRoot, verbose, fileSystem);
+    await indexImportFromFilesSequential(
+      paths,
+      db,
+      repoRoot,
+      verbose,
+      fileSystem,
+      writer,
+    );
   } else {
-    await indexImportFromFilesParallel(paths, db, repoRoot, verbose, fileSystem);
+    await indexImportFromFilesParallel(
+      paths,
+      db,
+      repoRoot,
+      verbose,
+      fileSystem,
+      writer,
+    );
   }
 }
 
-async function indexImportFromFilesSequential(paths: string[], db: Storage, repoRoot: string, verbose: boolean, fileSystem: FileSystem) {
+async function indexImportFromFilesSequential(
+  paths: string[],
+  db: Storage,
+  repoRoot: string,
+  verbose: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+) {
   let lastProgressAt = 0;
   for (let i = 0; i < paths.length; ++i) {
     const path = paths.at(i);
@@ -63,14 +109,14 @@ async function indexImportFromFilesSequential(paths: string[], db: Storage, repo
       const now = Date.now();
       if (now - lastProgressAt >= 100) {
         lastProgressAt = now;
-        process.stdout.write('\rIndexing ' + (i + 1) + '/' + paths.length + '\x1b[K');
+        writer('\rIndexing ' + (i + 1) + '/' + paths.length + '\x1b[K');
       }
     }
     await refreshImportsFromFile(db, path, repoRoot, fileSystem);
   }
   if (verbose) {
-    process.stdout.write('\rIndexing ' + paths.length + '/' + paths.length + '\x1b[K');
-    console.log();
+    writer('\rIndexing ' + paths.length + '/' + paths.length + '\x1b[K');
+    writer('\n');
   }
 }
 
@@ -210,6 +256,7 @@ async function indexImportFromFilesParallel(
   repoRoot: string,
   verbose: boolean,
   fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<void> {
   let checkedCount = 0;
   let changedCount = 0;
@@ -217,7 +264,8 @@ async function indexImportFromFilesParallel(
   let statDone = false;
   const abort = { value: false };
 
-  const { writer, reader } = createAsyncQueue<{ path: string; mtimeMs: number }>();
+  const { writer: queueWriter, reader } =
+    createAsyncQueue<{ path: string; mtimeMs: number }>();
 
   let lastProgressAt = 0;
   function printProgress(force: boolean): void {
@@ -230,11 +278,21 @@ async function indexImportFromFilesParallel(
     }
     lastProgressAt = now;
     if (!statDone) {
-      process.stdout.write(`\rChecking ${checkedCount}/${paths.length} | Indexing ${processedCount}\x1b[K`);
+      writer(
+        '\rChecking ' +
+          checkedCount +
+          '/' +
+          paths.length +
+          ' | Indexing ' +
+          processedCount +
+          '\x1b[K',
+      );
     } else if (changedCount > 0) {
-      process.stdout.write(`\rIndexing ${processedCount}/${changedCount}\x1b[K`);
+      writer(
+        '\rIndexing ' + processedCount + '/' + changedCount + '\x1b[K',
+      );
     } else {
-      process.stdout.write(`\rChecked ${paths.length} files (no changes)\x1b[K`);
+      writer('\rChecked ' + paths.length + ' files (no changes)\x1b[K');
     }
   }
 
@@ -251,12 +309,12 @@ async function indexImportFromFilesParallel(
       checkedCount++;
       if (db.getFileTimestamp(path) !== mtimeMs) {
         changedCount++;
-        writer.push({ path, mtimeMs });
+        queueWriter.push({ path, mtimeMs });
       }
       printProgress(false);
     }
     statDone = true;
-    writer.close();
+    queueWriter.close();
   })();
 
   const workerFile = await workerFilePromise;
@@ -326,7 +384,7 @@ async function indexImportFromFilesParallel(
       }
       wrapper.terminate();
       abort.value = true;
-      writer.close();
+      queueWriter.close();
     }
   }
 
@@ -335,7 +393,7 @@ async function indexImportFromFilesParallel(
 
   printProgress(true);
   if (verbose) {
-    console.log();
+    writer('\n');
   }
 
   if (firstError.value) {

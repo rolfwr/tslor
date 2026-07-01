@@ -9,7 +9,7 @@ export async function runImports(exportPathArg: string, debugOptions: DebugOptio
   const exportPath = normalizeAndValidatePath(exportPathArg, "Export path", false);
   let repoRoot = findGitRepoRoot(exportPath);
   const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
   db.save();
   const importers = db.getImportersOfExportPath(exportPath);
   const sortedImporters = Array.from(importers).sort();

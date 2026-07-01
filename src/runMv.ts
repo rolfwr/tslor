@@ -197,7 +197,7 @@ async function applyFixup(db: Storage, repoRoot: string, paths: string[], fixup:
     modified between each fixup.
   */
 
-  await indexImportFromFiles(paths, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(paths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
 
   const importers = db.getImportersOfExport(fixup.oldExport.path, fixup.oldExport.name);
 

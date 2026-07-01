@@ -30,7 +30,7 @@ export async function runSymbolUsage(
   const absoluteProjectPath = normalizePath(projectPath);
   const repoRoot = findGitRepoRoot(absoluteProjectPath);
   const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
 
   console.log('⚠️  WARNING: This command uses loose symbol name matching and may return');
   console.log('   unrelated symbols with the same name from different modules.');

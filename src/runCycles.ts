@@ -60,7 +60,7 @@ export async function runCycles(
   const absoluteDirectory = normalizePath(directory);
   const repoRoot = findGitRepoRoot(absoluteDirectory);
   const db = openStorage(debugOptions, { verbose: false, inMemory: false }); // Silent for clean cycle output
-  await updateStorage(repoRoot, db, false, fileSystem);
+  await updateStorage(repoRoot, db, false, fileSystem, (msg) => console.log(msg));
 
   if (options.directories) {
     await findDirectoryCycles(db, absoluteDirectory, options, fileSystem);

@@ -34,7 +34,7 @@ export async function runProposeImportDirectly(directoryArg: string, debugOption
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
   db.save();
 
   // Find all re-exports in the codebase

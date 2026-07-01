@@ -140,7 +140,7 @@ export async function runNormalizeNamespaceImports(
   const allPaths = await repoProvider.getTypeScriptFilePaths(repoRoot, fileSystem);
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(allPaths, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(allPaths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
   db.save();
 
   const namespaceImportObjs = db.getSymbolImports('*');

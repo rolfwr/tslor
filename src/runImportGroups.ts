@@ -60,7 +60,7 @@ export async function runImportGroups(
   const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, { verbose: false, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
 
   try {
     const filePaths = Array.from(moduleSet);

@@ -19,7 +19,7 @@ export async function runTypeLeafUsage(
   const directory = normalizeAndValidatePath(directoryArg, "Directory", false);
   const repoRoot = findGitRepoRoot(directory);
   const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
   db.save();
 
   const { importers, definers } = findFilesUsingTypes(db, typeNames, directory);

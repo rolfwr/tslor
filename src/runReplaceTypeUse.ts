@@ -40,7 +40,7 @@ export async function runReplaceTypeUse(
   const filteredPaths = allPaths.filter((path: string) => path.startsWith(directory));
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(filteredPaths, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
   db.save();
 
   const importingFiles = findFilesImportingType(db, options.sourceType, options.sourceModule, directory);

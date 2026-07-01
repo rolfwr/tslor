@@ -427,7 +427,7 @@ export async function runHot(paths: string[], options: Options, debugOptions: De
   const repoRoot = findGitRepoRoot(entryPath);
 
   const db = openStorage(debugOptions, { verbose: false, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem);
+  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
 
   try {
     const filePaths = Array.from(moduleSet);

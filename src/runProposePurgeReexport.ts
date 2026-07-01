@@ -54,7 +54,7 @@ export async function runProposePurgeReexport(directoryArg: string, debugOptions
   const { pathsToIndex } = computeIndexingPaths(allPaths, directory);
 
   const { indexImportFromFiles } = await import('./indexing');
-  await indexImportFromFiles(pathsToIndex, db, repoRoot, true, fileSystem);
+  await indexImportFromFiles(pathsToIndex, db, repoRoot, true, fileSystem, (msg) => console.log(msg));
   db.save();
 
   // Find all re-exports in the codebase
