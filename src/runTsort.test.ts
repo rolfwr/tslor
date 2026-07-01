@@ -5,13 +5,22 @@ import { assert, test, describe } from 'vitest';
 
 describe('tsort', () => {
   // Helper to create a storage with import relationships
-  function createStorageWithImports(imports: Array<{ from: string; to: string }>) {
+  function createStorageWithImports(
+    imports: Array<{ from: string; to: string }>,
+  ) {
     const objStore = new ObjStore({ traceId: null });
-    const storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
+    const storage = new Storage(objStore, {
+      jsonlPath: '/dev/null',
+      verbose: false,
+      inMemory: true,
+    });
 
     let index = 0;
     for (const { from, to } of imports) {
-      storage.putImport(from, '/tsconfig.json', index++, 'symbol', { path: to, tsconfig: '/tsconfig.json' });
+      storage.putImport(from, '/tsconfig.json', index++, 'symbol', {
+        path: to,
+        tsconfig: '/tsconfig.json',
+      });
     }
 
     return storage;
@@ -35,20 +44,26 @@ describe('tsort', () => {
     storage: Storage,
     moduleSet: Set<string>,
     graph: Map<string, Set<string>>,
-    reverseGraph: Map<string, Set<string>>
+    reverseGraph: Map<string, Set<string>>,
   ): void {
     const exporters = storage.getExporterPathsOfImport(modulePath);
     for (const exporter of exporters) {
       if (!moduleSet.has(exporter.path)) {
         continue;
       }
-      getOrThrow(graph, exporter.path, 'exporter.path not in graph').add(modulePath);
-      getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporter.path);
+      getOrThrow(graph, exporter.path, 'exporter.path not in graph').add(
+        modulePath,
+      );
+      getOrThrow(
+        reverseGraph,
+        modulePath,
+        'modulePath not in reverseGraph',
+      ).add(exporter.path);
     }
   }
 
   function insertSorted(queue: string[], item: string): void {
-    const insertIndex = queue.findIndex(q => q > item);
+    const insertIndex = queue.findIndex((q) => q > item);
     if (insertIndex === -1) {
       queue.push(item);
     } else {
@@ -60,7 +75,7 @@ describe('tsort', () => {
     queue: string[],
     graph: Map<string, Set<string>>,
     inDegree: Map<string, number>,
-    result: string[]
+    result: string[],
   ): void {
     while (queue.length > 0) {
       const current = queue.shift();
@@ -76,9 +91,13 @@ describe('tsort', () => {
     current: string,
     graph: Map<string, Set<string>>,
     inDegree: Map<string, number>,
-    queue: string[]
+    queue: string[],
   ): void {
-    for (const dependent of getOrThrow(graph, current, 'current not in graph')) {
+    for (const dependent of getOrThrow(
+      graph,
+      current,
+      'current not in graph',
+    )) {
       const dependentInDegree = inDegree.get(dependent);
       if (dependentInDegree === undefined) {
         continue;
@@ -94,11 +113,15 @@ describe('tsort', () => {
   function kahnSort(
     moduleSet: Set<string>,
     graph: Map<string, Set<string>>,
-    reverseGraph: Map<string, Set<string>>
+    reverseGraph: Map<string, Set<string>>,
   ): string[] | null {
     const inDegree = new Map<string, number>();
     for (const modulePath of moduleSet) {
-      inDegree.set(modulePath, getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
+      inDegree.set(
+        modulePath,
+        getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph')
+          .size,
+      );
     }
     const queue: string[] = [];
     for (const modulePath of moduleSet) {
@@ -219,9 +242,7 @@ describe('tsort', () => {
 
   test('self-import is treated as cycle', () => {
     // A imports itself
-    const storage = createStorageWithImports([
-      { from: '/a.ts', to: '/a.ts' },
-    ]);
+    const storage = createStorageWithImports([{ from: '/a.ts', to: '/a.ts' }]);
 
     const result = performTsort(storage, ['/a.ts']);
 
