@@ -12,7 +12,8 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { parseModule } from './indexing';
+import { InMemoryFileSystem } from './filesystem';
+import { inspectModule, parseModule } from './indexing';
 import { createTestSourceFile } from './testUtils';
 
 describe('parseModule tracks bare export { x } re-exports', () => {
@@ -103,6 +104,98 @@ import { v4 as createUuid, validate as validateUuid } from 'uuid';
 export { createUuid, validateUuid };
 `);
     const info = parseModule(sourceFile);
+
+    expect(info.reExports).toHaveLength(2);
+    expect(info.reExports).toContainEqual(
+      expect.objectContaining({
+        name: 'createUuid',
+        moduleSpec: 'uuid',
+        isTypeOnly: false,
+      }),
+    );
+    expect(info.reExports).toContainEqual(
+      expect.objectContaining({
+        name: 'validateUuid',
+        moduleSpec: 'uuid',
+        isTypeOnly: false,
+      }),
+    );
+  });
+});
+
+describe('inspectModule resolves bare re-export paths', () => {
+  test('bare re-export resolved to absolute path', async () => {
+    const files = new Map<string, string>([
+      ['/repo/tsconfig.json', JSON.stringify({ compilerOptions: {} })],
+      ['/repo/src/foo.ts', 'export const foo = 1;\n'],
+      ['/repo/src/index.ts', "import { foo } from './foo';\nexport { foo };\n"],
+    ]);
+    const fileSystem = new InMemoryFileSystem(files);
+
+    const moduleInfo = await inspectModule(
+      '/repo',
+      '/repo/src/index.ts',
+      fileSystem,
+    );
+    expect(moduleInfo).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: not.toBeNull() guard ensures non-null at runtime
+    const info = moduleInfo!;
+
+    expect(info.reExports).toHaveLength(1);
+    expect(info.reExports[0]).toMatchObject({
+      name: 'foo',
+      moduleSpec: './foo',
+      resolvedPath: '/repo/src/foo.ts',
+      isTypeOnly: false,
+    });
+  });
+
+  test('bare re-export of external package has no resolvedPath', async () => {
+    const files = new Map<string, string>([
+      ['/repo/tsconfig.json', JSON.stringify({ compilerOptions: {} })],
+      [
+        '/repo/src/index.ts',
+        "import { createUuid } from 'uuid';\nexport { createUuid };\n",
+      ],
+    ]);
+    const fileSystem = new InMemoryFileSystem(files);
+
+    const moduleInfo = await inspectModule(
+      '/repo',
+      '/repo/src/index.ts',
+      fileSystem,
+    );
+    expect(moduleInfo).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: not.toBeNull() guard ensures non-null at runtime
+    const info = moduleInfo!;
+
+    expect(info.reExports).toHaveLength(1);
+    expect(info.reExports[0]).toMatchObject({
+      name: 'createUuid',
+      moduleSpec: 'uuid',
+      isTypeOnly: false,
+    });
+    expect(info.reExports[0]).not.toHaveProperty('resolvedPath');
+  });
+
+  test('mimir pattern: aliased import re-exported — resolved paths', async () => {
+    const files = new Map<string, string>([
+      ['/repo/tsconfig.json', JSON.stringify({ compilerOptions: {} })],
+      [
+        '/repo/src/createUuid.ts',
+        "import { v4 as createUuid, validate as validateUuid } from 'uuid';\nexport { createUuid, validateUuid };\n",
+      ],
+    ]);
+    const fileSystem = new InMemoryFileSystem(files);
+
+    const moduleInfo = await inspectModule(
+      '/repo',
+      '/repo/src/createUuid.ts',
+      fileSystem,
+    );
+    expect(moduleInfo).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: not.toBeNull() guard ensures non-null at runtime
+    const info = moduleInfo!;
 
     expect(info.reExports).toHaveLength(2);
     expect(info.reExports).toContainEqual(
