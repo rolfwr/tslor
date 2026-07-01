@@ -9,7 +9,7 @@ import { promises as fsp } from 'fs';
 import { createHash } from 'crypto';
 import { existsSync } from 'fs';
 import * as Diff from 'diff';
-import { relative } from 'path';
+import { dirname, join, relative } from 'path';
 
 export const PLAN_FILE_NAME = '.tslor-plan.json';
 export const PLAN_VERSION = '1.0.0';
@@ -309,10 +309,11 @@ export async function executeUndo(plan: TslorPlan): Promise<void> {
  */
 export async function archivePlan(planFile: string): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '_');
-  const appliedFile = `.applied-${timestamp}.json`;
-  
-  await fsp.rename(planFile, appliedFile);
-  
+  const appliedFile = join(dirname(planFile), `.applied-${timestamp}.json`);
+
+  await fsp.copyFile(planFile, appliedFile);
+  await fsp.unlink(planFile);
+
   return appliedFile;
 }
 
