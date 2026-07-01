@@ -431,13 +431,18 @@ program
   .description('Group modules by shared import dependencies and rank by impact')
   .option('-p, --project-scope', 'Only consider imports within the same project')
   .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runImportGroups(
       paths,
-      { projectScope: opts.projectScope === true },
-      debugOptions,
-      fileSystem
+      {
+        projectScope: opts.projectScope === true,
+        fresh,
+        writer: writeStderr,
+        cwd: currentCwd,
+      },
+      { traceId },
+      fileSystem,
     );
   });
 

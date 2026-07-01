@@ -1,11 +1,11 @@
-import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
-import { openStorage, Storage } from "./storage";
-import { updateStorage } from "./indexing";
-import { DebugOptions } from "./objstore";
-import { denormalizePath } from "./pathUtils";
-import { resolveCommandScope } from "./commandScope";
-import { FileSystem } from "./filesystem";
-import { assertDefined } from "./invariant";
+import { findGitRepoRoot, getTsconfigPathForFile } from './project';
+import { openStorage, ExporterPath, Storage } from './storage';
+import { updateStorage } from './indexing';
+import { DebugOptions } from './objstore';
+import { denormalizePath } from './pathUtils';
+import { resolveCommandScope } from './commandScope';
+import { FileSystem } from './filesystem';
+import { assertDefined } from './invariant';
 
 /**
  * A group of modules sharing the same normalized import set.
@@ -15,8 +15,6 @@ interface ImportGroup {
   imports: string[];
   /** Module paths belonging to this group */
   members: string[];
-  /** Score: members.length * imports.length */
-  score: number;
 }
 
 /**
@@ -25,6 +23,15 @@ interface ImportGroup {
 export interface ImportGroupsOptions {
   /** Only consider imports within the same tsconfig project (default: false) */
   projectScope?: boolean;
+  /** When true, delete the existing index database before opening storage */
+  fresh?: boolean;
+  /**
+   * Callback for indexing progress messages. Tests can supply a stub to
+   * suppress or capture output.
+   */
+  writer: (message: string) => void;
+  /** Working directory for path denormalization */
+  cwd: string;
 }
 
 /**
@@ -40,27 +47,31 @@ export async function runImportGroups(
   inputPaths: string[],
   options: ImportGroupsOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<void> {
   if (inputPaths.length === 0) {
-    console.log("No paths provided.");
+    console.log('No paths provided.');
     return;
   }
 
-  const cwd = process.cwd();
   const moduleSet = await resolveCommandScope(inputPaths, fileSystem);
 
   if (moduleSet.size === 0) {
-    console.log("No TypeScript files found in the given paths.");
+    console.log('No TypeScript files found in the given paths.');
     return;
   }
 
   const entryPath = moduleSet.values().next().value;
-  assertDefined(entryPath, "moduleSet is non-empty (guarded above)");
+  assertDefined(entryPath, 'moduleSet is non-empty (guarded above)');
   const repoRoot = findGitRepoRoot(entryPath);
 
-  const db = openStorage(debugOptions, { verbose: false, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: false,
+    fresh: options.fresh ?? false,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(repoRoot, db, true, fileSystem, options.writer);
 
   try {
     const filePaths = Array.from(moduleSet);
@@ -68,11 +79,11 @@ export async function runImportGroups(
       filePaths,
       repoRoot,
       options,
-      fileSystem
+      fileSystem,
     );
 
     const groups = buildImportGroups(db, filePaths, moduleTsconfigMap);
-    renderGroups(groups, cwd);
+    renderGroups(groups, options.cwd);
   } finally {
     db.save();
   }
@@ -86,14 +97,14 @@ async function resolveModuleTsconfigs(
   filePaths: string[],
   repoRoot: string,
   options: ImportGroupsOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<Map<string, string> | null> {
   if (options.projectScope !== true) {
     return null;
   }
 
   const tsconfigs = await Promise.all(
-    filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+    filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem)),
   );
   const entries: [string, string][] = filePaths.flatMap((path, i) => {
     const tsconfig = tsconfigs[i];
@@ -108,13 +119,16 @@ async function resolveModuleTsconfigs(
 /**
  * Build and score import groups from storage data.
  *
- * Exposed for testing without I/O side effects.
+ * Groups modules by their normalized import set. Modules with zero imports
+ * and groups with fewer than 2 members are excluded. Each group is scored
+ * as members.length * imports.length. Results are sorted by descending score
+ * with lexicographic tie-breaking by import key.
  */
 export function buildImportGroups(
   db: Storage,
   filePaths: string[],
-  moduleTsconfigMap: Map<string, string> | null
-): ImportGroup[] {
+  moduleTsconfigMap: Map<string, string> | null,
+): { group: ImportGroup; score: number }[] {
   const groups = collectImportGroups(db, filePaths, moduleTsconfigMap);
   return scoreAndSortGroups(groups);
 }
@@ -123,30 +137,26 @@ export function buildImportGroups(
  * Iterate over modules, compute their normalized import sets, and
  * collect them into groups keyed by the sorted import paths.
  *
- * Modules with zero imports are excluded. Singleton groups are excluded.
+ * Modules with zero imports are excluded.
  */
 function collectImportGroups(
   db: Storage,
   filePaths: string[],
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | null,
 ): Map<string, ImportGroup> {
   const groups = new Map<string, ImportGroup>();
 
   for (const modulePath of filePaths) {
-    const importPaths = getFilteredImports(
-      db,
-      modulePath,
-      moduleTsconfigMap
-    );
+    const importPaths = getFilteredImports(db, modulePath, moduleTsconfigMap);
 
     if (importPaths.length === 0) {
       continue;
     }
 
-    const key = importPaths.join("|");
+    const key = importPaths.join('|');
     let group = groups.get(key);
     if (!group) {
-      group = { imports: importPaths, members: [], score: 0 };
+      group = { imports: importPaths, members: [] };
       groups.set(key, group);
     }
     group.members.push(modulePath);
@@ -162,36 +172,37 @@ function collectImportGroups(
 function getFilteredImports(
   db: Storage,
   modulePath: string,
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | null,
 ): string[] {
   const exporters = db.getExporterPathsOfImport(modulePath);
 
-  const filteredExporters = filterByProjectScope(
-    exporters,
-    modulePath,
-    moduleTsconfigMap
-  );
+  const filteredExporters =
+    moduleTsconfigMap !== null
+      ? filterExportersByProjectScope(exporters, modulePath, moduleTsconfigMap)
+      : exporters;
 
   return [...new Set(filteredExporters.map((e) => e.path))].sort();
 }
 
 /**
- * Filter exporters by project scope. When moduleTsconfigMap is null,
- * all exporters are kept. Otherwise, only exporters whose tsconfig
- * matches the importing module's tsconfig are retained.
+ * Filter exporters by project scope.
+ *
+ * Only exporters whose tsconfig matches the importing module's tsconfig
+ * are retained. Modules without a tsconfig entry are kept with all their
+ * exporters (can't filter when project boundary is unknown).
  */
-function filterByProjectScope(
-  exporters: { path: string; tsconfig: string }[],
+function filterExportersByProjectScope(
+  exporters: ExporterPath[],
   modulePath: string,
-  moduleTsconfigMap: Map<string, string> | null
-): { path: string; tsconfig: string }[] {
-  if (moduleTsconfigMap === null) {
-    return exporters;
-  }
-
+  moduleTsconfigMap: Map<string, string>,
+): ExporterPath[] {
   const moduleTsconfig = moduleTsconfigMap.get(modulePath);
+  /*
+    Module has no tsconfig (not covered by any project). Can't filter,
+    so include all dependencies rather than silently dropping them.
+  */
   if (moduleTsconfig === undefined) {
-    return [];
+    return exporters;
   }
 
   return exporters.filter((exporter) => exporter.tsconfig === moduleTsconfig);
@@ -199,57 +210,61 @@ function filterByProjectScope(
 
 /**
  * Score groups (members * imports), filter out singletons, sort descending
- * by score with lexicographic tie-breaking by hash key.
+ * by score with lexicographic tie-breaking by import key.
  */
 function scoreAndSortGroups(
-  groups: Map<string, ImportGroup>
-): ImportGroup[] {
-  const scored: ImportGroup[] = [];
+  groups: Map<string, ImportGroup>,
+): { group: ImportGroup; score: number }[] {
+  const scored: { key: string; group: ImportGroup; score: number }[] = [];
 
-  for (const group of groups.values()) {
+  for (const [key, group] of groups.entries()) {
     if (group.members.length < 2) {
       continue;
     }
 
     group.members.sort();
-    group.score = group.members.length * group.imports.length;
-    scored.push(group);
+    scored.push({
+      key,
+      group,
+      score: group.members.length * group.imports.length,
+    });
   }
 
-  scored.sort(compareGroups);
-  return scored;
-}
-
-/**
- * Compare two groups: descending by score, ascending lexicographic by key.
- */
-function compareGroups(a: ImportGroup, b: ImportGroup): number {
-  const scoreDiff = b.score - a.score;
-  if (scoreDiff !== 0) {
-    return scoreDiff;
-  }
-  const keyA = a.imports.join("|");
-  const keyB = b.imports.join("|");
-  return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+  scored.sort((a, b) => {
+    const scoreDiff = b.score - a.score;
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  return scored.map(({ group, score }) => ({ group, score }));
 }
 
 /**
  * Render groups as structured text blocks to stdout.
  */
-function renderGroups(groups: ImportGroup[], cwd: string): void {
-  for (const group of groups) {
+function renderGroups(
+  groups: { group: ImportGroup; score: number }[],
+  cwd: string,
+): void {
+  if (groups.length === 0) {
+    console.log('No import groups found.');
+    return;
+  }
+
+  for (const { group, score } of groups) {
     const memberCount = group.members.length;
     const importCount = group.imports.length;
     console.log(
-      `Group (score ${group.score}): ${memberCount} module${memberCount === 1 ? "" : "s"} share ${importCount} import${importCount === 1 ? "" : "s"}`
+      `Group (score ${score}): ${memberCount} module${memberCount === 1 ? '' : 's'} share ${importCount} import${importCount === 1 ? '' : 's'}`,
     );
     console.log(
-      "  imports:",
-      group.imports.map((p) => denormalizePath(p, cwd)).join(", ")
+      '  imports:',
+      group.imports.map((p) => denormalizePath(p, cwd)).join(', '),
     );
-    console.log("  members:");
+    console.log('  members:');
     for (const member of group.members) {
-      console.log("    " + denormalizePath(member, cwd));
+      console.log('    ' + denormalizePath(member, cwd));
     }
   }
 }
