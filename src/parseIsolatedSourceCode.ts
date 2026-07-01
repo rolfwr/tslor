@@ -1,13 +1,13 @@
-import { FileSystemHost, Project } from "ts-morph";
-import { defaultProjectOptions, parseModule } from "./indexing";
-
+import { FileSystemHost, Project } from 'ts-morph';
+import { defaultProjectOptions, parseModule } from './indexing';
 
 export function parseIsolatedSourceCode(sourceCode: string) {
   const projectOptions = defaultProjectOptions();
 
-  const partialFileSystemHost: Partial<FileSystemHost> = new StubFileSystemHost();
+  const partialFileSystemHost: Partial<FileSystemHost> =
+    new StubFileSystemHost();
 
-  projectOptions.fileSystem = makeStub('fileSystem', partialFileSystemHost)
+  projectOptions.fileSystem = makeStub('fileSystem', partialFileSystemHost);
 
   const project = new Project(projectOptions);
 
@@ -43,8 +43,10 @@ export function makeStub<T>(what: string, obj: Partial<T>): T {
 }
 
 class StubProxy implements Required<ProxyHandler<object>> {
-  constructor(private what: string, private inner: unknown) {
-  }
+  constructor(
+    private what: string,
+    private inner: unknown,
+  ) {}
   apply(target: object, thisArg: unknown, argArray: unknown[]) {
     void target;
     void thisArg;
@@ -57,16 +59,24 @@ class StubProxy implements Required<ProxyHandler<object>> {
     void newTarget;
     throw new Error('Construct on ' + this.what + ' stub not implemented');
   }
-  defineProperty(target: object, property: string | symbol, attributes: PropertyDescriptor): boolean {
+  defineProperty(
+    target: object,
+    property: string | symbol,
+    attributes: PropertyDescriptor,
+  ): boolean {
     void target;
     void property;
     void attributes;
-    throw new Error('Define property on ' + this.what + ' stub not implemented');
+    throw new Error(
+      'Define property on ' + this.what + ' stub not implemented',
+    );
   }
   deleteProperty(target: object, p: string | symbol): boolean {
     void target;
     void p;
-    throw new Error('Delete property on ' + this.what + ' stub not implemented');
+    throw new Error(
+      'Delete property on ' + this.what + ' stub not implemented',
+    );
   }
   get(target: object, p: string | symbol, receiver: unknown) {
     void p;
@@ -82,12 +92,19 @@ class StubProxy implements Required<ProxyHandler<object>> {
       return (target as Record<string | symbol, unknown>)[p];
     }
 
-    throw new Error('Stub ' + this.what + ' does not have property ' + p.toString());
+    throw new Error(
+      'Stub ' + this.what + ' does not have property ' + p.toString(),
+    );
   }
-  getOwnPropertyDescriptor(target: {}, p: string | symbol): PropertyDescriptor | undefined {
+  getOwnPropertyDescriptor(
+    target: {},
+    p: string | symbol,
+  ): PropertyDescriptor | undefined {
     void target;
     void p;
-    throw new Error('Get own property descriptor on ' + this.what + ' stub not implemented');
+    throw new Error(
+      'Get own property descriptor on ' + this.what + ' stub not implemented',
+    );
   }
   getPrototypeOf(target: {}): object | null {
     void target;
@@ -108,9 +125,16 @@ class StubProxy implements Required<ProxyHandler<object>> {
   }
   preventExtensions(target: {}): boolean {
     void target;
-    throw new Error('Prevent extensions on ' + this.what + ' stub not implemented');
+    throw new Error(
+      'Prevent extensions on ' + this.what + ' stub not implemented',
+    );
   }
-  set(target: {}, p: string | symbol, newValue: unknown, receiver: unknown): boolean {
+  set(
+    target: {},
+    p: string | symbol,
+    newValue: unknown,
+    receiver: unknown,
+  ): boolean {
     void target;
     void p;
     void newValue;
