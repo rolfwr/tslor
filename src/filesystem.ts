@@ -11,7 +11,6 @@
  * where possible, but we maintain our own interface for the operations we specifically need.
  */
 
-
 /**
  * Directory entry returned by {@link FileSystem.readdir}.
  */
@@ -24,6 +23,9 @@ export interface Dirent {
 export interface FileSystem {
   /**
    * Get file stats (size, modification time, etc.)
+   *
+   * @throws {@link FileSystemError} with code 'ENOENT' if the path does not exist;
+   *         other system errors may also be thrown.
    */
   stat(filePath: string): Promise<{ mtimeMs: number; isFile(): boolean }>;
 
@@ -34,28 +36,65 @@ export interface FileSystem {
 
   /**
    * Read a file's contents
+   *
+   * @throws {@link FileSystemError} with code 'ENOENT' if the file does not exist;
+   *         other system errors may also be thrown.
    */
   readFile(filePath: string, encoding?: string): Promise<string>;
 
   /**
    * Read directory entries.
    *
-   * @throws Error with ENOENT code if the directory does not exist.
+   * @throws {@link FileSystemError} with code 'ENOENT' if the directory does not exist;
+   *         other system errors may also be thrown.
    */
   readdir(dirPath: string): Promise<Dirent[]>;
+}
+
+/**
+ * Error thrown by {@link FileSystem} implementations for system-level
+ * failures. Mirrors the shape of Node.js `ErrnoException` so callers can
+ * check {@code err.code} without type assertions.
+ */
+export class FileSystemError extends Error {
+  public readonly code: string;
+
+  constructor(code: string, message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.code = code;
+  }
+}
+
+/**
+ * Type guard that checks whether an error carries an 'ENOENT' system error
+ * code. Works with both {@link FileSystemError} and Node.js
+ * `ErrnoException` without type assertions.
+ */
+export function isEnoentError(err: unknown): err is { code: 'ENOENT' } {
+  return err instanceof Error && 'code' in err && err.code === 'ENOENT';
 }
 
 /**
  * Real filesystem implementation using Node.js fs/promises
  */
 export class RealFileSystem implements FileSystem {
-  async stat(filePath: string): Promise<{ mtimeMs: number; isFile(): boolean }> {
+  async stat(
+    filePath: string,
+  ): Promise<{ mtimeMs: number; isFile(): boolean }> {
     const { stat } = await import('fs/promises');
-    const stats = await stat(filePath);
-    return {
-      mtimeMs: stats.mtimeMs,
-      isFile: () => stats.isFile()
-    };
+    try {
+      const stats = await stat(filePath);
+      return {
+        mtimeMs: stats.mtimeMs,
+        isFile: () => stats.isFile(),
+      };
+    } catch (err) {
+      if (isEnoentError(err)) {
+        throw new FileSystemError('ENOENT', `stat '${filePath}'`, err);
+      }
+      throw err;
+    }
   }
 
   async exists(filePath: string): Promise<boolean> {
@@ -70,17 +109,31 @@ export class RealFileSystem implements FileSystem {
 
   async readFile(filePath: string, encoding?: BufferEncoding): Promise<string> {
     const { readFile } = await import('fs/promises');
-    return readFile(filePath, { encoding: encoding || 'utf-8' });
+    try {
+      return readFile(filePath, { encoding: encoding || 'utf-8' });
+    } catch (err) {
+      if (isEnoentError(err)) {
+        throw new FileSystemError('ENOENT', `open '${filePath}'`, err);
+      }
+      throw err;
+    }
   }
 
   async readdir(dirPath: string): Promise<Dirent[]> {
     const { readdir } = await import('fs/promises');
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    return entries.map((e) => ({
-      name: e.name,
-      isFile: () => e.isFile(),
-      isDirectory: () => e.isDirectory(),
-    }));
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      return entries.map((e) => ({
+        name: e.name,
+        isFile: () => e.isFile(),
+        isDirectory: () => e.isDirectory(),
+      }));
+    } catch (err) {
+      if (isEnoentError(err)) {
+        throw new FileSystemError('ENOENT', `readdir '${dirPath}'`, err);
+      }
+      throw err;
+    }
   }
 }
 
@@ -101,43 +154,49 @@ export class InMemoryFileSystem implements FileSystem {
     }
   }
 
-  async stat(filePath: string): Promise<{ mtimeMs: number; isFile(): boolean }> {
+  async stat(
+    filePath: string,
+  ): Promise<{ mtimeMs: number; isFile(): boolean }> {
     const file = this.files.get(filePath);
     if (file) {
       return {
         mtimeMs: file.mtimeMs,
-        isFile: () => true
+        isFile: () => true,
       };
     }
-    
+
     // Check if this is a directory by seeing if any files are under it
     const dirPrefix = filePath.endsWith('/') ? filePath : filePath + '/';
-    const hasChildren = Array.from(this.files.keys()).some(path => path.startsWith(dirPrefix));
-    
+    const hasChildren = Array.from(this.files.keys()).some((path) =>
+      path.startsWith(dirPrefix),
+    );
+
     if (hasChildren) {
       return {
         mtimeMs: Date.now(),
-        isFile: () => false
+        isFile: () => false,
       };
     }
-    
-    throw new Error(`ENOENT: no such file or directory, stat '${filePath}'`);
+
+    throw new FileSystemError('ENOENT', `stat '${filePath}'`);
   }
 
   async exists(filePath: string): Promise<boolean> {
     if (this.files.has(filePath)) {
       return true;
     }
-    
+
     // Check if this is a directory by seeing if any files are under it
     const dirPrefix = filePath.endsWith('/') ? filePath : filePath + '/';
-    return Array.from(this.files.keys()).some(path => path.startsWith(dirPrefix));
+    return Array.from(this.files.keys()).some((path) =>
+      path.startsWith(dirPrefix),
+    );
   }
 
   async readFile(filePath: string, _encoding?: string): Promise<string> {
     const file = this.files.get(filePath);
     if (!file) {
-      throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
+      throw new FileSystemError('ENOENT', `open '${filePath}'`);
     }
     return file.content;
   }
@@ -164,7 +223,9 @@ export class InMemoryFileSystem implements FileSystem {
   }
 
   async readdir(dirPath: string): Promise<Dirent[]> {
-    const normalizedDir = dirPath.endsWith('/') ? dirPath.slice(0, -1) : dirPath;
+    const normalizedDir = dirPath.endsWith('/')
+      ? dirPath.slice(0, -1)
+      : dirPath;
     const dirPrefix = normalizedDir + '/';
     const children = new Map<string, 'file' | 'directory'>();
 
@@ -195,7 +256,7 @@ export class InMemoryFileSystem implements FileSystem {
       RealFileSystem behavior.
     */
     if (children.size === 0) {
-      throw new Error(`ENOENT: no such file or directory, readdir '${dirPath}'`);
+      throw new FileSystemError('ENOENT', `readdir '${dirPath}'`);
     }
 
     return Array.from(children.entries()).map(([name, type]) => ({

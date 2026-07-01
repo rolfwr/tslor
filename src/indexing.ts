@@ -20,7 +20,7 @@ import { dirname, relative, resolve } from "path";
 import { CompilerOptions, modulePathSpec, modulePathToImportSpecAlias } from "./importSpec";
 import { Storage } from "./storage";
 import { TransformingFileSystem } from "./transformingFileSystem";
-import { FileSystem, InMemoryFileSystem } from "./filesystem";
+import { FileSystem, InMemoryFileSystem, isEnoentError } from "./filesystem";
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';
@@ -1589,7 +1589,7 @@ export async function loadSourceFile(srcPath: string, fileSystem: FileSystem, fi
         throw new Error('Not a file: ' + srcPath);
       }
     } catch (err) {
-      if (err instanceof Error && err.message.includes('ENOENT')) {
+      if (isEnoentError(err)) {
         throw new Error('Not found: ' + srcPath);
       }
       throw err;
@@ -1711,7 +1711,7 @@ async function resolveSourceFile(spec: string, baseDir: string, fileSystem: File
       return null;
     }
   } catch (err) {
-    if (!(err instanceof Error) || !err.message.includes('ENOENT')) {
+    if (!isEnoentError(err)) {
       throw err;
     }
     return null;
@@ -1721,7 +1721,7 @@ async function resolveSourceFile(spec: string, baseDir: string, fileSystem: File
     const stat = await fileSystem.stat(absSpec);
     isDir = !stat.isFile(); // If it's not a file, assume it's a directory
   } catch (err) {
-    if (!(err instanceof Error) || !err.message.includes('ENOENT')) {
+    if (!isEnoentError(err)) {
       throw err;
     }
   }
