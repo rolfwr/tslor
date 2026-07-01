@@ -33,6 +33,22 @@ import { DebugOptions } from './objstore';
 
 const writeStderr = process.stderr.write.bind(process.stderr);
 
+/**
+ * Extract global options from a subcommand's parent (the program).
+ * Returns traceId for debug tracing and whether --fresh was requested.
+ */
+function getGlobalOptions(cmd: Command): {
+  traceId: string | null;
+  fresh: boolean;
+} {
+  const globalOptions = cmd.parent?.opts() ?? {};
+  return {
+    traceId:
+      typeof globalOptions.traceId === 'string' ? globalOptions.traceId : null,
+    fresh: globalOptions.fresh === true,
+  };
+}
+
 function getDebugOptions(cmd: Command): DebugOptions {
   const globalOptions = cmd.parent?.opts() ?? {};
   const traceId = globalOptions.traceId;
@@ -44,8 +60,8 @@ program
   .description('TypeScript Large Offline Refactor')
   .option('-O, --optimize', 'Attempt to optimize the operation')
   .option('-s, --symbol', 'Use symbols when parsing')
-  .option('--trace-id <id>', 'Enable debug tracing for specific object ID')
-  .option('--fresh', 'Delete existing index database before rebuilding');
+  .option('--fresh', 'Delete the index database before running')
+  .option('--trace-id <id>', 'Enable debug tracing for specific object ID');
 
 program
   .command('dependencies <paths...>')
@@ -75,10 +91,7 @@ program
   .command('import-chain <fromPath> <toPath>')
   .description('Trace the import path from one module to another')
   .action(async (fromPath: string, toPath: string, cmd) => {
-    const globalOptions = cmd.parent?.opts() ?? {};
-    const traceId =
-      typeof globalOptions.traceId === 'string' ? globalOptions.traceId : null;
-    const fresh = globalOptions.fresh === true;
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runImportChain(
       fromPath,
