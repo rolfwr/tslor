@@ -148,7 +148,8 @@ describe('Node.js global detection', () => {
     `);
     assert.strictEqual(result.usesNodejsGlobals, true);
     assert.strictEqual(result.nodejsGlobalUsages?.length, 2);
-    const identifiers = result.nodejsGlobalUsages?.map(u => u.identifier) || [];
+    const identifiers =
+      result.nodejsGlobalUsages?.map((u) => u.identifier) || [];
     assert.include(identifiers, 'Buffer');
     assert.include(identifiers, 'require');
   });

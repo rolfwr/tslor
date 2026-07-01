@@ -1,5 +1,5 @@
-import { TransformingFileSystem } from "./transformingFileSystem";
-import { DebugOptions } from "./objstore";
+import { TransformingFileSystem } from './transformingFileSystem';
+import { DebugOptions } from './objstore';
 
 export async function runTscat(path: string, _debugOptions: DebugOptions) {
   const fshost = new TransformingFileSystem();

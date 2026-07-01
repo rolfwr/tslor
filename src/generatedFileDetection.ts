@@ -10,5 +10,8 @@ const GENERATED_IN_BLOCK_COMMENT = /\/\*[\s\S]*?@generated[\s\S]*?\*\//;
 const GENERATED_IN_LINE_COMMENT = /\/\/.*@generated/;
 
 export function isGeneratedFile(content: string): boolean {
-  return GENERATED_IN_BLOCK_COMMENT.test(content) || GENERATED_IN_LINE_COMMENT.test(content);
+  return (
+    GENERATED_IN_BLOCK_COMMENT.test(content) ||
+    GENERATED_IN_LINE_COMMENT.test(content)
+  );
 }
