@@ -45,6 +45,7 @@ import { FileSystem, InMemoryFileSystem, isEnoentError } from './filesystem';
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';
+import { CliError, reThrowAsCliError } from './errors';
 import { invariant } from './invariant';
 
 /**
@@ -394,9 +395,6 @@ async function indexImportFromFilesParallel(
     }
   }
 
-  // Run stat pass and worker file compilation concurrently
-  const workerFilePromise = getWorkerFile();
-
   const statPromise = (async () => {
     for (const path of paths) {
       if (abort.value) {
@@ -415,13 +413,23 @@ async function indexImportFromFilesParallel(
     queueWriter.close();
   })();
 
-  const workerFile = await workerFilePromise;
-  const numWorkers = cpus().length;
+  /*
+    Complete the stat pass first. Worker compilation and spawning
+    only happen if files changed, avoiding unnecessary overhead
+    on incremental runs with no changes.
+  */
+  await statPromise;
 
-  function makeFileProcessingError(filePath: string, error: unknown): Error {
-    const msg = error instanceof Error ? error.message : String(error);
-    return new Error(`Failed to process file ${filePath}: ${msg}`);
+  if (changedCount === 0) {
+    printProgress(true);
+    if (verbose) {
+      writer('\n');
+    }
+    return;
   }
+
+  const workerFile = await getWorkerFile();
+  const numWorkers = cpus().length;
 
   async function processWorkerMessage(
     msg: unknown,
@@ -439,7 +447,7 @@ async function indexImportFromFilesParallel(
       }
       moduleInfo = parseWorkerResult(msg);
     } catch (error) {
-      throw makeFileProcessingError(currentItem.path, error);
+      reThrowAsCliError(error, `Failed to process file ${currentItem.path}`);
     }
     if (moduleInfo) {
       try {
@@ -450,7 +458,7 @@ async function indexImportFromFilesParallel(
           fileSystem,
         );
       } catch (error) {
-        throw makeFileProcessingError(currentItem.path, error);
+        reThrowAsCliError(error, `Failed to process file ${currentItem.path}`);
       }
     }
     processedCount++;
@@ -476,14 +484,15 @@ async function indexImportFromFilesParallel(
     wrapper.terminate();
   }
 
-  const firstError: { value: Error | null } = { value: null };
+  const firstError: { value: CliError | null } = { value: null };
 
   async function runWorkerSafe(wrapper: WorkerWrapper): Promise<void> {
     try {
       await runWorker(wrapper);
     } catch (err) {
       if (!firstError.value) {
-        firstError.value = err instanceof Error ? err : new Error(String(err));
+        firstError.value =
+          err instanceof CliError ? err : new CliError(String(err));
       }
       wrapper.terminate();
       abort.value = true;
@@ -494,7 +503,7 @@ async function indexImportFromFilesParallel(
   const workers = Array.from({ length: numWorkers }, () =>
     createWorkerWrapper(workerFile),
   );
-  await Promise.all([statPromise, ...workers.map(runWorkerSafe)]);
+  await Promise.all(workers.map(runWorkerSafe));
 
   printProgress(true);
   if (verbose) {
