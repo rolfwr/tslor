@@ -26,6 +26,79 @@ import { cpus } from 'node:os';
 import { on } from 'node:events';
 
 /**
+ * Canonical names of Node.js built-in modules.
+ *
+ * Used to detect when a module imports from a Node.js built-in.
+ * The `node:` prefix form is handled by stripping the prefix before lookup.
+ */
+const NODEJS_BUILTINS = new Set([
+  'assert',
+  'async_hooks',
+  'buffer',
+  'child_process',
+  'cluster',
+  'console',
+  'constants',
+  'crypto',
+  'dgram',
+  'diagnostics_channel',
+  'dns',
+  'domain',
+  'events',
+  'fs',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'os',
+  'path',
+  'perf_hooks',
+  'process',
+  'punycode',
+  'querystring',
+  'readline',
+  'repl',
+  'stream',
+  'string_decoder',
+  'sys',
+  'timers',
+  'tls',
+  'trace_events',
+  'tty',
+  'url',
+  'util',
+  'v8',
+  'vm',
+  'wasi',
+  'worker_threads',
+  'zlib',
+]);
+
+/**
+ * Check if a module specifier refers to a Node.js built-in module.
+ *
+ * Handles both `fs` and `node:fs` forms.
+ */
+function isNodejsBuiltIn(specifier: string): boolean {
+  const name = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
+  return NODEJS_BUILTINS.has(name);
+}
+
+/**
+ * Check if any of the import specifiers in a module are Node.js built-ins.
+ */
+function hasNodejsBuiltInImport(imports: UnresolvedImports[]): boolean {
+  for (const imp of imports) {
+    if (isNodejsBuiltIn(imp.moduleSpec)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Update the index with all TypeScript files in the repository.
  *
  * This is the main entry point for building a complete index.
@@ -1268,19 +1341,29 @@ function parseImportDeclaration(
     return;
   }
   
-  const importClause = idecl.getImportClause();
-  if (!importClause) {
-    return;
-  }
-  
-  const names: string[] = [];
-  const isTypeOnly = importClause.isTypeOnly();
-  
   const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
   if (!moduleSpecifier) {
     throw new Error('No module specifier found');
   }
   const moduleSpec = moduleSpecifier.getLiteralText();
+
+  const importClause = idecl.getImportClause();
+  if (!importClause) {
+    /*
+      Side-effect import: `import 'module'`
+      Track the module specifier for Node.js built-in detection even though
+      no symbols are imported.
+    */
+    staticModuleInfo.imports.push({
+      moduleSpec,
+      names: [],
+      typeOnly: false,
+    });
+    return;
+  }
+
+  const names: string[] = [];
+  const isTypeOnly = importClause.isTypeOnly();
   
   const namedBindings = importClause.getFirstChildByKind(SyntaxKind.NamedImports);
 
@@ -1552,9 +1635,15 @@ export function parseModule(sourceFile: SourceFile): StaticModuleInfo {
 
   staticModuleInfo.exports = newExports;
 
-  // Detect Node.js global usage
+  // Detect Node.js global usage and built-in imports
   const nodejsDetection = detectNodejsGlobals(sourceFile);
-  staticModuleInfo.usesNodejsGlobals = nodejsDetection.usesNodejsGlobals;
+  const hasBuiltInImport =
+    hasNodejsBuiltInImport(staticModuleInfo.imports) ||
+    staticModuleInfo.reExports.some((reExport) =>
+      isNodejsBuiltIn(reExport.moduleSpec),
+    );
+  staticModuleInfo.usesNodejsGlobals =
+    nodejsDetection.usesNodejsGlobals || hasBuiltInImport;
   if (nodejsDetection.usages.length > 0) {
     staticModuleInfo.nodejsGlobalUsages = nodejsDetection.usages;
   }
