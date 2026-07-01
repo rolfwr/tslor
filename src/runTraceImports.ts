@@ -2,7 +2,7 @@ import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
 import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath, normalizePath } from "./pathUtils";
+import { normalizeAndValidatePath, isPathWithinDirectory } from "./pathUtils";
 import { FileSystem } from "./filesystem";
 
 export interface TraceImportsOptions {
@@ -49,7 +49,10 @@ function buildImportsByExporter(
     if (!exporterPath) {
       continue;
     }
-    if (options.fromProject && !isWithinProject(exporterPath, options.fromProject)) {
+    if (
+      options.fromProject &&
+      !isPathWithinDirectory(exporterPath, options.fromProject)
+    ) {
       continue;
     }
     addGroupSymbols(obj['groups'] ?? [], exporterPath, importsByExporter);
@@ -115,15 +118,3 @@ export async function runTraceImports(
   db.save();
 }
 
-function isWithinProject(filePath: string, projectPath: string): boolean {
-  try {
-    const absoluteFilePath = normalizePath(filePath);
-    const absoluteProjectPath = normalizePath(projectPath);
-    
-    // Check if the file is within the project directory
-    return absoluteFilePath.startsWith(absoluteProjectPath);
-  } catch {
-    // If there's an error with path resolution, be conservative and exclude
-    return false;
-  }
-}

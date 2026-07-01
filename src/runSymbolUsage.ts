@@ -2,7 +2,7 @@ import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
 import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
-import { normalizePath } from "./pathUtils";
+import { normalizePath, isPathWithinDirectory } from "./pathUtils";
 import { FileSystem } from "./filesystem";
 
 function collectExporterPaths(
@@ -14,7 +14,10 @@ function collectExporterPaths(
     if (!isObjWithExporterPath(obj)) {
       continue;
     }
-    if (isWithinProject(obj.exporter.path, absoluteProjectPath) && !paths.includes(obj.exporter.path)) {
+    if (
+      isPathWithinDirectory(obj.exporter.path, absoluteProjectPath) &&
+      !paths.includes(obj.exporter.path)
+    ) {
       paths.push(obj.exporter.path);
     }
   }
@@ -68,15 +71,3 @@ export async function runSymbolUsage(
   db.save();
 }
 
-function isWithinProject(filePath: string, projectPath: string): boolean {
-  try {
-    const absoluteFilePath = normalizePath(filePath);
-    const absoluteProjectPath = normalizePath(projectPath);
-    
-    // Check if the file is within the project directory
-    return absoluteFilePath.startsWith(absoluteProjectPath);
-  } catch {
-    // If there's an error with path resolution, be conservative and exclude
-    return false;
-  }
-}

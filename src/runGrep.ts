@@ -2,7 +2,7 @@ import { updateStorage } from "./indexing";
 import { findGitRepoRoot } from "./project";
 import { openStorage, isObjWithExporterPath } from "./storage";
 import { DebugOptions } from "./objstore";
-import { normalizePath } from "./pathUtils";
+import { normalizePath, isPathWithinDirectory } from "./pathUtils";
 import { FileSystem } from "./filesystem";
 
 export interface GrepOptions {
@@ -40,7 +40,10 @@ function buildExporterIndexes(
 
   for (const obj of symbolImports) {
     const exporterPath = extractExporterPath(obj);
-    if (!exporterPath || !isWithinDirectory(exporterPath, absoluteDirectory)) {
+    if (
+      !exporterPath ||
+      !isPathWithinDirectory(exporterPath, absoluteDirectory)
+    ) {
       continue;
     }
     let exporters = exportersByPath.get(exporterPath);
@@ -121,15 +124,3 @@ export async function runGrep(
   db.save();
 }
 
-function isWithinDirectory(filePath: string, directoryPath: string): boolean {
-  try {
-    const absoluteFilePath = normalizePath(filePath);
-    const absoluteDirectoryPath = normalizePath(directoryPath);
-    
-    // Check if the file is within the directory
-    return absoluteFilePath.startsWith(absoluteDirectoryPath);
-  } catch {
-    // If there's an error with path resolution, be conservative and exclude
-    return false;
-  }
-}
