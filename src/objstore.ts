@@ -134,14 +134,6 @@ export class ObjStore {
   }
 }
 
-/**
- * Serialize the object store to a JSONL file using injected I/O callbacks.
- *
- * @param filename Path for the JSONL output
- * @param store Object store to serialize
- * @param writeFn Function to write data to the file (e.g., `writeFileSync`)
- * @param onVerbose Optional callback for verbose progress messages
- */
 export function saveObjStoreAsJsonl(
   filename: string,
   store: ObjStore,
@@ -149,10 +141,9 @@ export function saveObjStoreAsJsonl(
   onVerbose?: (message: string) => void,
 ) {
   const objs = store.allObjs();
-  const data = objs.map((obj) => JSON.stringify(obj)).join('\n');
-  writeFn(filename, data);
+  writeFn(filename, objs.map((obj) => JSON.stringify(obj)).join('\n'));
   if (onVerbose) {
-    onVerbose(`Saved ${objs.length} entities to ${filename}`);
+    onVerbose('Saved ' + objs.length + ' entities to ' + filename);
   }
 }
 
