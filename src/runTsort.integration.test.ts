@@ -49,9 +49,10 @@ describe('tsort directory expansion', () => {
           log: (msg: string) => consoleOutput.push(msg),
         },
         storage,
+        cwd: testDir,
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     assert.equal(consoleOutput.length, 3, 'Should output 3 modules');
@@ -76,9 +77,10 @@ describe('tsort directory expansion', () => {
           log: (msg: string) => consoleOutput.push(msg),
         },
         storage,
+        cwd: testDir,
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     assert.equal(consoleOutput.length, 3, 'Should output 3 modules');

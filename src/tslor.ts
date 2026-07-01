@@ -403,16 +403,26 @@ program
 
 program
   .command('tsort <paths...>')
-  .description('Topologically sort modules by import dependencies')
-  .option('-p, --project-scope', 'Only consider imports within the same project')
+  .description(
+    'Print modules in topological order of their import dependencies',
+  )
+  .option(
+    '-p, --project-scope',
+    'Only consider imports within the same project',
+  )
   .action(async (paths: string[], opts: { projectScope?: boolean }, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runTsort(
       paths,
-      { projectScope: opts.projectScope === true },
-      debugOptions,
-      fileSystem
+      {
+        projectScope: opts.projectScope === true,
+        fresh,
+        writer: writeStderr,
+        cwd: currentCwd,
+      },
+      { traceId },
+      fileSystem,
     );
   });
 

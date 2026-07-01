@@ -1,11 +1,12 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot, getTsconfigPathForFile } from "./project";
-import { openStorage, Storage } from "./storage";
-import { DebugOptions } from "./objstore";
-import { denormalizePath } from "./pathUtils";
-import { resolveCommandScope } from "./commandScope";
-import { FileSystem } from "./filesystem";
-import { assertDefined, getOrThrow } from "./invariant";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot, getTsconfigPathForFile } from './project';
+import { openStorage, Storage } from './storage';
+import { DebugOptions } from './objstore';
+import { denormalizePath } from './pathUtils';
+import { resolveCommandScope } from './commandScope';
+import { FileSystem } from './filesystem';
+import { getOrThrow, invariant } from './invariant';
+import { CliError } from './errors';
 
 /**
  * Output interface for tsort results.
@@ -14,7 +15,6 @@ import { assertDefined, getOrThrow } from "./invariant";
  * directly to console, enabling testing without global state mutation.
  */
 export interface TsortOutput {
-  /** Write a module path to standard output */
   log: (msg: string) => void;
 }
 
@@ -46,6 +46,18 @@ export interface TsortOptions {
    * is up-to-date and for persisting any changes.
    */
   storage?: Storage;
+  /**
+   * When true, delete the existing index database before opening storage.
+   */
+  fresh?: boolean;
+  /**
+   * Callback for indexing progress messages. Required when `storage` is not
+   * provided (i.e., when the function opens its own storage and runs indexing).
+   * Tests can supply a stub to suppress or capture output.
+   */
+  writer?: (message: string) => void;
+  /** Working directory for path denormalization in error messages */
+  cwd: string;
 }
 
 /**
@@ -61,7 +73,7 @@ export async function runTsort(
   modulePaths: string[],
   options: TsortOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fileSystem: FileSystem,
 ): Promise<void> {
   if (modulePaths.length === 0) {
     return;
@@ -77,18 +89,30 @@ export async function runTsort(
   */
   const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
 
-  if (moduleSet.size === 0) {
+  /*
+    Pick an arbitrary module path to derive the repo root.
+    Only needed when repoRoot is not provided.
+  */
+  const firstModule = moduleSet.values().next().value;
+  if (firstModule === undefined) {
     return;
   }
+  const repoRoot = options.repoRoot ?? findGitRepoRoot(firstModule);
 
-  // Find git repo root and open storage
-  const tsPath = moduleSet.values().next().value;
-  assertDefined(tsPath, 'moduleSet is non-empty but yielded no value');
-  const repoRoot = options.repoRoot ?? findGitRepoRoot(tsPath);
-
-  const db = options.storage ?? openStorage(debugOptions, { verbose: false, inMemory: false });
+  const db =
+    options.storage ??
+    openStorage(debugOptions, {
+      verbose: false,
+      fresh: options.fresh ?? false,
+      basePath: repoRoot,
+      inMemory: false,
+    });
   if (!options.storage) {
-    await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+    invariant(
+      options.writer,
+      'writer is required when storage is not provided',
+    );
+    await updateStorage(repoRoot, db, true, fileSystem, options.writer);
   }
 
   /*
@@ -100,7 +124,9 @@ export async function runTsort(
   if (options.projectScope === true) {
     const filePaths = Array.from(moduleSet);
     const tsconfigs = await Promise.all(
-      filePaths.map((path) => getTsconfigPathForFile(repoRoot, path, fileSystem))
+      filePaths.map((path) =>
+        getTsconfigPathForFile(repoRoot, path, fileSystem),
+      ),
     );
     const entries: [string, string][] = filePaths.flatMap((path, i) => {
       const tsconfig = tsconfigs[i];
@@ -113,7 +139,11 @@ export async function runTsort(
   }
 
   // Build the dependency graph considering only the input modules
-  const { graph, reverseGraph } = buildDependencyGraph(db, moduleSet, moduleTsconfigMap);
+  const { graph, reverseGraph } = buildDependencyGraph(
+    db,
+    moduleSet,
+    moduleTsconfigMap,
+  );
 
   // Perform topological sort using Kahn's algorithm
   const sorted = topologicalSort(moduleSet, graph, reverseGraph);
@@ -121,11 +151,12 @@ export async function runTsort(
   if (sorted === null) {
     // Cycle detected
     const cycleNodes = findCycleNodes(moduleSet, reverseGraph);
-    const cwd = process.cwd();
-    const cyclePaths = [...cycleNodes].map((node) => denormalizePath(node, cwd));
-    throw new Error(
+    const cyclePaths = [...cycleNodes].map((node) =>
+      denormalizePath(node, options.cwd),
+    );
+    throw new CliError(
       `tsort: cycle detected among ${cyclePaths.length} module${cyclePaths.length === 1 ? '' : 's'}:\n` +
-      cyclePaths.map((p) => `  ${p}`).join('\n')
+        cyclePaths.map((p) => `  ${p}`).join('\n'),
     );
   }
 
@@ -155,7 +186,7 @@ export async function runTsort(
 function buildDependencyGraph(
   db: Storage,
   moduleSet: Set<string>,
-  moduleTsconfigMap: Map<string, string> | null
+  moduleTsconfigMap: Map<string, string> | null,
 ): { graph: Map<string, Set<string>>; reverseGraph: Map<string, Set<string>> } {
   const graph = new Map<string, Set<string>>();
   const reverseGraph = new Map<string, Set<string>>();
@@ -168,7 +199,14 @@ function buildDependencyGraph(
 
   // Build edges
   for (const modulePath of moduleSet) {
-    buildEdgesForModule(modulePath, db, moduleSet, moduleTsconfigMap, graph, reverseGraph);
+    buildEdgesForModule(
+      modulePath,
+      db,
+      moduleSet,
+      moduleTsconfigMap,
+      graph,
+      reverseGraph,
+    );
   }
 
   return { graph, reverseGraph };
@@ -180,7 +218,7 @@ function buildEdgesForModule(
   moduleSet: Set<string>,
   moduleTsconfigMap: Map<string, string> | null,
   graph: Map<string, Set<string>>,
-  reverseGraph: Map<string, Set<string>>
+  reverseGraph: Map<string, Set<string>>,
 ): void {
   const exporters = db.getExporterPathsOfImport(modulePath);
 
@@ -210,17 +248,19 @@ function addEdgeIfInScope(
   exporterPath: string,
   moduleSet: Set<string>,
   graph: Map<string, Set<string>>,
-  reverseGraph: Map<string, Set<string>>
+  reverseGraph: Map<string, Set<string>>,
 ): void {
   if (!moduleSet.has(exporterPath)) {
     return;
   }
   getOrThrow(graph, exporterPath, 'exporterPath not in graph').add(modulePath);
-  getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(exporterPath);
+  getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').add(
+    exporterPath,
+  );
 }
 
 function insertSorted(queue: string[], item: string): void {
-  const insertIndex = queue.findIndex(q => q > item);
+  const insertIndex = queue.findIndex((q) => q > item);
   if (insertIndex === -1) {
     queue.push(item);
   } else {
@@ -236,7 +276,7 @@ function insertSorted(queue: string[], item: string): void {
 function topologicalSort(
   moduleSet: Set<string>,
   graph: Map<string, Set<string>>,
-  reverseGraph: Map<string, Set<string>>
+  reverseGraph: Map<string, Set<string>>,
 ): string[] | null {
   const inDegree = computeInDegree(moduleSet, reverseGraph);
   const queue = initializeQueue(moduleSet, inDegree);
@@ -252,18 +292,22 @@ function topologicalSort(
 
 function computeInDegree(
   moduleSet: Set<string>,
-  reverseGraph: Map<string, Set<string>>
+  reverseGraph: Map<string, Set<string>>,
 ): Map<string, number> {
   const inDegree = new Map<string, number>();
   for (const modulePath of moduleSet) {
-    inDegree.set(modulePath, getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph').size);
+    inDegree.set(
+      modulePath,
+      getOrThrow(reverseGraph, modulePath, 'modulePath not in reverseGraph')
+        .size,
+    );
   }
   return inDegree;
 }
 
 function initializeQueue(
   moduleSet: Set<string>,
-  inDegree: Map<string, number>
+  inDegree: Map<string, number>,
 ): string[] {
   const queue: string[] = [];
   for (const modulePath of moduleSet) {
@@ -277,11 +321,11 @@ function initializeQueue(
 function processQueue(
   queue: string[],
   graph: Map<string, Set<string>>,
-  inDegree: Map<string, number>
+  inDegree: Map<string, number>,
 ): string[] {
   const result: string[] = [];
 
-  while (queue.length > 0) {
+  while (true) {
     const current = queue.shift();
     if (current === undefined) {
       break;
@@ -297,10 +341,11 @@ function processDependents(
   current: string,
   graph: Map<string, Set<string>>,
   inDegree: Map<string, number>,
-  queue: string[]
+  queue: string[],
 ): void {
   for (const dependent of getOrThrow(graph, current, 'current not in graph')) {
-    const newInDegree = getOrThrow(inDegree, dependent, 'dependent not in inDegree') - 1;
+    const newInDegree =
+      getOrThrow(inDegree, dependent, 'dependent not in inDegree') - 1;
     inDegree.set(dependent, newInDegree);
     if (newInDegree === 0) {
       insertSorted(queue, dependent);
@@ -313,15 +358,11 @@ function markPathCycleNodes(
   path: string[],
   cycleAnchor: string,
   extraNode: string,
-  currentNode: string
+  currentNode: string,
 ): void {
   const cycleStart = path.indexOf(cycleAnchor);
   if (cycleStart !== -1) {
-    for (let i = cycleStart; i < path.length; i++) {
-      const node = path.at(i);
-      if (node === undefined) {
-        continue;
-      }
+    for (const node of path.slice(cycleStart)) {
       cycleNodes.add(node);
     }
   }
@@ -335,14 +376,23 @@ function dfsFindCycles(
   visited: Set<string>,
   recStack: Set<string>,
   cycleNodes: Set<string>,
-  graph: Map<string, Set<string>>
+  graph: Map<string, Set<string>>,
 ): boolean {
   visited.add(node);
   recStack.add(node);
 
   for (const neighbor of graph.get(node) || []) {
     if (!visited.has(neighbor)) {
-      if (dfsFindCycles(neighbor, [...path, neighbor], visited, recStack, cycleNodes, graph)) {
+      if (
+        dfsFindCycles(
+          neighbor,
+          [...path, neighbor],
+          visited,
+          recStack,
+          cycleNodes,
+          graph,
+        )
+      ) {
         markPathCycleNodes(cycleNodes, path, neighbor, node, node);
         return true;
       }
@@ -361,7 +411,7 @@ function dfsFindCycles(
  */
 function findCycleNodes(
   moduleSet: Set<string>,
-  graph: Map<string, Set<string>>
+  graph: Map<string, Set<string>>,
 ): Set<string> {
   const visited = new Set<string>();
   const recStack = new Set<string>();
