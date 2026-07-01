@@ -24,6 +24,7 @@ import { FileSystem, InMemoryFileSystem, isEnoentError } from "./filesystem";
 import { Worker } from 'node:worker_threads';
 import { cpus } from 'node:os';
 import { on } from 'node:events';
+import { invariant } from './invariant';
 
 /**
  * Canonical names of Node.js built-in modules.
@@ -484,11 +485,6 @@ export interface ModuleInfo {
   needs: {
     nodejs: boolean | Array<{ identifier: string; line: number; column: number }>;
   };
-}
-
-export interface ToolOptions {
-  optimize: boolean;
-  symbol: boolean;
 }
 
 async function refreshImportsFromFile(db: Storage, somePath: string, repoRoot: string, fileSystem: FileSystem) {
@@ -1362,9 +1358,7 @@ function parseImportDeclaration(
   }
   
   const moduleSpecifier = node.getFirstChildByKind(SyntaxKind.StringLiteral);
-  if (!moduleSpecifier) {
-    throw new Error('No module specifier found');
-  }
+  invariant(moduleSpecifier, 'No module specifier found');
   const moduleSpec = moduleSpecifier.getLiteralText();
 
   const importClause = idecl.getImportClause();
@@ -1390,9 +1384,7 @@ function parseImportDeclaration(
   if (namedBindings) {
     namedBindings.forEachChild((child: Node) => {
       const importSpecifier = child.asKind(SyntaxKind.ImportSpecifier);
-      if (!importSpecifier) {
-        throw new Error('Expected ImportSpecifier');
-      }
+      invariant(importSpecifier, 'Expected ImportSpecifier');
 
       /*
         getName() returns the imported symbol (e.g., 'v4' in `import { v4 as createUuid }`).
@@ -1507,9 +1499,7 @@ function parseFunctionDeclaration(
   const exported = funcDecl.hasModifier(SyntaxKind.ExportKeyword);
 
   const name = funcDecl.getName();
-  if (!name) {
-    throw new Error('Do not know how to deal with named export without name');
-  }
+  invariant(name, 'Do not know how to deal with named export without name');
   
   const body = funcDecl.getBody();
 
@@ -1677,8 +1667,20 @@ export function parseModule(sourceFile: SourceFile): StaticModuleInfo {
     usesNodejsGlobals: false,
   };
 
+  /*
+    First pass: collect all import declarations so that
+    `unresolvedExportsByImportNames` is fully populated before
+    bare `export { x }` declarations are resolved against it.
+  */
   sourceFile.forEachChild((node) => {
     parseImportDeclaration(node, staticModuleInfo);
+  });
+
+  /*
+    Second pass: process all other declarations (variables, functions,
+    interfaces, type aliases, classes, and exports).
+  */
+  sourceFile.forEachChild((node) => {
     parseVariableStatement(node, staticModuleInfo);
     parseFunctionDeclaration(node, staticModuleInfo);
     parseInterfaceDeclaration(node, staticModuleInfo);

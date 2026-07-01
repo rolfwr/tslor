@@ -121,6 +121,27 @@ export { createUuid, validateUuid };
       }),
     );
   });
+
+  test('bare export before import: two-pass parsing resolves correctly', () => {
+    /*
+      When export { x } appears before import { x } in source order,
+      the two-pass parseModule must still resolve the re-export.
+      The first pass collects imports; the second pass resolves exports.
+    */
+    const sourceFile = createTestSourceFile(`
+export { foo };
+import { foo } from './foo';
+`);
+    const info = parseModule(sourceFile);
+
+    expect(info.reExports).toHaveLength(1);
+    expect(info.reExports[0]).toMatchObject({
+      name: 'foo',
+      moduleSpec: './foo',
+      isTypeOnly: false,
+    });
+    expect(info.exportedNames).toContain('foo');
+  });
 });
 
 describe('inspectModule resolves bare re-export paths', () => {
