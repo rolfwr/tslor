@@ -2014,17 +2014,17 @@ async function storeImportsFromFile(
 export async function loadSourceFile(
   srcPath: string,
   fileSystem: FileSystem,
-  fileContents?: Map<string, string>,
-) {
-  // Determine if we're using in-memory filesystem based on the filesystem type
+): Promise<SourceFile> {
   const isInMemory = fileSystem instanceof InMemoryFileSystem;
 
   const project = isInMemory
-    ? new Project(inMemoryProjectOptions(fileContents ?? new Map()))
+    ? new Project(inMemoryProjectOptions())
     : createProject();
 
   if (!isInMemory) {
-    // Verify that the source file exists first using the filesystem abstraction
+    /*
+      Verify that the source file exists first using the filesystem abstraction.
+    */
     try {
       const stat = await fileSystem.stat(srcPath);
       if (!stat.isFile()) {
@@ -2039,12 +2039,7 @@ export async function loadSourceFile(
 
     project.addSourceFileAtPath(srcPath);
   } else {
-    /*
-      For in-memory, create the source file with content.
-      If fileContents was not provided, read from the InMemoryFileSystem.
-    */
-    const content =
-      fileContents?.get(srcPath) ?? (await fileSystem.readFile(srcPath));
+    const content = await fileSystem.readFile(srcPath);
     project.createSourceFile(srcPath, content);
   }
 
@@ -2071,9 +2066,7 @@ export function defaultProjectOptions(): ProjectOptions {
   };
 }
 
-export function inMemoryProjectOptions(
-  fileContents: Map<string, string>,
-): ProjectOptions {
+export function inMemoryProjectOptions(): ProjectOptions {
   return {
     skipAddingFilesFromTsConfig: true,
     skipFileDependencyResolution: true,
@@ -2088,8 +2081,10 @@ export function inMemoryProjectOptions(
         throw new Error('deleteSync not implemented');
       },
       readDirSync: () => [],
-      readFile: async (filePath: string) => fileContents.get(filePath) || '',
-      readFileSync: (filePath: string) => fileContents.get(filePath) || '',
+      readFile: () => Promise.reject(new Error('readFile not implemented')),
+      readFileSync: () => {
+        throw new Error('readFileSync not implemented');
+      },
       writeFile: () => Promise.reject(new Error('writeFile not implemented')),
       writeFileSync: () => {
         throw new Error('writeFileSync not implemented');
@@ -2106,9 +2101,8 @@ export function inMemoryProjectOptions(
       copySync: () => {
         throw new Error('copySync not implemented');
       },
-      fileExists: async (filePath: string) =>
-        Promise.resolve(fileContents.has(filePath)),
-      fileExistsSync: (filePath: string) => fileContents.has(filePath),
+      fileExists: async () => Promise.resolve(false),
+      fileExistsSync: () => false,
       directoryExists: () => Promise.resolve(false),
       directoryExistsSync: () => false,
       getCurrentDirectory: () => '/',
