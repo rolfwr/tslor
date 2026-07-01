@@ -31,6 +31,8 @@ import { RealFileSystem } from './filesystem';
 import { dirname, resolve } from 'path';
 import { DebugOptions } from './objstore';
 
+const writeStderr = process.stderr.write.bind(process.stderr);
+
 function getDebugOptions(cmd: Command): DebugOptions {
   const globalOptions = cmd.parent?.opts() ?? {};
   const traceId = globalOptions.traceId;
@@ -42,7 +44,8 @@ program
   .description('TypeScript Large Offline Refactor')
   .option('-O, --optimize', 'Attempt to optimize the operation')
   .option('-s, --symbol', 'Use symbols when parsing')
-  .option('--trace-id <id>', 'Enable debug tracing for specific object ID');
+  .option('--trace-id <id>', 'Enable debug tracing for specific object ID')
+  .option('--fresh', 'Delete existing index database before rebuilding');
 
 program
   .command('dependencies <paths...>')
@@ -70,11 +73,21 @@ program
 
 program
   .command('import-chain <fromPath> <toPath>')
-  .description('List the import chain from one module to another')
+  .description('Trace the import path from one module to another')
   .action(async (fromPath: string, toPath: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const globalOptions = cmd.parent?.opts() ?? {};
+    const traceId =
+      typeof globalOptions.traceId === 'string' ? globalOptions.traceId : null;
+    const fresh = globalOptions.fresh === true;
     const fileSystem = new RealFileSystem();
-    await runImportChain(fromPath, toPath, debugOptions, fileSystem);
+    await runImportChain(
+      fromPath,
+      toPath,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program
