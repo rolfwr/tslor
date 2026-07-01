@@ -2119,6 +2119,21 @@ export async function resolveImportSpec(
   importSpec: string,
   fileSystem: FileSystem,
 ) {
+  /*
+    Try relative resolution first. Falls through to tsconfig-based
+    resolution if the relative path doesn't resolve.
+  */
+  if (importSpec.startsWith('.')) {
+    const resolvedPath = await resolveSourceFile(
+      importSpec,
+      dirname(tsFilePath),
+      fileSystem,
+    );
+    if (resolvedPath) {
+      return resolvedPath;
+    }
+  }
+
   const tsconfigPath = await getTsconfigPathForFile(
     repoRoot,
     tsFilePath,
@@ -2129,25 +2144,12 @@ export async function resolveImportSpec(
   }
 
   const compilerOptions = await getCompilerOptions(tsconfigPath, fileSystem);
-
-  let resolvedPath: string | null = null;
-  if (importSpec.startsWith('.')) {
-    resolvedPath = await resolveSourceFile(
-      importSpec,
-      dirname(tsFilePath),
-      fileSystem,
-    );
-  }
-
-  if (resolvedPath === null) {
-    resolvedPath = await importSpecAliasToModulePath(
-      compilerOptions,
-      dirname(tsconfigPath),
-      importSpec,
-      fileSystem,
-    );
-  }
-  return resolvedPath;
+  return importSpecAliasToModulePath(
+    compilerOptions,
+    dirname(tsconfigPath),
+    importSpec,
+    fileSystem,
+  );
 }
 
 export async function getCompilerOptions(
