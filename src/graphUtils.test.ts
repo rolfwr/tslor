@@ -1,4 +1,5 @@
 import { assert, describe, test } from 'vitest';
+import { getOrThrow } from './invariant';
 import {
   findSCCs,
   condenseToDAG,
@@ -29,10 +30,7 @@ function buildGraph(edges: [string, string][]): Map<string, Set<string>> {
 }
 
 // Helper to ensure all listed nodes exist as keys (even with no outgoing edges)
-function ensureNodes(
-  graph: Map<string, Set<string>>,
-  nodes: string[]
-): void {
+function ensureNodes(graph: Map<string, Set<string>>, nodes: string[]): void {
   for (const n of nodes) {
     if (!graph.has(n)) {
       graph.set(n, new Set());
@@ -56,12 +54,10 @@ function normalizeSCCMembers(scc: SCC): SCC {
 function normalizeSCCs(sccs: ReadonlyArray<SCC>): string[][] {
   const normalizedSccs = sccs.map(normalizeSCCMembers);
   normalizedSccs.sort((a, b) => a[0].localeCompare(b[0]));
-  return normalizedSccs.map(scc => [...scc]);
+  return normalizedSccs.map((scc) => [...scc]);
 }
 
-function mapNodesToSccIndices(
-  sccs: ReadonlyArray<SCC>
-): Map<string, number> {
+function mapNodesToSccIndices(sccs: ReadonlyArray<SCC>): Map<string, number> {
   const nodeToIdx = new Map<string, number>();
   for (const [sccIndex, scc] of sccs.entries()) {
     for (const member of scc) {
@@ -71,36 +67,31 @@ function mapNodesToSccIndices(
   return nodeToIdx;
 }
 
-function requiredMapGet<K, V>(
-  map: ReadonlyMap<K, V>,
-  key: K,
-  context: string
-): V {
-  const value = map.get(key);
-  if (value === undefined) {
-    throw new Error(`Expected ${context} to exist`);
-  }
-  return value;
-}
-
-function nodeIndex(nodeToIdx: ReadonlyMap<string, number>, node: string): number {
-  return requiredMapGet(nodeToIdx, node, `SCC index for node ${node}`);
+function nodeIndex(
+  nodeToIdx: ReadonlyMap<string, number>,
+  node: string,
+): number {
+  return getOrThrow(nodeToIdx, node, `SCC index for node ${node}`);
 }
 
 function dagDeps(
   dag: ReadonlyMap<number, Set<number>>,
-  sccIndex: number
+  sccIndex: number,
 ): Set<number> {
-  return requiredMapGet(dag, sccIndex, `DAG dependencies for SCC ${String(sccIndex)}`);
+  return getOrThrow(
+    dag,
+    sccIndex,
+    `DAG dependencies for SCC ${String(sccIndex)}`,
+  );
 }
 
 function nodeDepth(
   depth: ReadonlyMap<number, number>,
   nodeToIdx: ReadonlyMap<string, number>,
-  node: string
+  node: string,
 ): number {
   const sccIndex = nodeIndex(nodeToIdx, node);
-  return requiredMapGet(depth, sccIndex, `topological depth for node ${node}`);
+  return getOrThrow(depth, sccIndex, `topological depth for node ${node}`);
 }
 
 describe('findSCCs', () => {
@@ -209,7 +200,10 @@ describe('condenseToDAG', () => {
   });
 
   test('mutual cycle A↔B: condensed to single node with no self-edge', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'A']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'A'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
 
@@ -218,7 +212,12 @@ describe('condenseToDAG', () => {
   });
 
   test('diamond: DAG preserves A→B, A→C, B→D, C→D edges', () => {
-    const graph = buildGraph([['A', 'B'], ['A', 'C'], ['B', 'D'], ['C', 'D']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['A', 'C'],
+      ['B', 'D'],
+      ['C', 'D'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
 
@@ -237,7 +236,8 @@ describe('condenseToDAG', () => {
 
   test('mixed: cycle (A↔B) feeds C→D: DAG has edge from AB-SCC to C-SCC', () => {
     const graph = buildGraph([
-      ['A', 'B'], ['B', 'A'],
+      ['A', 'B'],
+      ['B', 'A'],
       ['A', 'C'],
       ['C', 'D'],
     ]);
@@ -264,7 +264,7 @@ describe('condenseToDAG', () => {
 
     assert.throws(
       () => condenseToDAG(graph, invalidSccs),
-      /SCC index for dependency node B referenced from A/
+      /SCC index for dependency node B referenced from A/,
     );
   });
 
@@ -274,7 +274,7 @@ describe('condenseToDAG', () => {
 
     assert.throws(
       () => condenseToDAG(graph, invalidSccs),
-      /Node C appears in SCCs but is not present in the graph/
+      /Node C appears in SCCs but is not present in the graph/,
     );
   });
 
@@ -284,7 +284,7 @@ describe('condenseToDAG', () => {
 
     assert.throws(
       () => condenseToDAG(graph, invalidSccs),
-      /Node A appears in multiple SCCs: 0 and 1/
+      /Node A appears in multiple SCCs: 0 and 1/,
     );
   });
 });
@@ -310,12 +310,15 @@ describe('computeTopologicalDepth', () => {
 
     assert.throws(
       () => computeTopologicalDepth(dag),
-      /Cycle detected in DAG while computing depth for SCC/
+      /Cycle detected in DAG while computing depth for SCC/,
     );
   });
 
   test('linear chain A→B→C: A has depth 2, B has depth 1, C (leaf) has depth 0', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'C']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'C'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
     const depth = computeTopologicalDepth(dag);
@@ -328,7 +331,12 @@ describe('computeTopologicalDepth', () => {
   });
 
   test('diamond A→B, A→C, B→D, C→D: A has depth 2, D (leaf) has depth 0', () => {
-    const graph = buildGraph([['A', 'B'], ['A', 'C'], ['B', 'D'], ['C', 'D']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['A', 'C'],
+      ['B', 'D'],
+      ['C', 'D'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
     const depth = computeTopologicalDepth(dag);
@@ -361,7 +369,10 @@ describe('computeTopologicalDepth', () => {
   });
 
   test('mutual cycle A↔B: condensed SCC has depth 0 (leaf in DAG)', () => {
-    const graph = buildGraph([['A', 'B'], ['B', 'A']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['B', 'A'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
     const depth = computeTopologicalDepth(dag);
@@ -372,7 +383,8 @@ describe('computeTopologicalDepth', () => {
 
   test('mixed: cycle (A↔B) feeds C→D: AB has depth 2, C has depth 1, D has depth 0', () => {
     const graph = buildGraph([
-      ['A', 'B'], ['B', 'A'],
+      ['A', 'B'],
+      ['B', 'A'],
       ['A', 'C'],
       ['C', 'D'],
     ]);
@@ -389,7 +401,11 @@ describe('computeTopologicalDepth', () => {
   });
 
   test('disconnected components: each component depths computed independently', () => {
-    const graph = buildGraph([['A', 'B'], ['C', 'D'], ['D', 'E']]);
+    const graph = buildGraph([
+      ['A', 'B'],
+      ['C', 'D'],
+      ['D', 'E'],
+    ]);
     const sccs = findSCCs(graph);
     const dag = condenseToDAG(graph, sccs);
     const depth = computeTopologicalDepth(dag);
@@ -490,6 +506,32 @@ describe('partitionLeafSccsByDistance', () => {
 
     assert.deepEqual(partition.clusterA, [1]);
     assert.deepEqual(partition.clusterB, []);
+    assert.equal(partition.crossClusterDistanceSum, 0);
+  });
+
+  test('handles subset DAG with disconnected leaf SCC components', () => {
+    /*
+      Simulates a depth-0/1 subset DAG with disconnected components.
+      This happens when the original graph has multiple independent
+      dependency chains.
+
+      Component 1: 0 → 1 (leaf)
+      Component 2: 2 → 3 (leaf)
+
+      Leaves: [1, 3] — in different disconnected components.
+      Distance between them is null (unreachable), treated as 0.
+    */
+    const subsetDag = new Map<number, Set<number>>([
+      [0, new Set([1])],
+      [1, new Set()],
+      [2, new Set([3])],
+      [3, new Set()],
+    ]);
+
+    const partition = partitionLeafSccsByDistance(subsetDag);
+
+    assert.deepEqual(partition.clusterA, [1]);
+    assert.deepEqual(partition.clusterB, [3]);
     assert.equal(partition.crossClusterDistanceSum, 0);
   });
 });

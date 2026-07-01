@@ -6,6 +6,8 @@
   set of nodes it depends on (outgoing edges from that node).
 */
 
+import { getOrThrow, invariant } from './invariant';
+
 /**
  * A strongly-connected component, represented as a sorted non-empty list of member names.
  */
@@ -15,18 +17,6 @@ export type SCC = readonly [string, ...string[]];
  * Adjacency map: each node maps to the set of nodes it depends on.
  */
 export type AdjacencyMap = ReadonlyMap<string, ReadonlySet<string>>;
-
-function requiredMapGet<K, V>(
-  map: ReadonlyMap<K, V>,
-  key: K,
-  context: string
-): V {
-  const value = map.get(key);
-  if (value === undefined) {
-    throw new Error(`Expected ${context} to exist`);
-  }
-  return value;
-}
 
 /**
  * Find strongly-connected components using Tarjan's algorithm.
@@ -57,7 +47,11 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
   }
 
   function lowerLowlink(node: string, candidate: number): void {
-    const currentLowlink = requiredMapGet(lowlinks, node, `lowlink for node ${node}`);
+    const currentLowlink = getOrThrow(
+      lowlinks,
+      node,
+      `lowlink for node ${node}`,
+    );
     if (candidate < currentLowlink) {
       lowlinks.set(node, candidate);
     }
@@ -66,10 +60,10 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
   function handleNeighbor(node: string, neighbor: string): void {
     if (!indices.has(neighbor)) {
       strongconnect(neighbor);
-      const neighborLowlink = requiredMapGet(
+      const neighborLowlink = getOrThrow(
         lowlinks,
         neighbor,
-        `lowlink for neighbor node ${neighbor}`
+        `lowlink for neighbor node ${neighbor}`,
       );
       lowerLowlink(node, neighborLowlink);
       return;
@@ -79,21 +73,30 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
       return;
     }
 
-    const neighborIndex = requiredMapGet(indices, neighbor, `index for neighbor node ${neighbor}`);
+    const neighborIndex = getOrThrow(
+      indices,
+      neighbor,
+      `index for neighbor node ${neighbor}`,
+    );
     lowerLowlink(node, neighborIndex);
   }
 
   function collectRootComponent(root: string): void {
-    const rootLowlink = requiredMapGet(lowlinks, root, `lowlink for root node ${root}`);
-    const rootIndex = requiredMapGet(indices, root, `index for root node ${root}`);
+    const rootLowlink = getOrThrow(
+      lowlinks,
+      root,
+      `lowlink for root node ${root}`,
+    );
+    const rootIndex = getOrThrow(indices, root, `index for root node ${root}`);
     if (rootLowlink !== rootIndex) {
       return;
     }
 
     const firstMember = stack.pop();
-    if (firstMember === undefined) {
-      throw new Error('Tarjan stack underflow while collecting SCC members');
-    }
+    invariant(
+      firstMember !== undefined,
+      'Tarjan stack underflow while collecting SCC members',
+    );
 
     onStack.delete(firstMember);
 
@@ -102,9 +105,10 @@ export function findSCCs(graph: AdjacencyMap): SCC[] {
 
     while (currentMember !== root) {
       const popped = stack.pop();
-      if (popped === undefined) {
-        throw new Error('Tarjan stack underflow while collecting SCC members');
-      }
+      invariant(
+        popped !== undefined,
+        'Tarjan stack underflow while collecting SCC members',
+      );
 
       onStack.delete(popped);
       component.push(popped);
@@ -146,13 +150,13 @@ function mapNodesToSccIndices(sccs: ReadonlyArray<SCC>): Map<string, number> {
         continue;
       }
 
-      const previousSccIndex = requiredMapGet(
+      const previousSccIndex = getOrThrow(
         nodeToScc,
         member,
-        `previous SCC index for duplicate node ${member}`
+        `previous SCC index for duplicate node ${member}`,
       );
       throw new Error(
-        `Node ${member} appears in multiple SCCs: ${String(previousSccIndex)} and ${String(sccIndex)}`
+        `Node ${member} appears in multiple SCCs: ${String(previousSccIndex)} and ${String(sccIndex)}`,
       );
     }
   }
@@ -171,20 +175,24 @@ function createDagNodes(sccCount: number): Map<number, Set<number>> {
 function populateDagEdges(
   graph: AdjacencyMap,
   nodeToScc: ReadonlyMap<string, number>,
-  dag: ReadonlyMap<number, Set<number>>
+  dag: ReadonlyMap<number, Set<number>>,
 ): Set<string> {
   const graphNodes = new Set<string>();
   for (const [node, deps] of graph) {
     graphNodes.add(node);
-    const fromScc = requiredMapGet(nodeToScc, node, `SCC index for node ${node}`);
-    const sccDeps = requiredMapGet(dag, fromScc, `DAG node for SCC ${String(fromScc)}`);
+    const fromScc = getOrThrow(nodeToScc, node, `SCC index for node ${node}`);
+    const sccDeps = getOrThrow(
+      dag,
+      fromScc,
+      `DAG node for SCC ${String(fromScc)}`,
+    );
 
     for (const dep of deps) {
       graphNodes.add(dep);
-      const toScc = requiredMapGet(
+      const toScc = getOrThrow(
         nodeToScc,
         dep,
-        `SCC index for dependency node ${dep} referenced from ${node}`
+        `SCC index for dependency node ${dep} referenced from ${node}`,
       );
       if (toScc !== fromScc) {
         sccDeps.add(toScc);
@@ -197,14 +205,16 @@ function populateDagEdges(
 
 function assertAllSccNodesExistInGraph(
   nodeToScc: ReadonlyMap<string, number>,
-  graphNodes: ReadonlySet<string>
+  graphNodes: ReadonlySet<string>,
 ): void {
   for (const member of nodeToScc.keys()) {
     if (graphNodes.has(member)) {
       continue;
     }
 
-    throw new Error(`Node ${member} appears in SCCs but is not present in the graph`);
+    throw new Error(
+      `Node ${member} appears in SCCs but is not present in the graph`,
+    );
   }
 }
 
@@ -225,7 +235,7 @@ function assertAllSccNodesExistInGraph(
  */
 export function condenseToDAG(
   graph: AdjacencyMap,
-  sccs: ReadonlyArray<SCC>
+  sccs: ReadonlyArray<SCC>,
 ): Map<number, Set<number>> {
   const nodeToScc = mapNodesToSccIndices(sccs);
   const dag = createDagNodes(sccs.length);
@@ -245,7 +255,7 @@ export function condenseToDAG(
  * @throws {Error} If `dag` contains a cycle.
  */
 export function computeTopologicalDepth(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): Map<number, number> {
   const depth = new Map<number, number>();
   const visiting = new Set<number>();
@@ -256,18 +266,28 @@ export function computeTopologicalDepth(
   }
 
   function dfs(node: number): number {
-    const knownDepth = requiredMapGet(depth, node, `depth entry for SCC ${String(node)}`);
+    const knownDepth = getOrThrow(
+      depth,
+      node,
+      `depth entry for SCC ${String(node)}`,
+    );
     if (knownDepth !== -1) {
       return knownDepth;
     }
 
     if (visiting.has(node)) {
-      throw new Error(`Cycle detected in DAG while computing depth for SCC ${String(node)}`);
+      throw new Error(
+        `Cycle detected in DAG while computing depth for SCC ${String(node)}`,
+      );
     }
 
     visiting.add(node);
     try {
-      const deps = requiredMapGet(dag, node, `DAG dependencies for SCC ${String(node)}`);
+      const deps = getOrThrow(
+        dag,
+        node,
+        `DAG dependencies for SCC ${String(node)}`,
+      );
       if (deps.size === 0) {
         depth.set(node, 0);
         return 0;
@@ -296,7 +316,7 @@ export function computeTopologicalDepth(
 }
 
 function leafSccIndices(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): number[] {
   const leaves: number[] = [];
 
@@ -311,7 +331,7 @@ function leafSccIndices(
 }
 
 function buildUndirectedAdjacency(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): Map<number, Set<number>> {
   const undirected = new Map<number, Set<number>>();
 
@@ -320,17 +340,17 @@ function buildUndirectedAdjacency(
   }
 
   for (const [fromSccIndex, dependencies] of dag) {
-    const fromNeighbors = requiredMapGet(
+    const fromNeighbors = getOrThrow(
       undirected,
       fromSccIndex,
-      `undirected adjacency node for SCC ${String(fromSccIndex)}`
+      `undirected adjacency node for SCC ${String(fromSccIndex)}`,
     );
 
     for (const toSccIndex of dependencies) {
-      const toNeighbors = requiredMapGet(
+      const toNeighbors = getOrThrow(
         undirected,
         toSccIndex,
-        `undirected adjacency node for SCC ${String(toSccIndex)}`
+        `undirected adjacency node for SCC ${String(toSccIndex)}`,
       );
 
       fromNeighbors.add(toSccIndex);
@@ -343,7 +363,7 @@ function buildUndirectedAdjacency(
 
 function shortestPathDistances(
   undirected: ReadonlyMap<number, ReadonlySet<number>>,
-  startSccIndex: number
+  startSccIndex: number,
 ): Map<number, number> {
   const distances = new Map<number, number>();
   const queue: number[] = [startSccIndex];
@@ -352,21 +372,17 @@ function shortestPathDistances(
   let cursor = 0;
   while (cursor < queue.length) {
     const currentSccIndex = queue[cursor];
-    if (currentSccIndex === undefined) {
-      throw new Error('Queue index went out of range while traversing SCC distances');
-    }
-
     cursor++;
 
-    const currentDistance = requiredMapGet(
+    const currentDistance = getOrThrow(
       distances,
       currentSccIndex,
-      `distance for SCC ${String(currentSccIndex)}`
+      `distance for SCC ${String(currentSccIndex)}`,
     );
-    const neighbors = requiredMapGet(
+    const neighbors = getOrThrow(
       undirected,
       currentSccIndex,
-      `undirected neighbors for SCC ${String(currentSccIndex)}`
+      `undirected neighbors for SCC ${String(currentSccIndex)}`,
     );
 
     for (const neighborSccIndex of neighbors) {
@@ -393,7 +409,7 @@ function shortestPathDistances(
  * @returns Map keyed by leaf SCC index with nested maps to every other leaf
  */
 export function computeLeafDistanceMatrix(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): Map<number, Map<number, number | null>> {
   const leaves = leafSccIndices(dag);
   const undirected = buildUndirectedAdjacency(dag);
@@ -423,7 +439,7 @@ export interface LeafSccPartition {
   crossClusterDistanceSum: number;
 }
 
-function distanceWeight(distance: number | null): number {
+function distanceWeight(distance: number | null | undefined): number {
   return distance ?? 0;
 }
 
@@ -434,29 +450,30 @@ function clusterMembershipMaskFromAssignment(assignment: readonly boolean[]): st
 function clusterScore(
   leaves: readonly number[],
   matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>,
-  assignment: readonly boolean[]
+  assignment: readonly boolean[],
 ): number {
   let score = 0;
 
-  for (let leftIndex = 0; leftIndex < leaves.length; leftIndex++) {
-    for (let rightIndex = leftIndex + 1; rightIndex < leaves.length; rightIndex++) {
-      if (assignment[leftIndex] === assignment[rightIndex]) {
-        continue;
-      }
+  const clusterALeaves: number[] = [];
+  const clusterBLeaves: number[] = [];
 
-      const leftLeaf = leaves[leftIndex];
-      const rightLeaf = leaves[rightIndex];
-      if (leftLeaf === undefined || rightLeaf === undefined) {
-        throw new Error('Expected leaf SCC indices while scoring a partition');
-      }
+  for (const [index, leaf] of leaves.entries()) {
+    if (assignment[index]) {
+      clusterALeaves.push(leaf);
+    } else {
+      clusterBLeaves.push(leaf);
+    }
+  }
 
-      const leftRow = requiredMapGet(matrix, leftLeaf, `distance row for leaf SCC ${String(leftLeaf)}`);
-      const distance = requiredMapGet(
-        leftRow,
-        rightLeaf,
-        `distance between leaf SCC ${String(leftLeaf)} and ${String(rightLeaf)}`
-      );
+  for (const leftLeaf of clusterALeaves) {
+    const leftRow = matrix.get(leftLeaf);
+    invariant(
+      leftRow !== undefined,
+      `distance row for leaf SCC ${String(leftLeaf)}`,
+    );
 
+    for (const rightLeaf of clusterBLeaves) {
+      const distance = leftRow.get(rightLeaf);
       score += distanceWeight(distance);
     }
   }
@@ -540,21 +557,22 @@ function findFarthestLeafIndex(
     throw new Error('Expected at least one leaf SCC while seeding heuristic partition');
   }
 
-  const firstLeafRow = requiredMapGet(matrix, firstLeaf, `distance row for leaf SCC ${String(firstLeaf)}`);
+  const firstLeafRow = getOrThrow(matrix, firstLeaf, `distance row for leaf SCC ${String(firstLeaf)}`);
   let farthestLeafIndex = 1;
   let farthestLeafDistance = -1;
 
   for (let i = 1; i < leaves.length; i++) {
     const candidateLeaf = leaves[i];
-    if (candidateLeaf === undefined) {
-      throw new Error('Expected candidate leaf SCC while selecting heuristic seed');
-    }
+    invariant(
+      candidateLeaf !== undefined,
+      'Expected candidate leaf SCC while selecting heuristic seed',
+    );
 
     const candidateDistance = distanceWeight(
-      requiredMapGet(
+      getOrThrow(
         firstLeafRow,
         candidateLeaf,
-        `distance between leaf SCC ${String(firstLeaf)} and ${String(candidateLeaf)}`
+        `distance between leaf SCC ${String(firstLeaf)} and ${String(candidateLeaf)}`,
       )
     );
 
@@ -624,7 +642,7 @@ function clustersFromAssignment(
  * @returns Deterministic 2-way partition and objective score
  */
 export function partitionLeafSccsByDistance(
-  dag: ReadonlyMap<number, ReadonlySet<number>>
+  dag: ReadonlyMap<number, ReadonlySet<number>>,
 ): LeafSccPartition {
   const leaves = leafSccIndices(dag);
   if (leaves.length < 2) {
