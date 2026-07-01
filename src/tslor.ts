@@ -492,6 +492,31 @@ async function main() {
 }
 
 main().catch((err) => {
+  handleCliError(err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  handleCliError(reason);
+});
+
+function handleCliError(err: unknown): never {
+  if (err instanceof CliError) {
+    console.error('tslor:', err.message);
+    if (err.cause !== undefined) {
+      if (err.cause instanceof Error) {
+        console.error('  Caused by:', err.cause.message);
+        console.error(err.cause.stack);
+      } else {
+        console.error('  Caused by:', err.cause);
+      }
+    }
+    process.exit(err.exitCode);
+  }
+  if (err instanceof Error) {
+    console.error('tslor:', err.message);
+    console.error(err.stack);
+    process.exit(1);
+  }
   console.error('tslor:', err);
   process.exit(1);
-});
+}
