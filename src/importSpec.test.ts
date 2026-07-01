@@ -1,72 +1,88 @@
-
-
-import { assert, test } from 'vitest'
+import { assert, test } from 'vitest';
 import { modulePathToImportSpecAlias } from './importSpec';
 import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
-
-/*
-  Helper: assert that a value is defined and narrow its type.
-  vitest's assert.isDefined doesn't carry a type predicate, so this
-  wrapper bridges the gap without dead defensive code.
-*/
-function assertNotNull<T>(value: T, message?: string): NonNullable<T> {
-  assert.isDefined(value, message);
-  // RATIONALE: type-erasure mechanism for test scaffolding
-  // ast-grep-ignore: no-type-assertion
-  return value as NonNullable<T>;
-}
+import { getOrThrow } from './invariant';
 
 test('importSpec', () => {
   const testCase = {
     compilerOptions: {
       paths: {
-        "@acme/shared/*": [ "../../../shared/src/*" ],
-        "@acme/backend-shared/*": [ "../../../packages/backend-shared/src/*" ],
-        "@acme/main/*": [ "./*" ],
+        '@acme/shared/*': ['../../../shared/src/*'],
+        '@acme/backend-shared/*': ['../../../packages/backend-shared/src/*'],
+        '@acme/main/*': ['./*'],
       },
-      baseUrl: "src",
-      rootDir: ".",
+      baseUrl: 'src',
+      rootDir: '.',
     },
-    tsconfigDir: "/home/user/projects/acme/backend/main",
-    modulePath: "/home/user/projects/acme/packages/backend-shared/src/mutate/transform.ts",
+    tsconfigDir: '/home/user/projects/acme/backend/main',
+    modulePath:
+      '/home/user/projects/acme/packages/backend-shared/src/mutate/transform.ts',
   };
 
-  const result = modulePathToImportSpecAlias(testCase.compilerOptions, testCase.tsconfigDir, testCase.modulePath);
-  assert.equal(result, "@acme/backend-shared/mutate/transform");
+  const result = modulePathToImportSpecAlias(
+    testCase.compilerOptions,
+    testCase.tsconfigDir,
+    testCase.modulePath,
+  );
+  assert.equal(result, '@acme/backend-shared/mutate/transform');
 });
 
 test('Parse imports', () => {
-  const info = parseIsolatedSourceCode('import { foo, bar } from \'./baz\';\nimport { spam, ham } from \'eggs\';\n');
+  const info = parseIsolatedSourceCode(
+    "import { foo, bar } from './baz';\nimport { spam, ham } from 'eggs';\n",
+  );
 
   const importNames = info.unresolvedExportsByImportNames.keys();
   assert.deepEqual([...importNames], ['foo', 'bar', 'spam', 'ham']);
-  assert.deepEqual(info.unresolvedExportsByImportNames.get('foo'), { moduleSpec: './baz', name: 'foo' });
-  assert.deepEqual(info.unresolvedExportsByImportNames.get('bar'), { moduleSpec: './baz', name: 'bar' });
-  assert.deepEqual(info.unresolvedExportsByImportNames.get('spam'), { moduleSpec: 'eggs', name: 'spam' });
-  assert.deepEqual(info.unresolvedExportsByImportNames.get('ham'), { moduleSpec: 'eggs', name: 'ham' });
+  assert.deepEqual(info.unresolvedExportsByImportNames.get('foo'), {
+    moduleSpec: './baz',
+    name: 'foo',
+  });
+  assert.deepEqual(info.unresolvedExportsByImportNames.get('bar'), {
+    moduleSpec: './baz',
+    name: 'bar',
+  });
+  assert.deepEqual(info.unresolvedExportsByImportNames.get('spam'), {
+    moduleSpec: 'eggs',
+    name: 'spam',
+  });
+  assert.deepEqual(info.unresolvedExportsByImportNames.get('ham'), {
+    moduleSpec: 'eggs',
+    name: 'ham',
+  });
 });
 
 test('Parse exported variable', () => {
-  const info = parseIsolatedSourceCode('export const foo = 42;\nconst bar = 69;\n');
+  const info = parseIsolatedSourceCode(
+    'export const foo = 42;\nconst bar = 69;\n',
+  );
   assert.hasAllKeys(info.exports, ['foo']);
   assert.doesNotHaveAnyKeys(info.exports, ['bar']);
 });
 
 test('Parse exported function', () => {
-  const info = parseIsolatedSourceCode('export function greet() {\n  console.log(\'Hello!\');\n}\n');
+  const info = parseIsolatedSourceCode(
+    "export function greet() {\n  console.log('Hello!');\n}\n",
+  );
   assert.hasAllKeys(info.exports, ['greet']);
 });
 
 test('Parse function using imports', () => {
-  const info = parseIsolatedSourceCode('import { answer } from \'./mystery\';\n\nexport function getAnswer(): number {\n  return answer;\n}\n')
-  const expectedImports = [{ moduleSpec: './mystery', names: ['answer'], typeOnly: false }];
+  const info = parseIsolatedSourceCode(
+    "import { answer } from './mystery';\n\nexport function getAnswer(): number {\n  return answer;\n}\n",
+  );
+  const expectedImports = [
+    { moduleSpec: './mystery', names: ['answer'], typeOnly: false },
+  ];
   assert.deepEqual(info.imports, expectedImports);
   assert.hasAllKeys(info.exports, ['getAnswer']);
 
   const exportInfo = info.exports.get('getAnswer');
   assert.isDefined(exportInfo);
 
-  assert.deepEqual(exportInfo?.uses, [{ name: 'answer', moduleSpec: './mystery' }]);
+  assert.deepEqual(exportInfo?.uses, [
+    { name: 'answer', moduleSpec: './mystery' },
+  ]);
 });
 
 test('Parse transitive import use', () => {
@@ -96,18 +112,24 @@ export function qux() {
 `;
 
   const info = parseIsolatedSourceCode(src);
-  const expectedImports = [{ moduleSpec: './myfs', names: ['stat'], typeOnly: false }, { moduleSpec: './mypath', names: ['join'], typeOnly: false }];
+  const expectedImports = [
+    { moduleSpec: './myfs', names: ['stat'], typeOnly: false },
+    { moduleSpec: './mypath', names: ['join'], typeOnly: false },
+  ];
   assert.deepEqual(info.imports, expectedImports);
   assert.hasAllKeys(info.exports, ['baz', 'qux']);
 
   const bazExportInfo = info.exports.get('baz');
   assert.isDefined(bazExportInfo);
-  assert.deepEqual(bazExportInfo?.uses, [{ name: 'stat', moduleSpec: './myfs' }]);
+  assert.deepEqual(bazExportInfo?.uses, [
+    { name: 'stat', moduleSpec: './myfs' },
+  ]);
 
   const quxExportInfo = info.exports.get('qux');
   assert.isDefined(quxExportInfo);
-  assert.deepEqual(quxExportInfo?.uses, [{ name: 'join', moduleSpec: './mypath' }]);
-
+  assert.deepEqual(quxExportInfo?.uses, [
+    { name: 'join', moduleSpec: './mypath' },
+  ]);
 
   const fooUses = info.identifierUses.get('foo');
   assert.isDefined(fooUses);
@@ -116,7 +138,6 @@ export function qux() {
   const quxUses = info.identifierUses.get('qux');
   assert.isDefined(quxUses);
   assert.deepEqual(quxUses, ['foo']);
-
 });
 
 test.skip('Parse import aliases correctly (normalize-first strategy)', () => {
@@ -138,34 +159,60 @@ export function processFile(filename: string, content: string): string {
 `;
 
   const info = parseIsolatedSourceCode(src);
-  
+
   // Should correctly map local names to original export names
   const expectedImports = [
     { moduleSpec: 'date-fns', names: ['format', 'parse'], typeOnly: false },
-    { moduleSpec: 'path', names: ['join'], typeOnly: false }
+    { moduleSpec: 'path', names: ['join'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
-  
+
   // unresolvedExportsByImportNames should map local names to original export names
-  assert.equal(info.unresolvedExportsByImportNames.get('formatDate')?.name, 'format');
-  assert.equal(info.unresolvedExportsByImportNames.get('formatDate')?.moduleSpec, 'date-fns');
-  assert.equal(info.unresolvedExportsByImportNames.get('parseDate')?.name, 'parse');
-  assert.equal(info.unresolvedExportsByImportNames.get('parseDate')?.moduleSpec, 'date-fns');
-  assert.equal(info.unresolvedExportsByImportNames.get('pathJoin')?.name, 'join');
-  assert.equal(info.unresolvedExportsByImportNames.get('pathJoin')?.moduleSpec, 'path');
-  
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('formatDate')?.name,
+    'format',
+  );
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('formatDate')?.moduleSpec,
+    'date-fns',
+  );
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('parseDate')?.name,
+    'parse',
+  );
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('parseDate')?.moduleSpec,
+    'date-fns',
+  );
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('pathJoin')?.name,
+    'join',
+  );
+  assert.equal(
+    info.unresolvedExportsByImportNames.get('pathJoin')?.moduleSpec,
+    'path',
+  );
+
   // identifierUses should use the local aliased names
-  const processFileUses = assertNotNull(info.identifierUses.get('processFile'));
+  const processFileUses = getOrThrow(
+    info.identifierUses,
+    'processFile',
+    'processFile identifier uses should be tracked',
+  );
   assert.include(processFileUses, 'parseDate');
   assert.include(processFileUses, 'formatDate');
   assert.include(processFileUses, 'pathJoin');
 
   // Export should show transitive dependency on the original export names
-  const processFileExport = assertNotNull(info.exports.get('processFile'));
+  const processFileExport = getOrThrow(
+    info.exports,
+    'processFile',
+    'processFile export should be tracked',
+  );
   const expectedUses = [
     { name: 'format', moduleSpec: 'date-fns' },
     { name: 'parse', moduleSpec: 'date-fns' },
-    { name: 'join', moduleSpec: 'path' }
+    { name: 'join', moduleSpec: 'path' },
   ];
   assert.sameDeepMembers(processFileExport.uses, expectedUses);
 });
@@ -187,15 +234,15 @@ export function processData(data: string): string {
 `;
 
   const info = parseIsolatedSourceCode(src);
-  
+
   // Should include re-exports in the imports/exports tracking
   const expectedImports = [
     { moduleSpec: 'date-fns', names: ['format'], typeOnly: false },
     { moduleSpec: 'path', names: ['join'], typeOnly: false },
-    { moduleSpec: 'xml2js', names: ['default'], typeOnly: false }
+    { moduleSpec: 'xml2js', names: ['default'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
-  
+
   // Should track re-exported symbols as exports
   assert.hasAllKeys(info.exports, ['join', 'parser', 'processData']);
 });
@@ -217,16 +264,20 @@ export function readConfig(filename: string): string {
 `;
 
   const info = parseIsolatedSourceCode(src);
-  
+
   // Should handle namespace imports
   const expectedImports = [
     { moduleSpec: 'fs', names: ['*'], typeOnly: false },
-    { moduleSpec: 'path', names: ['*'], typeOnly: false }
+    { moduleSpec: 'path', names: ['*'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
-  
+
   // Should track namespace usage
-  const readConfigUses = assertNotNull(info.identifierUses.get('readConfig'));
+  const readConfigUses = getOrThrow(
+    info.identifierUses,
+    'readConfig',
+    'readConfig identifier uses should be tracked',
+  );
   assert.include(readConfigUses, 'path');
   assert.include(readConfigUses, 'fs');
 });
@@ -242,11 +293,11 @@ export function processUser(user: User): string {
 `;
 
   const info = parseIsolatedSourceCode(src);
-  
+
   // Should distinguish type-only imports
   const expectedImports = [
     { moduleSpec: './types', names: ['User'], typeOnly: true },
-    { moduleSpec: 'date-fns', names: ['format'], typeOnly: false }
+    { moduleSpec: 'date-fns', names: ['format'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
 });
