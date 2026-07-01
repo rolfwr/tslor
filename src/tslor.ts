@@ -247,10 +247,10 @@ program
 
 program
   .command('tscat <path>')
-  .description('Print the TypeScript module content of a file')
+  .description('Print the <script> content of a TypeScript or Vue SFC file')
   .action(async (path: string, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
-    await runTscat(path, debugOptions);
+    const { traceId } = getGlobalOptions(cmd);
+    await runTscat(path, { traceId });
   });
 
 program
