@@ -2,22 +2,27 @@
   "name": "tslor",
   "version": "0.1.0",
   "description": "TypeScript large-scale organized refactoring tool",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "tslor": "dist/tslor.mjs"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -b",
     "bundle": "esbuild src/tslor.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tslor.mjs --banner:js='#!/usr/bin/env node' && esbuild src/indexingWorker.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/indexingWorker.mjs",
     "lint": "oxlint src/",
     "check": "tsc -b && biome lint src/ && oxlint --deny-warnings --type-aware src/ && ast-grep scan src/ && vitest run",
     "test": "vitest run",
-    "outline": "tsx src/outline.ts",
-    "outline:silent": "tsx src/outline.ts"
+    "generate:help": "tsx scripts/generate-help-reference.ts",
+    "prepublishOnly": "pnpm run check && pnpm run bundle"
   },
   "packageManager": "pnpm@9.10.0+sha512.73a29afa36a0d092ece5271de5177ecbf8318d454ecd701343131b8ebc0c1a91c487da46ab77c8e596d6acf1461e3594ced4becedf8921b074fbd8653ed7051c",
   "dependencies": {
-    "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "diff": "^8.0.2",
     "ts-morph": "^25.0.0"

@@ -1,0 +1,16 @@
+id: no-double-bang
+language: TypeScript
+severity: error
+message: "Use `Boolean(...)` instead of `!!...` for boolean coercion"
+rule:
+  kind: unary_expression
+  all:
+    - has:
+        field: operator
+        pattern: '!'
+    - has:
+        field: argument
+        kind: unary_expression
+        has:
+          field: operator
+          pattern: '!'

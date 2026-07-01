@@ -6,4 +6,8 @@ dist
 _*
 .*
 !.gitignore
+!.npmrc
 !.oxlintrc.json
+test-*-plan-*.json
+scripts/*.js
+scripts/*.d.ts

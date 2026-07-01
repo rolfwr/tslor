@@ -2,7 +2,7 @@
 
 Fast, safe refactoring tools for large TypeScript monorepos with transparent Vue SFC support.
 
-**Note:** This is a personal tool built to scratch my own itch. It works well for its intended purpose, but the code quality reflects that — expect rough edges, missing error handling, and limited documentation. Use at your own risk.
+**Note:** This tool is optimized for large TypeScript monorepos.
 
 ## Installation
 
@@ -88,4 +88,4 @@ tsx src/tslor.ts <cmd>   # run during development without building
 
 ## License
 
-[License information to be added]
+MIT — see [LICENSE](LICENSE) for details.

@@ -1,0 +1,13 @@
+id: no-process-stderr-write
+language: TypeScript
+severity: error
+message: "Do not write directly to process.stderr in library code. Inject a writer callback instead so tests can provide a stub."
+# Test files excluded: they may need to verify stderr behavior.
+# tslor.ts excluded: it is the CLI entry point where stderr is the correct I/O edge.
+files:
+  - "**/*.ts"
+ignores:
+  - "**/*.test.ts"
+  - "**/tslor.ts"
+rule:
+  pattern: 'process.stderr.write'

@@ -25,6 +25,7 @@
   },
   "exclude": [
     "_*",
+    "scripts",
     "vitest.config.ts",
     "test-temp"
   ]
