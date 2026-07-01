@@ -157,23 +157,38 @@ program
 
 program
   .command('trace-imports <entryFile>')
-  .description('Show all symbols imported by an entry file')
+  .description('Show all symbols imported by a file, grouped by source module')
   .option('--from-project <project>', 'Filter imports from a specific project')
   .action(async (entryFile: string, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runTraceImports(entryFile, opts, debugOptions, fileSystem);
+    await runTraceImports(
+      entryFile,
+      opts,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program
   .command('grep <directory> <symbolName>')
-  .description('Find where exported symbols are defined (loose search for exploration)')
+  .description('Find modules that export a symbol matching the given name')
   .option('-u, --uses', 'Show where the symbols are imported/used')
   .option('-v, --verbose', 'Show indexing progress and save confirmation')
   .action(async (directory: string, symbolName: string, opts, cmd) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runGrep(directory, symbolName, opts, debugOptions, fileSystem);
+    await runGrep(
+      directory,
+      symbolName,
+      opts,
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program
@@ -304,9 +319,17 @@ program
   .description('Find leaf modules importing specified types (no transitive type-using dependencies)')
   .option('--all', 'Include modules that define the types')
   .action(async (directory: string, types: string[], opts: OptionValues, cmd: Command) => {
-    const debugOptions = getDebugOptions(cmd);
+    const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
-    await runTypeLeafUsage(directory, types, { all: opts['all'] === true }, debugOptions, fileSystem);
+    await runTypeLeafUsage(
+      directory,
+      types,
+      { all: opts['all'] === true },
+      { traceId },
+      fresh,
+      fileSystem,
+      writeStderr,
+    );
   });
 
 program

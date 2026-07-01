@@ -1,15 +1,15 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot } from "./project";
-import { openStorage, isObjWithExporterPath } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath, isPathWithinDirectory } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot } from './project';
+import { openStorage, isObjWithExporterPath } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
+import { FileSystem } from './filesystem';
 
 export interface TraceImportsOptions {
   fromProject?: string;
 }
 
-function getExporterPathFromObj(obj: import("./objstore").Obj): string | null {
+function getExporterPathFromObj(obj: import('./objstore').Obj): string | null {
   if (!isObjWithExporterPath(obj)) {
     return null;
   }
@@ -19,10 +19,13 @@ function getExporterPathFromObj(obj: import("./objstore").Obj): string | null {
 function addGroupSymbols(
   groups: unknown[],
   exporterPath: string,
-  map: Map<string, Set<string>>
+  map: Map<string, Set<string>>,
 ): void {
   for (const group of groups) {
-    if (typeof group !== 'string' || !group.startsWith('export|' + exporterPath + '|')) {
+    if (
+      typeof group !== 'string' ||
+      !group.startsWith('export|' + exporterPath + '|')
+    ) {
       continue;
     }
     const symbolName = group.split('|')[2];
@@ -39,8 +42,8 @@ function addGroupSymbols(
 }
 
 function buildImportsByExporter(
-  importObjects: ReadonlyArray<import("./objstore").Obj>,
-  options: TraceImportsOptions
+  importObjects: ReadonlyArray<import('./objstore').Obj>,
+  options: TraceImportsOptions,
 ): Map<string, Set<string>> {
   const importsByExporter = new Map<string, Set<string>>();
 
@@ -61,7 +64,9 @@ function buildImportsByExporter(
   return importsByExporter;
 }
 
-function displayTraceResults(importsByExporter: Map<string, Set<string>>): void {
+function displayTraceResults(
+  importsByExporter: Map<string, Set<string>>,
+): void {
   const exporterPaths = Array.from(importsByExporter.keys()).sort();
   let totalSymbols = 0;
   for (const exporterPath of exporterPaths) {
@@ -77,19 +82,32 @@ function displayTraceResults(importsByExporter: Map<string, Set<string>>): void 
     }
     console.log();
   }
-  console.log(`Total: ${totalSymbols} symbols from ${exporterPaths.length} files`);
+  console.log(
+    `Total: ${totalSymbols} symbols from ${exporterPaths.length} files`,
+  );
 }
 
 export async function runTraceImports(
   entryFile: string,
   options: TraceImportsOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ) {
-  const absoluteEntryFile = normalizeAndValidatePath(entryFile, "Entry file", false);
+  const absoluteEntryFile = normalizeAndValidatePath(
+    entryFile,
+    'Entry file',
+    false,
+  );
   const repoRoot = findGitRepoRoot(absoluteEntryFile);
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(repoRoot, db, true, fileSystem, writer);
 
   console.log(`Tracing imports from: ${absoluteEntryFile}`);
   if (options.fromProject) {
@@ -117,4 +135,3 @@ export async function runTraceImports(
   displayTraceResults(importsByExporter);
   db.save();
 }
-

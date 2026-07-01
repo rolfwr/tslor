@@ -1,9 +1,9 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot } from "./project";
-import { openStorage, isObjWithExporterPath } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizePath, isPathWithinDirectory } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot } from './project';
+import { openStorage, isObjWithExporterPath } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizePath, isPathWithinDirectory } from './pathUtils';
+import { FileSystem } from './filesystem';
 
 export interface GrepOptions {
   uses?: boolean;
@@ -33,7 +33,7 @@ function buildExporterIndexes(
   symbolImports: ReadonlyArray<import('./objstore').Obj>,
   symbolName: string,
   absoluteDirectory: string,
-  options: GrepOptions
+  options: GrepOptions,
 ): ExporterIndexes {
   const exportersByPath = new Map<string, Set<string>>();
   const importersByExporter = new Map<string, Set<string>>();
@@ -72,7 +72,7 @@ function buildExporterIndexes(
 function displayExporterResults(
   exportersByPath: Map<string, Set<string>>,
   importersByExporter: Map<string, Set<string>>,
-  options: GrepOptions
+  options: GrepOptions,
 ): void {
   const exporterPaths = Array.from(exportersByPath.keys()).sort();
   for (const exporterPath of exporterPaths) {
@@ -96,12 +96,25 @@ export async function runGrep(
   symbolName: string,
   options: GrepOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ) {
   const absoluteDirectory = normalizePath(directory);
   const repoRoot = findGitRepoRoot(absoluteDirectory);
-  const db = openStorage(debugOptions, { verbose: options.verbose || false, inMemory: false });
-  await updateStorage(repoRoot, db, options.verbose || false, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: options.verbose || false,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(
+    repoRoot,
+    db,
+    options.verbose || false,
+    fileSystem,
+    writer,
+  );
 
   const symbolImports = db.getSymbolImports(symbolName);
   if (symbolImports.length === 0) {
@@ -112,7 +125,7 @@ export async function runGrep(
     symbolImports,
     symbolName,
     absoluteDirectory,
-    options
+    options,
   );
 
   if (exportersByPath.size === 0) {
@@ -123,4 +136,3 @@ export async function runGrep(
 
   db.save();
 }
-

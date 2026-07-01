@@ -1,9 +1,9 @@
-import { updateStorage } from "./indexing";
-import { findGitRepoRoot } from "./project";
-import { openStorage, Storage, isObjWithExporterPath } from "./storage";
-import { DebugOptions } from "./objstore";
-import { normalizeAndValidatePath } from "./pathUtils";
-import { FileSystem } from "./filesystem";
+import { updateStorage } from './indexing';
+import { findGitRepoRoot } from './project';
+import { openStorage, Storage, isObjWithExporterPath } from './storage';
+import { DebugOptions } from './objstore';
+import { normalizeAndValidatePath } from './pathUtils';
+import { FileSystem } from './filesystem';
 
 export interface TypeLeafUsageOptions {
   all?: boolean;
@@ -14,12 +14,19 @@ export async function runTypeLeafUsage(
   typeNames: string[],
   options: TypeLeafUsageOptions,
   debugOptions: DebugOptions,
-  fileSystem: FileSystem
+  fresh: boolean,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<void> {
-  const directory = normalizeAndValidatePath(directoryArg, "Directory", false);
+  const directory = normalizeAndValidatePath(directoryArg, 'Directory', false);
   const repoRoot = findGitRepoRoot(directory);
-  const db = openStorage(debugOptions, { verbose: true, inMemory: false });
-  await updateStorage(repoRoot, db, true, fileSystem, (msg) => console.log(msg));
+  const db = openStorage(debugOptions, {
+    verbose: true,
+    fresh,
+    basePath: repoRoot,
+    inMemory: false,
+  });
+  await updateStorage(repoRoot, db, true, fileSystem, writer);
   db.save();
 
   const { importers, definers } = findFilesUsingTypes(db, typeNames, directory);
@@ -29,17 +36,25 @@ export async function runTypeLeafUsage(
     return;
   }
 
-  const candidateSet = options.all ? importers : new Set([...importers].filter(f => !definers.has(f)));
+  const candidateSet = options.all
+    ? importers
+    : new Set([...importers].filter((f) => !definers.has(f)));
 
   const leaves = findLeaves(db, candidateSet);
 
-  console.log(`Found ${importers.size} files importing [${typeNames.join(', ')}], ${leaves.length} are leaves.`);
+  console.log(
+    `Found ${importers.size} files importing [${typeNames.join(', ')}], ${leaves.length} are leaves.`,
+  );
   for (const leaf of leaves) {
     console.log(leaf);
   }
 }
 
-function findFilesUsingTypes(db: Storage, typeNames: string[], directory: string): { importers: Set<string>, definers: Set<string> } {
+function findFilesUsingTypes(
+  db: Storage,
+  typeNames: string[],
+  directory: string,
+): { importers: Set<string>; definers: Set<string> } {
   const directoryPrefix = directory.endsWith('/') ? directory : directory + '/';
   const importers = new Set<string>();
   const definers = new Set<string>();
