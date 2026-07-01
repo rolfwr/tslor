@@ -656,6 +656,12 @@ export function createModuleInspector(
   const tsconfigPathByDir = new Map<string, string | null>();
   const compilerOptionsByTsconfig = new Map<string, CompilerOptions>();
 
+  /*
+    Single Project reused across all files in this inspector.
+    This avoids the overhead of creating a new Project per file.
+  */
+  const project = createProject();
+
   async function cachedGetTsconfigPath(
     repoRoot: string,
     filePath: string,
@@ -682,77 +688,19 @@ export function createModuleInspector(
     return result;
   }
 
-  async function resolveSpecCached(
-    repoRoot: string,
+  async function loadSourceFileCached(
     tsFilePath: string,
-    spec: string,
-    tsconfigPath: string,
-  ): Promise<string | null> {
-    const compilerOptions = await cachedGetCompilerOptions(tsconfigPath);
-    if (spec.startsWith('.')) {
-      const resolvedPath = await resolveSourceFile(
-        spec,
-        dirname(tsFilePath),
-        fileSystem,
-      );
-      if (resolvedPath !== null) {
-        return resolvedPath;
-      }
+  ): Promise<SourceFile> {
+    const sourceFile = project.getSourceFile(tsFilePath);
+    if (sourceFile) {
+      return sourceFile;
     }
-    return importSpecAliasToModulePath(
-      compilerOptions,
-      dirname(tsconfigPath),
-      spec,
-      fileSystem,
-    );
-  }
-
-  async function resolveSpecPaths(
-    staticModuleInfo: StaticModuleInfo,
-    repoRoot: string,
-    tsFilePath: string,
-    importerTsConfig: string,
-  ): Promise<Map<string, string>> {
-    const importSpecs = new Set<string>();
-    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-      importSpecs.add(unresolved.moduleSpec);
+    project.addSourceFileAtPath(tsFilePath);
+    const loaded = project.getSourceFile(tsFilePath);
+    if (!loaded) {
+      throw new CliError('Source file not found');
     }
-    const resolvedPathsBySpec = new Map<string, string>();
-    for (const spec of importSpecs) {
-      const resolvedPath = await resolveSpecCached(
-        repoRoot,
-        tsFilePath,
-        spec,
-        importerTsConfig,
-      );
-      if (resolvedPath) {
-        resolvedPathsBySpec.set(spec, resolvedPath);
-      }
-    }
-    return resolvedPathsBySpec;
-  }
-
-  function populateModuleInfoImports(
-    moduleInfo: ModuleInfo,
-    staticModuleInfo: StaticModuleInfo,
-    resolvedPathsBySpec: Map<string, string>,
-  ): void {
-    for (const unresolved of staticModuleInfo.unresolvedExportsByImportNames.values()) {
-      const resolvedPath = resolvedPathsBySpec.get(unresolved.moduleSpec);
-      if (resolvedPath) {
-        moduleInfo.importOfNamedExports.push({
-          type: 'NamedExport',
-          path: resolvedPath,
-          name: unresolved.name,
-        });
-      } else {
-        moduleInfo.importOfUnresolvedSpec.push({
-          type: 'ExternalImport',
-          moduleSpecifier: unresolved.moduleSpec,
-          name: unresolved.name,
-        });
-      }
-    }
+    return loaded;
   }
 
   return async (
@@ -768,14 +716,14 @@ export function createModuleInspector(
         return null;
       }
 
-      const sourceFile = await loadSourceFile(tsFilePath, fileSystem);
+      const sourceFile = await loadSourceFileCached(tsFilePath);
       const staticModuleInfo: StaticModuleInfo = parseModule(sourceFile);
 
-      const resolvedPathsBySpec = await resolveSpecPaths(
+      const resolvedPathsBySpec = await resolveImportSpecs(
         staticModuleInfo,
         repoRoot,
         tsFilePath,
-        importerTsConfig,
+        fileSystem,
       );
 
       const moduleInfo: ModuleInfo = {
