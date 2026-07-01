@@ -15,21 +15,37 @@ beforeEach(() => {
   testDir = join(__dirname, '.tslor-test-deps-tmp');
 
   const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, { jsonlPath: '/dev/null', verbose: false, inMemory: true });
+  storage = new Storage(objStore, {
+    jsonlPath: '/dev/null',
+    verbose: false,
+    inMemory: true,
+  });
 
   const aPath = join(testDir, 'a.ts');
   const bPath = join(testDir, 'b.ts');
   const cPath = join(testDir, 'c.ts');
   // a imports b, b imports c
-  storage.putImport(aPath, '/tsconfig.json', 0, 'b', { path: bPath, tsconfig: '/tsconfig.json' });
-  storage.putImport(bPath, '/tsconfig.json', 0, 'c', { path: cPath, tsconfig: '/tsconfig.json' });
+  storage.putImport(aPath, '/tsconfig.json', 0, 'b', {
+    path: bPath,
+    tsconfig: '/tsconfig.json',
+  });
+  storage.putImport(bPath, '/tsconfig.json', 0, 'c', {
+    path: cPath,
+    tsconfig: '/tsconfig.json',
+  });
 });
 
 describe('runDependencies file input (backward compat)', () => {
   test('file-only input produces identical output as before', async () => {
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
-      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
+      [
+        join(testDir, 'a.ts'),
+        'import { b } from "./b";\nexport const a = 1;\n',
+      ],
+      [
+        join(testDir, 'b.ts'),
+        'import { c } from "./c";\nexport const b = 2;\n',
+      ],
       [join(testDir, 'c.ts'), 'export const c = 3;\n'],
     ]);
     const fileSystem = new InMemoryFileSystem(files);
@@ -47,7 +63,7 @@ describe('runDependencies file input (backward compat)', () => {
         output: { log: (msg) => logs.push(msg) },
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     /*
@@ -65,8 +81,14 @@ describe('runDependencies file input (backward compat)', () => {
 describe('runDependencies directory expansion', () => {
   test('directory input expands to TypeScript files and lists all dependencies', async () => {
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
-      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
+      [
+        join(testDir, 'a.ts'),
+        'import { b } from "./b";\nexport const a = 1;\n',
+      ],
+      [
+        join(testDir, 'b.ts'),
+        'import { c } from "./c";\nexport const b = 2;\n',
+      ],
       [join(testDir, 'c.ts'), 'export const c = 3;\n'],
       [join(testDir, 'd.js'), 'not typescript\n'],
     ]);
@@ -82,7 +104,7 @@ describe('runDependencies directory expansion', () => {
         output: { log: (msg) => logs.push(msg) },
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     /*
@@ -100,8 +122,8 @@ describe('runDependencies directory expansion', () => {
     assert.isTrue(logs.includes(cPath), 'c.ts should be in output');
     // d.js should NOT appear
     assert.isFalse(
-      logs.some(l => l.endsWith('d.js')),
-      'd.js should not be in output'
+      logs.some((l) => l.endsWith('d.js')),
+      'd.js should not be in output',
     );
   });
 });
@@ -109,8 +131,14 @@ describe('runDependencies directory expansion', () => {
 describe('runDependencies reverse-dependency walking', () => {
   test('single input discovers transitive reverse dependencies', async () => {
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./b";\nexport const a = 1;\n'],
-      [join(testDir, 'b.ts'), 'import { c } from "./c";\nexport const b = 2;\n'],
+      [
+        join(testDir, 'a.ts'),
+        'import { b } from "./b";\nexport const a = 1;\n',
+      ],
+      [
+        join(testDir, 'b.ts'),
+        'import { c } from "./c";\nexport const b = 2;\n',
+      ],
       [join(testDir, 'c.ts'), 'export const c = 3;\n'],
     ]);
     const fileSystem = new InMemoryFileSystem(files);
@@ -128,13 +156,19 @@ describe('runDependencies reverse-dependency walking', () => {
         output: { log: (msg) => logs.push(msg) },
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     assert.lengthOf(logs, 3);
     assert.isTrue(logs.includes(cPath), 'c.ts (input) should be in output');
-    assert.isTrue(logs.includes(join(testDir, 'b.ts')), 'b.ts (imports c) should be in output');
-    assert.isTrue(logs.includes(join(testDir, 'a.ts')), 'a.ts (imports b) should be in output');
+    assert.isTrue(
+      logs.includes(join(testDir, 'b.ts')),
+      'b.ts (imports c) should be in output',
+    );
+    assert.isTrue(
+      logs.includes(join(testDir, 'a.ts')),
+      'a.ts (imports b) should be in output',
+    );
   });
 });
 
@@ -148,7 +182,7 @@ describe('runDependencies empty input', () => {
         [],
         { repoRoot: testDir, storage },
         { traceId: null },
-        fileSystem
+        fileSystem,
       );
       throw new Error('Expected runDependencies to throw');
     } catch (err) {
@@ -171,7 +205,7 @@ describe('runDependencies empty input', () => {
         [emptyDir],
         { repoRoot: testDir, storage },
         { traceId: null },
-        fileSystem
+        fileSystem,
       );
       throw new Error('Expected runDependencies to throw');
     } catch (err) {
@@ -187,7 +221,10 @@ describe('runDependencies mixed input', () => {
   test('mixed file and directory input works', async () => {
     const subDir = join(testDir, 'sub');
     const files = new Map<string, string>([
-      [join(testDir, 'a.ts'), 'import { b } from "./sub/b";\nexport const a = 1;\n'],
+      [
+        join(testDir, 'a.ts'),
+        'import { b } from "./sub/b";\nexport const a = 1;\n',
+      ],
       [join(subDir, 'b.ts'), 'export const b = 2;\n'],
       [join(subDir, 'c.ts'), 'export const c = 3;\n'],
     ]);
@@ -198,7 +235,10 @@ describe('runDependencies mixed input', () => {
     const cPath = join(subDir, 'c.ts');
 
     // Set up storage: a imports sub/b
-    storage.putImport(aPath, '/tsconfig.json', 0, 'b', { path: bPath, tsconfig: '/tsconfig.json' });
+    storage.putImport(aPath, '/tsconfig.json', 0, 'b', {
+      path: bPath,
+      tsconfig: '/tsconfig.json',
+    });
 
     const logs: string[] = [];
 
@@ -211,7 +251,7 @@ describe('runDependencies mixed input', () => {
         output: { log: (msg) => logs.push(msg) },
       },
       { traceId: null },
-      fileSystem
+      fileSystem,
     );
 
     // All resolved files should appear in output
