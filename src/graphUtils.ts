@@ -452,6 +452,13 @@ function clusterMembershipMaskFromAssignment(
   return assignment.map((isInA) => (isInA ? '1' : '0')).join('');
 }
 
+/*
+  Hot path (by analysis): clusterScore is the innermost cost of leaf-SCC partitioning.
+  It runs once for each of the 2^(n-1) masks in exactLeafPartitionAssignment, and O(n)
+  times inside greedyLeafPartitionAssignment's O(n^3) loop. The index-based loops and
+  non-null assertion below deliberately avoid the per-call tuple/array allocations a
+  for...of / entries() form would incur; keep this form here.
+*/
 function clusterScore(
   leaves: readonly number[],
   matrix: ReadonlyMap<number, ReadonlyMap<number, number | null>>,
@@ -459,26 +466,22 @@ function clusterScore(
 ): number {
   let score = 0;
 
-  const clusterALeaves: number[] = [];
-  const clusterBLeaves: number[] = [];
+  for (let leftIndex = 0; leftIndex < leaves.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < leaves.length; rightIndex++) {
+      if (assignment[leftIndex] === assignment[rightIndex]) {
+        continue;
+      }
 
-  for (const [index, leaf] of leaves.entries()) {
-    if (assignment[index]) {
-      clusterALeaves.push(leaf);
-    } else {
-      clusterBLeaves.push(leaf);
-    }
-  }
+      const leftLeaf = leaves[leftIndex];
+      const rightLeaf = leaves[rightIndex];
 
-  for (const leftLeaf of clusterALeaves) {
-    const leftRow = matrix.get(leftLeaf);
-    invariant(
-      leftRow !== undefined,
-      `distance row for leaf SCC ${String(leftLeaf)}`,
-    );
-
-    for (const rightLeaf of clusterBLeaves) {
-      const distance = leftRow.get(rightLeaf);
+      const leftRow = getOrThrow(
+        matrix,
+        leftLeaf,
+        `distance row for leaf SCC ${String(leftLeaf)}`,
+      );
+      // biome-ignore lint/style/noNonNullAssertion: rightIndex bounds guarantee rightLeaf is defined
+      const distance = leftRow.get(rightLeaf!);
       score += distanceWeight(distance);
     }
   }
@@ -565,9 +568,9 @@ function findFarthestLeafIndex(
 ): number {
   const firstLeaf = leaves.at(0);
   invariant(firstLeaf !== undefined, 'Expected at least one leaf SCC');
-  const firstLeafRow = matrix.get(firstLeaf);
-  invariant(
-    firstLeafRow !== undefined,
+  const firstLeafRow = getOrThrow(
+    matrix,
+    firstLeaf,
     `distance row for leaf SCC ${String(firstLeaf)}`,
   );
   let farthestLeafIndex = 1;
