@@ -50,12 +50,8 @@ export async function runApply(
 
   // Validate checksums
   writer('Validating checksums...\n');
-  try {
-    await validateChecksums(plan, force, warn);
-    writer('✓ Checksums valid\n');
-  } catch (error) {
-    reThrowAsCliError(error, 'Checksum validation failed');
-  }
+  await validateChecksums(plan, force, warn);
+  writer('✓ Checksums valid\n');
 
   // Execute changes
   writer('\n');
@@ -64,7 +60,7 @@ export async function runApply(
     await executeChanges(plan.changes);
     writer('✓ Changes applied\n');
   } catch (error) {
-    reThrowAsCliError(error, 'Failed to apply changes');
+    reThrowAsCliError(error, 'Failed to apply changes', true);
   }
 
   // If verification command is provided, run it

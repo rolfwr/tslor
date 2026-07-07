@@ -617,13 +617,8 @@ process.on('unhandledRejection', (reason) => {
 function handleCliError(err: unknown): never {
   if (err instanceof CliError) {
     console.error('tslor:', err.message);
-    if (err.cause !== undefined) {
-      if (err.cause instanceof Error) {
-        console.error('  Caused by:', err.cause.message);
-        console.error(err.cause.stack);
-      } else {
-        console.error('  Caused by:', err.cause);
-      }
+    if (err.unexpected && err.cause instanceof Error) {
+      console.error(err.cause.stack);
     }
     process.exit(err.exitCode);
   }

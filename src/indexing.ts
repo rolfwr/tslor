@@ -383,7 +383,11 @@ async function indexImportFromFilesParallel(
       }
       moduleInfo = parseWorkerResult(msg);
     } catch (error) {
-      reThrowAsCliError(error, `Failed to process file ${currentItem.path}`);
+      reThrowAsCliError(
+        error,
+        `Failed to process file ${currentItem.path}`,
+        true,
+      );
     }
     if (moduleInfo) {
       try {
@@ -394,7 +398,11 @@ async function indexImportFromFilesParallel(
           fileSystem,
         );
       } catch (error) {
-        reThrowAsCliError(error, `Failed to process file ${currentItem.path}`);
+        reThrowAsCliError(
+          error,
+          `Failed to process file ${currentItem.path}`,
+          true,
+        );
       }
     }
     processedCount++;
@@ -428,7 +436,12 @@ async function indexImportFromFilesParallel(
     } catch (err) {
       if (!firstError.value) {
         firstError.value =
-          err instanceof CliError ? err : new CliError(String(err));
+          err instanceof CliError
+            ? err
+            : new CliError(err instanceof Error ? err.message : String(err), {
+                cause: err,
+                unexpected: true,
+              });
       }
       wrapper.terminate();
       abort.value = true;
@@ -486,7 +499,7 @@ async function refreshImportsFromFile(
     }
     await storeImportsFromFile(moduleInfo, db, mtimeMs, fileSystem);
   } catch (error) {
-    reThrowAsCliError(error, `Failed to process file ${somePath}`);
+    reThrowAsCliError(error, `Failed to process file ${somePath}`, true);
   }
 }
 
@@ -645,7 +658,7 @@ export async function inspectModule(
 
     return moduleInfo;
   } catch (error) {
-    reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`);
+    reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`, true);
   }
 }
 
@@ -792,7 +805,7 @@ export function createModuleInspector(
 
       return moduleInfo;
     } catch (error) {
-      reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`);
+      reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`, true);
     }
   };
 }

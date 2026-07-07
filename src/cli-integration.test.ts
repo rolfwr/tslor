@@ -20,6 +20,10 @@ describe('CLI error handling', () => {
       );
       assert.equal(exitCode, 1);
       assert.include(stderr, 'ENOENT');
+      assert.include(stderr, '/nonexistent/file.ts');
+      // CLI error output must not leak raw stack traces to the user.
+      assert.notInclude(stderr, 'at readFileSync');
+      assert.notInclude(stderr, 'at runTscat');
     } finally {
       cleanup();
     }
