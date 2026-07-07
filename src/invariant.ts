@@ -42,9 +42,11 @@ export function invariant(
  * Use this function when a value being `null` signifies a programming bug in
  * the code, and it's not trivial to prove that such bugs cannot exist.
  *
- * Use this function in test cases as a replacement for assert.isDefined() whose
- * definition is missing `asserts value is NonNullable<T>` that tells the
- * TypeScript compiler about the resulting type guarantees.
+ * Use this function in test cases as a replacement for `assert.isDefined()`
+ * paired with a follow-up definedness guard (e.g. `if (x === undefined) throw`).
+ * That guard is runtime-dead — `assert.isDefined` already throws if the value is
+ * missing — and exists only to obtain compiler narrowing that chai withholds.
+ * `assertDefined` supplies both the check and the narrowing in one call.
  *
  * Do not use this function to placate false positives in static analysis tools,
  * when we trivially can see that a null value can never happen at runtime. For

@@ -2,8 +2,7 @@
  * Application-level error types for TSLOR.
  *
  * {@code CliError} signals CLI-level failures that result in a non-zero
- * exit code. {@code NoTsconfigError} is a subclass used when a file is
- * not part of any TypeScript project.
+ * exit code.
  */
 
 interface CliErrorOptions {
@@ -26,13 +25,6 @@ export class CliError extends Error {
     this.exitCode = opts?.exitCode ?? 1;
   }
 }
-
-/**
- * Error thrown when a file has no tsconfig — it is not part of any TypeScript
- * project. Callers that process files in bulk (e.g., worker threads) should
- * treat this as a skip rather than a failure.
- */
-export class NoTsconfigError extends CliError {}
 
 /**
  * Re-throw error as CliError, passing through existing CliError

@@ -75,18 +75,6 @@ export function normalizeAndValidatePath(
 }
 
 /**
- * Utility for command handlers: normalize multiple input paths and validate existence.
- */
-export function normalizeAndValidatePaths(
-  inputPaths: string[],
-  description: string,
-): string[] {
-  return inputPaths.map((path) =>
-    normalizeAndValidatePath(path, description, false),
-  );
-}
-
-/**
  * Check whether `filePath` resides inside `directoryPath`.
  *
  * Appends the platform separator to the directory before calling `startsWith`
