@@ -1,30 +1,25 @@
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ObjStore } from './objstore';
 import { Storage } from './storage';
 import { InMemoryFileSystem } from './filesystem';
-import { assert, test, describe, beforeEach } from 'vitest';
+import { assert, test, describe } from 'vitest';
 import { runDependencies } from './runDependencies';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-let testDir: string;
-let storage: Storage;
-
-beforeEach(() => {
-  testDir = join(__dirname, '.tslor-test-deps-tmp');
-
-  const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, {
+function createStorage(): Storage {
+  return new Storage(new ObjStore({ traceId: null }), {
     jsonlPath: '/dev/null',
     verbose: false,
     inMemory: true,
   });
+}
 
+function createTestStorage(testDir: string): Storage {
   const aPath = join(testDir, 'a.ts');
   const bPath = join(testDir, 'b.ts');
   const cPath = join(testDir, 'c.ts');
-  // a imports b, b imports c
+  const storage = createStorage();
   storage.putImport(aPath, '/tsconfig.json', 0, 'b', {
     path: bPath,
     tsconfig: '/tsconfig.json',
@@ -33,10 +28,13 @@ beforeEach(() => {
     path: cPath,
     tsconfig: '/tsconfig.json',
   });
-});
+  return storage;
+}
 
 describe('runDependencies file input (backward compat)', () => {
   test('file-only input produces identical output as before', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createTestStorage(testDir);
     const files = new Map<string, string>([
       [
         join(testDir, 'a.ts'),
@@ -80,6 +78,8 @@ describe('runDependencies file input (backward compat)', () => {
 
 describe('runDependencies directory expansion', () => {
   test('directory input expands to TypeScript files and lists all dependencies', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createTestStorage(testDir);
     const files = new Map<string, string>([
       [
         join(testDir, 'a.ts'),
@@ -130,6 +130,8 @@ describe('runDependencies directory expansion', () => {
 
 describe('runDependencies reverse-dependency walking', () => {
   test('single input discovers transitive reverse dependencies', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createTestStorage(testDir);
     const files = new Map<string, string>([
       [
         join(testDir, 'a.ts'),
@@ -174,6 +176,8 @@ describe('runDependencies reverse-dependency walking', () => {
 
 describe('runDependencies empty input', () => {
   test('empty paths array throws error', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createStorage();
     const files = new Map<string, string>();
     const fileSystem = new InMemoryFileSystem(files);
 
@@ -194,6 +198,8 @@ describe('runDependencies empty input', () => {
   });
 
   test('directory with no TypeScript files throws error', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createStorage();
     const emptyDir = join(testDir, 'empty');
     const files = new Map<string, string>([
       [join(emptyDir, 'readme.md'), 'no ts files here\n'],
@@ -219,6 +225,8 @@ describe('runDependencies empty input', () => {
 
 describe('runDependencies mixed input', () => {
   test('mixed file and directory input works', async () => {
+    const testDir = join(tmpdir(), `tslor-test-${randomUUID()}`);
+    const storage = createStorage();
     const subDir = join(testDir, 'sub');
     const files = new Map<string, string>([
       [

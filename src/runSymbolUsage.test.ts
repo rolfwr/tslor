@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { assert, describe, test } from 'vitest';
+import { createTempDir } from './testUtils';
 import { resolveProjectPath } from './runSymbolUsage';
 
 /**
@@ -11,12 +10,11 @@ import { resolveProjectPath } from './runSymbolUsage';
  * `findGitRepoRoot` works.
  */
 function createGitRepo(): { dir: string; cleanup: () => void } {
-  const dir = join(tmpdir(), `tslor-test-${randomUUID()}`);
-  mkdirSync(dir, { recursive: true });
-  mkdirSync(join(dir, '.git'), { recursive: true });
-
-  const cleanup = () => rmSync(dir, { recursive: true, force: true });
-  return { dir, cleanup };
+  return createTempDir({
+    setup: (dir) => {
+      mkdirSync(join(dir, '.git'), { recursive: true });
+    },
+  });
 }
 
 describe('resolveProjectPath', () => {

@@ -3,29 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { ObjStore } from './objstore';
 import { Storage } from './storage';
 import { InMemoryFileSystem } from './filesystem';
-import { assert, test, describe, beforeEach } from 'vitest';
+import { assert, test, describe } from 'vitest';
 import { runTsort } from './runTsort';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-let testDir: string;
-let consoleOutput: string[];
-let storage: Storage;
-let aPath: string;
-let bPath: string;
-let cPath: string;
-
-beforeEach(() => {
-  testDir = join(__dirname, '.tslor-test-tsort-tmp');
-
-  consoleOutput = [];
-
-  aPath = join(testDir, 'a.ts');
-  bPath = join(testDir, 'b.ts');
-  cPath = join(testDir, 'c.ts');
-
+function createStorage(aPath: string, bPath: string, cPath: string): Storage {
   const objStore = new ObjStore({ traceId: null });
-  storage = new Storage(objStore, {
+  const storage = new Storage(objStore, {
     jsonlPath: '/dev/null',
     verbose: false,
     inMemory: true,
@@ -39,10 +24,18 @@ beforeEach(() => {
     path: cPath,
     tsconfig: '/tsconfig.json',
   });
-});
+  return storage;
+}
 
 describe('tsort directory expansion', () => {
   test('directory input expands to TypeScript files and sorts them', async () => {
+    const testDir = join(__dirname, '.tslor-test-tsort-tmp');
+    const aPath = join(testDir, 'a.ts');
+    const bPath = join(testDir, 'b.ts');
+    const cPath = join(testDir, 'c.ts');
+    const storage = createStorage(aPath, bPath, cPath);
+    const consoleOutput: string[] = [];
+
     const files = new Map<string, string>([
       [
         join(testDir, 'a.ts'),
@@ -90,6 +83,13 @@ describe('tsort directory expansion', () => {
   });
 
   test('explicit file paths are sorted in dependency order', async () => {
+    const testDir = join(__dirname, '.tslor-test-tsort-tmp');
+    const aPath = join(testDir, 'a.ts');
+    const bPath = join(testDir, 'b.ts');
+    const cPath = join(testDir, 'c.ts');
+    const storage = createStorage(aPath, bPath, cPath);
+    const consoleOutput: string[] = [];
+
     const files = new Map<string, string>([
       [aPath, 'import { b } from "./b";\nexport const a = 1;\n'],
       [bPath, 'import { c } from "./c";\nexport const b = 2;\n'],

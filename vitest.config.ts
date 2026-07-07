@@ -5,5 +5,14 @@ export default defineConfig({
     silent: true,
     reporters: ['dot'],
     pool: 'threads',
+    poolOptions: {
+      threads: {
+        maxThreads: 8,
+        minThreads: 2,
+      },
+    },
+    sequence: {
+      concurrent: true,
+    },
   },
 });

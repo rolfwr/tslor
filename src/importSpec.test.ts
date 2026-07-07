@@ -140,12 +140,7 @@ export function qux() {
   assert.deepEqual(quxUses, ['foo']);
 });
 
-test.skip('Parse import aliases correctly (normalize-first strategy)', () => {
-  /*
-    NOTE: Import aliases are intentionally NOT supported in core refactoring logic.
-    These will be handled by a separate `tslor normalize-imports` command that
-    converts aliases to straightforward syntax before refactoring operations.
-  */
+test('Parse import aliases correctly', () => {
   const src = `
 import { format as formatDate, parse as parseDate } from 'date-fns';
 import { join as pathJoin } from 'path';
@@ -217,42 +212,7 @@ export function processFile(filename: string, content: string): string {
   assert.sameDeepMembers(processFileExport.uses, expectedUses);
 });
 
-test.skip('Parse re-exports correctly (normalize-first strategy)', () => {
-  /*
-    NOTE: Complex re-exports are intentionally NOT supported in core refactoring logic.
-    These will be handled by a separate `tslor normalize-imports` command that
-    converts complex re-exports to explicit named exports before refactoring operations.
-  */
-  const src = `
-import { format } from 'date-fns';
-export { join } from 'path';
-export { default as parser } from 'xml2js';
-
-export function processData(data: string): string {
-  return format(new Date(), 'yyyy-MM-dd') + ': ' + data;
-}
-`;
-
-  const info = parseIsolatedSourceCode(src);
-
-  // Should include re-exports in the imports/exports tracking
-  const expectedImports = [
-    { moduleSpec: 'date-fns', names: ['format'], typeOnly: false },
-    { moduleSpec: 'path', names: ['join'], typeOnly: false },
-    { moduleSpec: 'xml2js', names: ['default'], typeOnly: false },
-  ];
-  assert.deepEqual(info.imports, expectedImports);
-
-  // Should track re-exported symbols as exports
-  assert.hasAllKeys(info.exports, ['join', 'parser', 'processData']);
-});
-
-test.skip('Parse namespace imports correctly (normalize-first strategy)', () => {
-  /*
-    NOTE: Namespace imports are intentionally NOT supported in core refactoring logic.
-    These will be handled by a separate `tslor normalize-imports` command that
-    converts namespace imports to explicit named imports before refactoring operations.
-  */
+test('Parse namespace imports correctly', () => {
   const src = `
 import * as fs from 'fs';
 import * as path from 'path';

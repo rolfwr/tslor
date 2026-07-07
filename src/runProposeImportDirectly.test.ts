@@ -1,4 +1,5 @@
 import { assert, test } from 'vitest';
+import { assertDefined } from './invariant';
 import { Project } from 'ts-morph';
 import {
   runProposeImportDirectly,
@@ -11,13 +12,8 @@ import { InMemoryFileSystem } from './filesystem';
 
 /**
  * Test that runProposeImportDirectly generates proper undo information
- * NOTE: This test has been disabled because it requires complex filesystem mocking.
  */
-test.skip('runProposeImportDirectly generates undo information for rollback', async () => {
-  // Create an in-memory project with test files
-  const project = new Project({ useInMemoryFileSystem: true });
-
-  // Create original.ts with types
+test('runProposeImportDirectly generates undo information for rollback', async () => {
   const originalContent = `
 export const itemCustomIconSlots = ['pos1', 'pos2', 'pos3'] as const;
 export type ItemCustomIconSlot = typeof itemCustomIconSlots[number];
@@ -32,17 +28,13 @@ export interface ItemCustomIconBlendedDto {
   tooltip?: string;
 }
 `;
-  project.createSourceFile('original.ts', originalContent);
 
-  // Create reexport.ts that re-exports from original
   const reexportContent = `
 // Re-export types from the original module
 export type { ItemCustomIconsDto, ItemCustomIconDto, ItemCustomIconBlendedDto } from './original';
 export { itemCustomIconSlots } from './original';
 `;
-  project.createSourceFile('reexport.ts', reexportContent);
 
-  // Create consumer.ts that imports from reexport
   const consumerContent = `
 import type { ItemCustomIconsDto } from './reexport';
 import { type ItemCustomIconDto, itemCustomIconSlots } from './reexport';
@@ -54,9 +46,7 @@ export function useCustomIcons(): ItemCustomIconsDto {
   }, {} as ItemCustomIconsDto);
 }
 `;
-  project.createSourceFile('consumer.ts', consumerContent);
 
-  // Create a basic tsconfig.json
   const tsconfigContent = `{
   "compilerOptions": {
     "target": "ES2020",
@@ -69,18 +59,22 @@ export function useCustomIcons(): ItemCustomIconsDto {
   },
   "include": ["*.ts"]
 }`;
-  project.createSourceFile('tsconfig.json', tsconfigContent);
 
-  // Create in-memory repository provider
+  const files = new Map<string, string>([
+    ['/repo/tsconfig.json', tsconfigContent],
+    ['/repo/original.ts', originalContent],
+    ['/repo/reexport.ts', reexportContent],
+    ['/repo/consumer.ts', consumerContent],
+  ]);
+
+  const fileSystem = new InMemoryFileSystem(files);
   const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
     '/repo/original.ts',
     '/repo/reexport.ts',
     '/repo/consumer.ts',
   ]);
 
-  // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
-  const fileSystem = new InMemoryFileSystem(new Map());
   const plan = await runProposeImportDirectly(
     '/repo',
     debugOptions,
@@ -94,7 +88,7 @@ export function useCustomIcons(): ItemCustomIconsDto {
   // The plan should have changes (imports to modify)
   assert(plan.changes.length > 0, 'Plan should have changes');
 
-  // CRITICAL: The plan should have undo information
+  // The plan should have undo information
   assert(
     plan.undo && plan.undo.length > 0,
     'Plan should have undo information for rollback',
@@ -142,60 +136,46 @@ export function useCustomIcons(): ItemCustomIconsDto {
 });
 
 /**
- * Test that propose-import-directly does not change imports when the re-exported symbol
- * does not actually exist in the original module (bug reproduction)
- * NOTE: This test has been disabled because it requires complex filesystem mocking.
+ * Test that propose-import-directly does not change imports when the target symbol
+ * does not actually exist in the original module. `fakeFunction` is defined locally
+ * in vueCompat (not re-exported from realModule), so it must not be redirected.
+ * `realFunction` is a genuine re-export and should be redirected to realModule.
  */
-test.skip('propose-import-directly does not change imports for non-existent symbols', async () => {
-  // Create an in-memory project with test files
-  const project = new Project({ useInMemoryFileSystem: true });
+test('propose-import-directly does not change imports for non-existent symbols', async () => {
+  const files = new Map<string, string>([
+    [
+      '/repo/tsconfig.json',
+      JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+        },
+        include: ['*.ts'],
+      }),
+    ],
+    ['/repo/realModule.ts', "export const realFunction = () => 'real';"],
+    [
+      '/repo/vueCompat.ts',
+      [
+        "export { realFunction } from './realModule';",
+        "export const fakeFunction = () => 'fake';",
+      ].join('\n'),
+    ],
+    [
+      '/repo/consumer.ts',
+      "import { realFunction, fakeFunction } from './vueCompat';",
+    ],
+  ]);
 
-  // Create realModule.ts with only realFunction
-  const realModuleContent = `
-export const realFunction = () => 'real';
-`;
-  project.createSourceFile('realModule.ts', realModuleContent);
-
-  // Create vueCompat.ts that re-exports realFunction correctly but fakeFunction incorrectly
-  const vueCompatContent = `
-// Compatibility layer
-export { realFunction } from './realModule';
-export const fakeFunction = () => 'fake'; // This exists locally but not in realModule
-`;
-  project.createSourceFile('vueCompat.ts', vueCompatContent);
-
-  // Create consumer.ts that imports both functions
-  const consumerContent = `
-// Consumer file that imports from the compatibility layer
-import { realFunction, fakeFunction } from './vueCompat';
-`;
-  project.createSourceFile('consumer.ts', consumerContent);
-
-  // Create a basic tsconfig.json
-  const tsconfigContent = `{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "node",
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "skipLibCheck": true
-  },
-  "include": ["*.ts"]
-}`;
-  project.createSourceFile('tsconfig.json', tsconfigContent);
-
-  // Create in-memory repository provider
+  const fileSystem = new InMemoryFileSystem(files);
   const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
     '/repo/realModule.ts',
     '/repo/vueCompat.ts',
     '/repo/consumer.ts',
   ]);
-
-  // Run propose-import-directly with in-memory provider
   const debugOptions: DebugOptions = { traceId: null };
-  const fileSystem = new InMemoryFileSystem(new Map());
+
   const plan = await runProposeImportDirectly(
     '/repo',
     debugOptions,
@@ -207,36 +187,34 @@ import { realFunction, fakeFunction } from './vueCompat';
   );
 
   /*
-    The plan should have NO changes for consumer.ts because fakeFunction doesn't exist in realModule.
-    Only realFunction should be changed, but since it's already importing from vueCompat,
-    and vueCompat re-exports it from realModule, it should be changed.
-    But fakeFunction should NOT be changed because it doesn't exist in realModule.
+    realFunction is re-exported from realModule via vueCompat — it should be
+    redirected. fakeFunction is defined locally in vueCompat (not re-exported)
+    and does not exist in realModule — it must stay.
   */
-
-  /*
-    Check that consumer.ts is not in the modified files, or if it is,
-    that the import still references vueCompat for fakeFunction.
-  */
-  const consumerChanges = plan.changes.filter(
-    (change) =>
-      change.type === 'modify-file' && change.path.endsWith('consumer.ts'),
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange =>
+      c.type === 'modify-file' && c.path === '/repo/consumer.ts',
   );
 
-  if (consumerChanges.length > 0) {
-    // If there are changes to consumer.ts, the fakeFunction import should still be from vueCompat
-    const modifyChange = consumerChanges[0];
-    if (modifyChange?.type !== 'modify-file') {
-      assert.fail('Expected modify-file change');
-    }
-    const modifiedContent = modifyChange.content;
-    assert(
-      modifiedContent.includes("fakeFunction } from './vueCompat'"),
-      'fakeFunction should still import from vueCompat since it does not exist in realModule',
-    );
+  if (consumerChange === undefined) {
+    assert.fail('consumer.ts should be modified to redirect realFunction');
   }
 
-  // The test should pass - currently it will fail because the bug causes fakeFunction
-  // to be changed to import from realModule where it doesn't exist
+  const content = consumerChange.content;
+
+  // realFunction should be redirected to realModule
+  assert.match(
+    content,
+    /realFunction.*from.*\.\/realModule/,
+    'realFunction must be redirected to realModule',
+  );
+
+  // fakeFunction must remain imported from vueCompat
+  assert.match(
+    content,
+    /fakeFunction.*from.*\.\/vueCompat/,
+    'fakeFunction must remain imported from vueCompat (not in realModule)',
+  );
 });
 
 test('applyImportChangesToFile splits mixed imports when only some symbols are re-exports', () => {
@@ -298,13 +276,10 @@ import type { getItemRequestSchema, getItemResponseSchema } from '../../api/sche
   const originalImport = importDecls.find(
     (d) => d.getModuleSpecifierValue() === '../../api/schemas/item/getItem',
   );
-  assert.isDefined(
+  assertDefined(
     originalImport,
     'Original import declaration should still exist',
   );
-  if (originalImport === undefined) {
-    throw new Error('Expected originalImport');
-  }
   const originalNames = originalImport
     .getNamedImports()
     .map((n) => n.getName());
@@ -352,10 +327,7 @@ import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } fro
   const originalImport = importDecls.find(
     (d) => d.getModuleSpecifierValue() === '../../api/schemas/item/getItem',
   );
-  assert.isDefined(originalImport, 'Original import should still exist');
-  if (originalImport === undefined) {
-    throw new Error('Expected originalImport');
-  }
+  assertDefined(originalImport, 'Original import should still exist');
   const originalNames = originalImport
     .getNamedImports()
     .map((n) => n.getName());
@@ -370,13 +342,10 @@ import type { getItemRequestSchema, getItemResponseSchema, GetItemResponse } fro
     (d) =>
       d.getModuleSpecifierValue() === '../../api/schemas/item/getItemResponse',
   );
-  assert.isDefined(
+  assertDefined(
     newImport,
     'New import pointing at getItemResponse should exist',
   );
-  if (newImport === undefined) {
-    throw new Error('Expected newImport');
-  }
   const newNames = newImport
     .getNamedImports()
     .map((n) => n.getName())
