@@ -18,15 +18,7 @@ import {
   TypeAliasDeclaration,
   VariableStatement,
 } from 'ts-morph';
-import { StaticModuleInfo } from './indexing';
-import { assertDefined } from './invariant';
-
-/*
-  Monotonically increasing counter for generating unique temporary filenames
-  in ts-morph in-memory projects. Replaces Date.now() + Math.random() which
-  can collide when multiple copy() calls happen within the same millisecond.
-*/
-let tempFileCounter = 0;
+import { ImportUsage, StaticModuleInfo } from './indexing';
 
 /**
  * JavaScript/TypeScript built-in global identifiers that must not be treated
@@ -374,19 +366,6 @@ export interface SymbolDefinition {
 }
 
 /**
- * Import usage information for symbols
- */
-export interface ImportUsage {
-  symbol: string;
-  usesImports: Array<{
-    moduleSpec: string;
-    importedName: string;
-    isDefault: boolean; // Whether this is a default import
-    isTypeOnly: boolean; // Whether this is a type-only import
-  }>;
-}
-
-/**
  * Required import for the new module
  */
 export interface RequiredImport {
@@ -683,140 +662,6 @@ export function extractSymbolDefinitions(
 }
 
 /**
- * Analyze which imports are used by which symbols
- */
-export function analyzeImportUsageBySymbol(
-  sourceFile: SourceFile,
-): ImportUsage[] {
-  const result: ImportUsage[] = [];
-  const importMap = new Map<
-    string,
-    {
-      moduleSpec: string;
-      isDefault: boolean;
-      isTypeOnly: boolean;
-    }
-  >(); // imported name -> import details
-
-  // Build map of imports (both named and default)
-  sourceFile.getImportDeclarations().forEach((importDecl) => {
-    const moduleSpec = importDecl.getModuleSpecifierValue();
-    const isTypeOnly = importDecl.isTypeOnly();
-
-    // Handle default imports
-    const defaultImport = importDecl.getDefaultImport();
-    if (defaultImport) {
-      const importedName = defaultImport.getText();
-      importMap.set(importedName, {
-        moduleSpec,
-        isDefault: true,
-        isTypeOnly,
-      });
-    }
-
-    // Handle named imports
-    importDecl.getNamedImports().forEach((namedImport) => {
-      const importedName = namedImport.getName();
-      importMap.set(importedName, {
-        moduleSpec,
-        isDefault: false,
-        isTypeOnly: isTypeOnly || namedImport.isTypeOnly(),
-      });
-    });
-  });
-
-  // Find all symbols (functions, variables, interfaces, types, classes, etc.)
-  const allSymbols = new Map<string, Node>();
-
-  sourceFile.getFunctions().forEach((func) => {
-    const name = func.getName();
-    if (name) {
-      allSymbols.set(name, func);
-    }
-  });
-
-  sourceFile.getVariableStatements().forEach((stmt) => {
-    stmt.getDeclarations().forEach((decl) => {
-      allSymbols.set(decl.getName(), decl);
-    });
-  });
-
-  sourceFile.getInterfaces().forEach((iface) => {
-    allSymbols.set(iface.getName(), iface);
-  });
-
-  sourceFile.getTypeAliases().forEach((typeAlias) => {
-    allSymbols.set(typeAlias.getName(), typeAlias);
-  });
-
-  sourceFile.getClasses().forEach((cls) => {
-    const name = cls.getName();
-    if (name) {
-      allSymbols.set(name, cls);
-    }
-  });
-
-  // For each symbol, find what imports it uses
-  for (const [symbolName, symbolNode] of allSymbols.entries()) {
-    const usesImports: Array<{
-      moduleSpec: string;
-      importedName: string;
-      isDefault: boolean;
-      isTypeOnly: boolean;
-    }> = [];
-
-    // Find all identifiers in this symbol's node
-    symbolNode
-      .getDescendantsOfKind(SyntaxKind.Identifier)
-      .forEach((identifier) => {
-        const idName = identifier.getText();
-
-        // Skip property names in object literal assignments (non-shorthand)
-        const parent = identifier.getParent();
-        if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-          const propAssignment = parent.asKindOrThrow(
-            SyntaxKind.PropertyAssignment,
-          );
-          if (propAssignment.getNameNode() === identifier) {
-            return;
-          }
-        }
-
-        if (importMap.has(idName)) {
-          const importInfo = importMap.get(idName);
-          assertDefined(
-            importInfo,
-            `Import info should be defined for ${idName}`,
-          );
-          usesImports.push({
-            moduleSpec: importInfo.moduleSpec,
-            importedName: idName,
-            isDefault: importInfo.isDefault,
-            isTypeOnly: importInfo.isTypeOnly,
-          });
-        }
-      });
-
-    // Remove duplicates
-    const uniqueImports = Array.from(
-      new Map(
-        usesImports.map((imp) => [
-          `${imp.moduleSpec}:${imp.importedName}:${imp.isDefault}`,
-          imp,
-        ]),
-      ).values(),
-    );
-
-    result.push({
-      symbol: symbolName,
-      usesImports: uniqueImports,
-    });
-  }
-
-  return result;
-}
-
-/**
  * Find imports that are only used by specific symbols
  */
 export function findImportsOnlyUsedBySymbols(
@@ -849,6 +694,29 @@ export function findImportsOnlyUsedBySymbols(
   }
 
   return onlyUsedByTarget;
+}
+
+/**
+ * Find non-exported symbols that are moved to the target module but are also
+ * referenced by symbols staying in the source module. These must be exported
+ * from the target and imported back into the source.
+ */
+export function findSharedNonExportedDeps(
+  deps: IntraModuleDependencies,
+  symbolsToMove: Set<string>,
+): Set<string> {
+  const shared = new Set<string>();
+  for (const [symbol, symbolDeps] of deps.dependencies) {
+    if (symbolsToMove.has(symbol)) {
+      continue;
+    }
+    for (const dep of symbolDeps) {
+      if (symbolsToMove.has(dep) && !deps.exports.has(dep)) {
+        shared.add(dep);
+      }
+    }
+  }
+  return shared;
 }
 
 /**
@@ -960,14 +828,6 @@ export function computeRequiredImports(
 }
 
 /**
- * Generate the source code for a new module.
- *
- * Uses node.getFullText() to preserve all aspects of symbols including:
- * - All members (properties, methods, etc.)
- * - Comments and JSDoc
- * - Formatting
- */
-/**
  * If the statement declares a symbol matching `exportNames`, export it.
  */
 function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
@@ -1050,16 +910,18 @@ export function generateNewModuleSource(
 }
 
 /**
- * Remove symbol definitions from the original source file
+ * Remove symbol definitions from source code.
+ *
+ * @param sourceCode - TypeScript source code string.
+ * @param symbolsToRemove - Set of symbol names to remove.
+ * @returns Source code with the specified symbols removed.
  */
 export function removeSymbolsFromSource(
-  sourceFile: SourceFile,
+  sourceCode: string,
   symbolsToRemove: Set<string>,
 ): string {
-  // Create a mutable copy of the source file
-  const modifiedSourceFile = sourceFile.copy(
-    `modified-${tempFileCounter++}.ts`,
-  );
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile('source.ts', sourceCode);
 
   /*
     Use replaceWithText('') instead of remove() to preserve leading trivia
@@ -1069,15 +931,20 @@ export function removeSymbolsFromSource(
   */
 
   // Remove function declarations
-  modifiedSourceFile.getFunctions().forEach((func) => {
+  sourceFile.getFunctions().forEach((func) => {
     const name = func.getName();
     if (name && symbolsToRemove.has(name)) {
       func.replaceWithText('');
     }
   });
 
+  // Temp project used to generate replacement text for partial variable
+  // statement removal without leaving a dangling statement in sourceFile.
+  const tempProject = new Project({ useInMemoryFileSystem: true });
+  const tempSourceFile = tempProject.createSourceFile('temp.ts', '');
+
   // Remove variable statements
-  modifiedSourceFile.getVariableStatements().forEach((stmt) => {
+  sourceFile.getVariableStatements().forEach((stmt) => {
     const declarations = stmt.getDeclarations();
     const declarationsToKeep = declarations.filter(
       (decl) => !symbolsToRemove.has(decl.getName()),
@@ -1087,11 +954,9 @@ export function removeSymbolsFromSource(
       // Remove entire statement if all declarations are being removed
       stmt.replaceWithText('');
     } else if (declarationsToKeep.length < declarations.length) {
-      // Some declarations removed - reconstruct using AST methods
       const kind = stmt.getDeclarationKind();
       const isExported = stmt.isExported();
 
-      // Create new variable statement with only the kept declarations
       const newDeclarations = declarationsToKeep.map((decl) => {
         const name = decl.getName();
         const typeNode = decl.getTypeNode();
@@ -1103,21 +968,21 @@ export function removeSymbolsFromSource(
         };
       });
 
-      // Replace the statement using ts-morph methods
-      stmt.replaceWithText(
-        modifiedSourceFile
-          .addVariableStatement({
-            declarationKind: kind,
-            isExported,
-            declarations: newDeclarations,
-          })
-          .getFullText(),
-      );
+      // Generate replacement text in an isolated project so we don't
+      // leave a dangling statement in the working sourceFile.
+      const tempStmt = tempSourceFile.addVariableStatement({
+        declarationKind: kind,
+        isExported,
+        declarations: newDeclarations,
+      });
+      const replacementText = tempStmt.getFullText();
+      stmt.replaceWithText(replacementText);
+      tempStmt.remove();
     }
   });
 
   // Remove type aliases
-  modifiedSourceFile.getTypeAliases().forEach((type) => {
+  sourceFile.getTypeAliases().forEach((type) => {
     const name = type.getName();
     if (symbolsToRemove.has(name)) {
       type.replaceWithText('');
@@ -1125,7 +990,7 @@ export function removeSymbolsFromSource(
   });
 
   // Remove interfaces
-  modifiedSourceFile.getInterfaces().forEach((iface) => {
+  sourceFile.getInterfaces().forEach((iface) => {
     const name = iface.getName();
     if (symbolsToRemove.has(name)) {
       iface.replaceWithText('');
@@ -1133,7 +998,7 @@ export function removeSymbolsFromSource(
   });
 
   // Remove classes
-  modifiedSourceFile.getClasses().forEach((cls) => {
+  sourceFile.getClasses().forEach((cls) => {
     const name = cls.getName();
     if (name && symbolsToRemove.has(name)) {
       cls.replaceWithText('');
@@ -1141,25 +1006,27 @@ export function removeSymbolsFromSource(
   });
 
   // Collapse extra blank lines left by replaceWithText('') to single blank lines
-  let result = modifiedSourceFile.getFullText();
+  let result = sourceFile.getFullText();
   result = result.replace(/\n{3,}/g, '\n\n');
   return result;
 }
 
 /**
- * Remove unused imports from the source file
+ * Remove unused imports from source code.
+ *
+ * @param sourceCode - TypeScript source code string.
+ * @param onlyUsedByRemovedSymbols - Set of import keys ("moduleSpec:name") to remove.
+ * @returns Source code with the specified imports removed.
  */
 export function removeUnusedImports(
-  sourceFile: SourceFile,
+  sourceCode: string,
   onlyUsedByRemovedSymbols: Set<string>,
 ): string {
-  // Create a mutable copy with unique name
-  const modifiedSourceFile = sourceFile.copy(
-    `modified-${tempFileCounter++}.ts`,
-  );
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile('source.ts', sourceCode);
 
   // Remove import declarations that are only used by removed symbols
-  modifiedSourceFile.getImportDeclarations().forEach((importDecl) => {
+  sourceFile.getImportDeclarations().forEach((importDecl) => {
     const moduleSpec = importDecl.getModuleSpecifierValue();
 
     // Check default import
@@ -1208,7 +1075,7 @@ export function removeUnusedImports(
     }
   });
 
-  return modifiedSourceFile.getFullText();
+  return sourceFile.getFullText();
 }
 
 /**
@@ -1323,20 +1190,29 @@ function addReExportDeclarations(
   }
 }
 
+/**
+ * Add import (and optionally re-export) declarations for moved symbols.
+ *
+ * @param sourceCode - TypeScript source code string.
+ * @param movedSymbols - Set of symbol names that were moved.
+ * @param newModulePath - Import path for the new module (e.g. "./target").
+ * @param shouldReExport - Whether to add re-export declarations.
+ * @param symbolDefinitions - Optional symbol definitions for type/value classification.
+ * @returns Source code with import/re-export declarations added.
+ */
 export function addImportForMovedSymbols(
-  sourceFile: SourceFile,
+  sourceCode: string,
   movedSymbols: Set<string>,
   newModulePath: string,
   shouldReExport: boolean,
   symbolDefinitions?: SymbolDefinition[],
 ): string {
-  const modifiedSourceFile = sourceFile.copy(
-    `modified-${tempFileCounter++}.ts`,
-  );
-
   if (movedSymbols.size === 0) {
-    return modifiedSourceFile.getFullText();
+    return sourceCode;
   }
+
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile('source.ts', sourceCode);
 
   // Classify symbols by kind (type vs value)
   const { typeSymbols, valueSymbols } = classifySymbolsByKind(
@@ -1362,7 +1238,7 @@ export function addImportForMovedSymbols(
 
   // Add import declarations
   addImportDeclarations(
-    modifiedSourceFile,
+    sourceFile,
     typesToImport,
     valuesToImport,
     newModulePath,
@@ -1371,12 +1247,12 @@ export function addImportForMovedSymbols(
   // Add re-export declarations if requested
   if (shouldReExport) {
     addReExportDeclarations(
-      modifiedSourceFile,
+      sourceFile,
       typeSymbols,
       valueSymbols,
       newModulePath,
     );
   }
 
-  return modifiedSourceFile.getFullText();
+  return sourceFile.getFullText();
 }

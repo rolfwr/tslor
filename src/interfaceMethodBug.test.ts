@@ -1,11 +1,11 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
 import { assertDefined } from './invariant';
+import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing';
 
 import {
   extractSymbolDefinitions,
   generateNewModuleSource,
-  analyzeImportUsageBySymbol,
   computeRequiredImports,
 } from './splitModule';
 
@@ -47,7 +47,9 @@ export function useOperations(ops: MyOperations): void {
   assert.equal(def.kind, 'interface');
 
   // Generate new module with the interface
-  const importUsages = analyzeImportUsageBySymbol(sourceFile);
+  const importUsages = analyzeImportUsageFromStaticInfo(
+    parseModule(sourceFile),
+  );
 
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
@@ -59,10 +61,7 @@ export function useOperations(ops: MyOperations): void {
     requiredImports,
   );
 
-  console.log('Generated module source:');
-  console.log(newModuleSource);
-
-  // BUG: The generated interface should include ALL members (property AND method signatures)
+  // The generated interface should include ALL members (property AND method signatures)
   assert.include(
     newModuleSource,
     'vfs: string',
@@ -71,17 +70,17 @@ export function useOperations(ops: MyOperations): void {
   assert.include(
     newModuleSource,
     'readFile(filePath: string): Promise<string>',
-    'BUG: Should include readFile method signature',
+    'Should include readFile method signature',
   );
   assert.include(
     newModuleSource,
     'writeFile(outputFile: string, content: string): Promise<void>',
-    'BUG: Should include writeFile method signature',
+    'Should include writeFile method signature',
   );
   assert.include(
     newModuleSource,
     'processData(input: string, options: { verbose: boolean }): string',
-    'BUG: Should include processData method signature',
+    'Should include processData method signature',
   );
 
   // Should preserve JSDoc comments
@@ -116,19 +115,6 @@ export interface Operations {
   const methods = originalInterface.getMethods();
   const allMembers = originalInterface.getMembers();
 
-  console.log('Original interface analysis:');
-  console.log(
-    '  Properties:',
-    properties.length,
-    properties.map((p) => p.getName()),
-  );
-  console.log(
-    '  Methods:',
-    methods.length,
-    methods.map((m) => m.getName()),
-  );
-  console.log('  All members:', allMembers.length);
-
   assert.equal(properties.length, 1, 'Should have 1 property');
   assert.equal(methods.length, 1, 'Should have 1 method');
   assert.equal(allMembers.length, 2, 'Should have 2 total members');
@@ -136,7 +122,9 @@ export interface Operations {
   // Now extract it
   const symbolsToMove = new Set(['Operations']);
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);
-  const importUsages = analyzeImportUsageBySymbol(sourceFile);
+  const importUsages = analyzeImportUsageFromStaticInfo(
+    parseModule(sourceFile),
+  );
 
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
@@ -148,9 +136,6 @@ export interface Operations {
     requiredImports,
   );
 
-  console.log('Generated source:');
-  console.log(newModuleSource);
-
   // Parse the generated source to check what was actually created
   const newProject = new Project({ useInMemoryFileSystem: true });
   const newFile = newProject.createSourceFile('new.ts', newModuleSource);
@@ -161,29 +146,15 @@ export interface Operations {
   const genMethods = generatedInterface.getMethods();
   const genMembers = generatedInterface.getMembers();
 
-  console.log('Generated interface analysis:');
-  console.log(
-    '  Properties:',
-    genProperties.length,
-    genProperties.map((p) => p.getName()),
-  );
-  console.log(
-    '  Methods:',
-    genMethods.length,
-    genMethods.map((m) => m.getName()),
-  );
-  console.log('  All members:', genMembers.length);
-
-  // BUG: Methods are lost during extraction
   assert.equal(genProperties.length, 1, 'Generated should have 1 property');
   assert.equal(
     genMethods.length,
     1,
-    'BUG: Generated should have 1 method (currently has 0)',
+    'Generated should have 1 method',
   );
   assert.equal(
     genMembers.length,
     2,
-    'BUG: Generated should have 2 total members (currently has 1)',
+    'Generated should have 2 total members',
   );
 });

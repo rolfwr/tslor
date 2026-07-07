@@ -37,6 +37,7 @@ import {
   computeRequiredImports,
   extractSymbolDefinitions,
   findImportsOnlyUsedBySymbols,
+  findSharedNonExportedDeps,
   generateNewModuleSource,
   IntraModuleDependencies,
   removeSymbolsFromSource,
@@ -286,17 +287,10 @@ async function generateChanges(
   );
 
   // Find non-exported moved symbols that remaining symbols also depend on
-  const sharedNonExportedDeps = new Set<string>();
-  for (const [symbol, deps] of dependencies.dependencies) {
-    if (symbolsToMove.has(symbol)) {
-      continue;
-    }
-    for (const dep of deps) {
-      if (symbolsToMove.has(dep) && !dependencies.exports.has(dep)) {
-        sharedNonExportedDeps.add(dep);
-      }
-    }
-  }
+  const sharedNonExportedDeps = findSharedNonExportedDeps(
+    dependencies,
+    symbolsToMove,
+  );
 
   // Generate target module source code, exporting shared deps so source can import them
   const targetContent = generateNewModuleSource(
@@ -306,23 +300,18 @@ async function generateChanges(
   );
 
   // Update source module: remove moved symbols
-  const updatedSourceContent = removeSymbolsFromSource(
-    sourceFile,
+  let sourceContent = removeSymbolsFromSource(
+    originalSourceContent,
     symbolsToMove,
   );
 
   // Remove unused imports from source module
-  const sourceFileAfterRemoval = project.createSourceFile(
-    'updated-source.ts',
-    updatedSourceContent,
-  );
-  const cleanedSourceContent = removeUnusedImports(
-    sourceFileAfterRemoval,
+  sourceContent = removeUnusedImports(
+    sourceContent,
     onlyUsedByMovedSymbols,
   );
 
   // Check if any remaining symbols need the moved symbols (for re-export)
-  let finalSourceContent = cleanedSourceContent;
   const remainingNeedMoved = checkIfRemainingSymbolsNeedMoved(
     symbolsToMove,
     dependencies.exports,
@@ -331,12 +320,8 @@ async function generateChanges(
 
   if (remainingNeedMoved.size > 0) {
     // Add import and re-export for moved symbols that are still needed
-    const sourceFileForImports = project.createSourceFile(
-      'source-for-imports.ts',
-      finalSourceContent,
-    );
-    finalSourceContent = addImportForMovedSymbols(
-      sourceFileForImports,
+    sourceContent = addImportForMovedSymbols(
+      sourceContent,
       remainingNeedMoved,
       relativePath,
       true,
@@ -346,12 +331,8 @@ async function generateChanges(
 
   // Add imports (without re-export) for shared non-exported deps
   if (sharedNonExportedDeps.size > 0) {
-    const sourceFileForSharedImports = project.createSourceFile(
-      'source-for-shared.ts',
-      finalSourceContent,
-    );
-    finalSourceContent = addImportForMovedSymbols(
-      sourceFileForSharedImports,
+    sourceContent = addImportForMovedSymbols(
+      sourceContent,
       sharedNonExportedDeps,
       relativePath,
       false,
@@ -360,7 +341,7 @@ async function generateChanges(
   }
 
   return {
-    sourceContent: finalSourceContent,
+    sourceContent,
     targetContent: targetContent,
     originalSourceContent,
   };
