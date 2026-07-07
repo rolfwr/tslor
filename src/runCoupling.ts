@@ -45,25 +45,9 @@ interface MutableModuleMemberDefinition {
 }
 
 function loadSourceFile(filePath: string): SourceFile {
-  const project = new Project({
+  return new Project({
     skipAddingFilesFromTsConfig: true,
-  });
-
-  return project.addSourceFileAtPath(filePath);
-}
-
-function findTargetClass(
-  sourceFile: SourceFile,
-  className: string,
-): ClassDeclaration {
-  const classDeclaration = sourceFile.getClass(className);
-  if (classDeclaration === undefined) {
-    throw new CliError(
-      `Class ${className} not found in ${sourceFile.getFilePath()}`,
-    );
-  }
-
-  return classDeclaration;
+  }).addSourceFileAtPath(filePath);
 }
 
 function getMemberName(member: Node): string | null {
@@ -255,14 +239,28 @@ function populateClassGraphEdges(
   }
 }
 
-function buildClassCouplingGraph(
+/**
+ * Build a coupling graph from a class declaration in an in-memory AST.
+ *
+ * Nodes are class fields, methods, constructors, and arrow-function properties.
+ * Edges represent `this.X` references from each executable member body to
+ * another member `X` in the same class.
+ *
+ * @param classDeclaration - The class AST node to analyze.
+ * @returns Readonly dependency graph of class members.
+ */
+export function buildClassCouplingGraph(
   classDeclaration: ClassDeclaration,
-): MutableCouplingGraph {
+): CouplingGraph {
   const members = collectClassMembers(classDeclaration);
   const graph = createGraphNodes(members.map((member) => member.name));
 
   populateClassGraphEdges(graph, members);
 
+  /*
+    The graph is not aliased after return, so the CouplingGraph return type is a
+    sufficient read-only guarantee — a defensive copy would be a needless allocation.
+  */
   return graph;
 }
 
@@ -648,38 +646,62 @@ function populateModuleGraphEdges(
   }
 }
 
-function buildModuleCouplingGraph(
+/**
+ * Build a coupling graph from a module source file in an in-memory AST.
+ *
+ * Nodes are top-level function declarations, class declarations, variable
+ * declarations, interfaces, and type aliases. Edges represent bare-name
+ * references that resolve to another module declaration.
+ *
+ * @param sourceFile - The source file AST node to analyze.
+ * @returns Readonly dependency graph of module members.
+ */
+export function buildModuleCouplingGraph(
   sourceFile: SourceFile,
-): MutableCouplingGraph {
+): CouplingGraph {
   const members = collectModuleMembers(sourceFile);
   const graph = createGraphNodes(members.map((member) => member.name));
 
   populateModuleGraphEdges(graph, members);
 
+  /*
+    The graph is not aliased after return, so the CouplingGraph return type is a
+    sufficient read-only guarantee — a defensive copy would be a needless allocation.
+  */
   return graph;
 }
 
 /**
- * Parse class-scope member coupling from one file.
+ * Parse class-scope member coupling from a file on disk.
  *
  * The graph includes class fields, methods, constructors, and arrow-function
  * properties as nodes. Edges are added for `this.X` references from each
  * executable member body to another member `X` in the same class.
+ *
+ * @param filePath - Path to the TypeScript source file.
+ * @param className - Name of the class to analyze.
  */
 export function parseClassCoupling(
   filePath: string,
   className: string,
 ): CouplingGraph {
   const sourceFile = loadSourceFile(filePath);
-  return buildClassCouplingGraph(findTargetClass(sourceFile, className));
+  const classDeclaration = sourceFile.getClass(className);
+  if (classDeclaration === undefined) {
+    throw new CliError(`Class ${className} not found in ${filePath}`);
+  }
+
+  return buildClassCouplingGraph(classDeclaration);
 }
 
 /**
- * Parse module-scope member coupling from one file.
+ * Parse module-scope member coupling from a file on disk.
  *
  * The graph includes top-level function declarations, class declarations,
  * variable declarations, interfaces, and type aliases as nodes. Edges are
  * added for bare-name references that resolve to another module declaration.
+ *
+ * @param filePath - Path to the TypeScript source file.
  */
 export function parseModuleCoupling(filePath: string): CouplingGraph {
   return buildModuleCouplingGraph(loadSourceFile(filePath));
