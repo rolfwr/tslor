@@ -414,7 +414,7 @@ function isLocalDependency(
 }
 
 /**
- * Build a clean dependency graph from parseIsolatedSourceCode output.
+ * Build a clean dependency graph from parsed module info.
  */
 export function buildIntraModuleDependencies(
   moduleInfo: StaticModuleInfo,

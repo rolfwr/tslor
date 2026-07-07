@@ -2077,7 +2077,7 @@ function createProject() {
   return new Project(defaultProjectOptions());
 }
 
-export function defaultProjectOptions(): ProjectOptions {
+function defaultProjectOptions(): ProjectOptions {
   return {
     skipAddingFilesFromTsConfig: true,
     skipFileDependencyResolution: true,
@@ -2089,7 +2089,7 @@ export function defaultProjectOptions(): ProjectOptions {
   };
 }
 
-export function inMemoryProjectOptions(): ProjectOptions {
+function inMemoryProjectOptions(): ProjectOptions {
   return {
     skipAddingFilesFromTsConfig: true,
     skipFileDependencyResolution: true,

@@ -1,5 +1,5 @@
 import { assert, describe, test } from 'vitest';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
+import { parseIsolatedSourceCode } from './testUtils';
 
 describe('Node.js global detection', () => {
   test('detects actual Buffer usage (not guarded)', () => {

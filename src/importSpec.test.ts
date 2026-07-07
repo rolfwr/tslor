@@ -1,6 +1,6 @@
 import { assert, test } from 'vitest';
 import { modulePathToImportSpecAlias } from './importSpec';
-import { parseIsolatedSourceCode } from './parseIsolatedSourceCode';
+import { parseIsolatedSourceCode } from './testUtils';
 import { getOrThrow } from './invariant';
 
 test('importSpec', () => {
