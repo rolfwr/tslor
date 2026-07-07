@@ -9,6 +9,7 @@ import {
   SyntaxKind,
 } from 'ts-morph';
 import { CliError } from './errors';
+import { normalizeAndValidatePath } from './pathUtils';
 import {
   computeTopologicalDepth,
   condenseToDAG,
@@ -45,9 +46,14 @@ interface MutableModuleMemberDefinition {
 }
 
 function loadSourceFile(filePath: string): SourceFile {
+  const normalizedPath = normalizeAndValidatePath(
+    filePath,
+    'Input file',
+    false,
+  );
   return new Project({
     skipAddingFilesFromTsConfig: true,
-  }).addSourceFileAtPath(filePath);
+  }).addSourceFileAtPath(normalizedPath);
 }
 
 function getMemberName(member: Node): string | null {
