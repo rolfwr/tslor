@@ -179,23 +179,45 @@ async function getWorkerFile(): Promise<URL> {
   /*
     In development (tsx mode), compile the worker to plain JS using esbuild.
     Write adjacent to node_modules so external packages resolve correctly.
+    Use a per-process temp file and atomic rename to avoid race conditions
+    when multiple CLI processes compile concurrently.
   */
   const { build } = await import('esbuild');
-  const { mkdir } = await import('node:fs/promises');
+  const { stat, mkdir, rename } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const srcDir = fileURLToPath(new URL('.', import.meta.url));
   const projectDir = fileURLToPath(new URL('..', import.meta.url));
   const outDir = `${projectDir}/.tslor-worker-tmp`;
   const outFile = `${outDir}/indexingWorker.mjs`;
+  const sourceFile = `${srcDir}indexingWorker.ts`;
+
+  /*
+    Skip recompilation if the output file exists and is newer than the source.
+    This avoids redundant builds when multiple processes share the cache.
+  */
+  try {
+    const [outStat, srcStat] = await Promise.all([
+      stat(outFile),
+      stat(sourceFile),
+    ]);
+    if (outStat.mtimeMs > srcStat.mtimeMs) {
+      return new URL(`file://${outFile}`);
+    }
+  } catch {
+    // File doesn't exist or stat failed; proceed with compilation
+  }
+
+  const tempFile = `${outFile}.${process.pid}.tmp`;
   await mkdir(outDir, { recursive: true });
   await build({
-    entryPoints: [`${srcDir}indexingWorker.ts`],
-    outfile: outFile,
+    entryPoints: [sourceFile],
+    outfile: tempFile,
     bundle: true,
     platform: 'node',
     format: 'esm',
     external: ['ts-morph', 'esbuild'],
   });
+  await rename(tempFile, outFile);
   return new URL(`file://${outFile}`);
 }
 
@@ -1069,10 +1091,6 @@ function extractTypeReferences(node: Node): string[] {
   return typeReferences;
 }
 
-/**
- * Derive import usage information from StaticModuleInfo.
- * This provides the same information as analyzeImportUsageBySymbol but works with StaticModuleInfo.
- */
 type ImportMetadata = { isTypeOnly: boolean; isDefault: boolean };
 
 function buildImportMetadata(
@@ -1125,6 +1143,11 @@ function resolveIdentifierImport(
   };
 }
 
+/**
+ * Derive import usage information from StaticModuleInfo.
+ * For each symbol tracked in `identifierUses`, resolves identifier references
+ * to their import declarations and returns deduplicated usage entries.
+ */
 export function analyzeImportUsageFromStaticInfo(
   moduleInfo: StaticModuleInfo,
 ): ImportUsage[] {
