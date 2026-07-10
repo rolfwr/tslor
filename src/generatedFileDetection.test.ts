@@ -49,3 +49,37 @@ export function doStuff() {}
 test('isGeneratedFile returns false for empty file', () => {
   assert.isFalse(isGeneratedFile(''));
 });
+
+test('isGeneratedFile returns false when @generated appears in prose within a line comment', () => {
+  /*
+    Regression test: comments like "// Skip files marked as @generated"
+    should NOT trigger detection. The @generated marker must be the PRIMARY
+    content of the comment, not embedded in prose.
+  */
+  const content = `import { foo } from './bar';
+
+// Skip files marked as @generated
+export function doStuff() {
+  return foo();
+}
+`;
+  assert.isFalse(
+    isGeneratedFile(content),
+    'Should not detect @generated in prose within a line comment',
+  );
+});
+
+test('isGeneratedFile returns false when @generated appears in prose within a block comment', () => {
+  const content = `/**
+ * Utility to check if a file is marked as @generated.
+ * This is part of the file detection logic.
+ */
+export function doStuff() {
+  return true;
+}
+`;
+  assert.isFalse(
+    isGeneratedFile(content),
+    'Should not detect @generated in prose within a block comment',
+  );
+});

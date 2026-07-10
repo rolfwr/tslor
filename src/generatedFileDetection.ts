@@ -6,12 +6,25 @@
  * The @generated tag must appear inside a comment (block or line comment).
  */
 
-const GENERATED_IN_BLOCK_COMMENT = /\/\*[\s\S]*?@generated[\s\S]*?\*\//;
-const GENERATED_IN_LINE_COMMENT = /\/\/.*@generated/;
+const GENERATED_IN_LINE_COMMENT = /\/\/[ \t]*@generated\b/;
+
+function isGeneratedInBlockComment(content: string): boolean {
+  const blockComments = content.match(/\/\*[\s\S]*?\*\//g) ?? [];
+  for (const comment of blockComments) {
+    const withoutOpen = comment.replace(/^\/\*[*]?/, '');
+    for (const line of withoutOpen.split('\n')) {
+      const trimmed = line.replace(/^[ \t]*\*?[ \t]*/, '');
+      if (/^@generated\b/.test(trimmed)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 export function isGeneratedFile(content: string): boolean {
   return (
-    GENERATED_IN_BLOCK_COMMENT.test(content) ||
+    isGeneratedInBlockComment(content) ||
     GENERATED_IN_LINE_COMMENT.test(content)
   );
 }
