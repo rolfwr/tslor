@@ -71,7 +71,7 @@ export async function runDependencies(
   fileSystem: FileSystem,
 ): Promise<void> {
   if (modulePaths.length === 0) {
-    throw new CliError('No module paths provided');
+    throw new CliError('No module paths provided', {});
   }
 
   const output = options.output ?? {
@@ -85,7 +85,7 @@ export async function runDependencies(
   const moduleSet = await resolveCommandScope(modulePaths, fileSystem);
 
   if (moduleSet.size === 0) {
-    throw new CliError('Input paths resolved to no TypeScript modules');
+    throw new CliError('Input paths resolved to no TypeScript modules', {});
   }
 
   // Extract a representative path for repo root and tsconfig resolution.
@@ -111,7 +111,7 @@ export async function runDependencies(
       options.writer,
       'writer is required when storage is not provided',
     );
-    await updateStorage(repoRoot, db, true, fileSystem, options.writer);
+    await updateStorage(repoRoot, db, true, fileSystem, options.writer, {});
   }
 
   try {

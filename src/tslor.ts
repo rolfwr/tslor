@@ -122,13 +122,14 @@ program
     if (ext !== '.ts' && ext !== '.tsx' && ext !== '.vue') {
       throw new CliError(
         `${absolutePath} is not a supported file type (expected .ts, .tsx, .vue)`,
+        {},
       );
     }
 
     const repoRoot = findGitRepoRoot(dirname(absolutePath));
     const moduleInfo = await inspectModule(repoRoot, absolutePath, fileSystem);
     if (!moduleInfo) {
-      throw new CliError('No tsconfig found for ' + absolutePath);
+      throw new CliError('No tsconfig found for ' + absolutePath, {});
     }
     console.log(JSON.stringify(moduleInfo, null, 2));
   });
@@ -429,6 +430,7 @@ program
     ) {
       throw new CliError(
         'Missing required options: --source-type, --source-module, --target-type, --target-module',
+        {},
       );
     }
     const { traceId, fresh } = getGlobalOptions(cmd);

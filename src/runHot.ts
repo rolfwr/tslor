@@ -303,6 +303,7 @@ export function selectHotModule(
     if (!found) {
       throw new CliError(
         'Module not found in analyzed paths: ' + options.select,
+        {},
       );
     }
     return found;
@@ -500,7 +501,7 @@ export async function runHot(
   });
 
   try {
-    await updateStorage(repoRoot, db, true, fileSystem, writer);
+    await updateStorage(repoRoot, db, true, fileSystem, writer, {});
     const filePaths = Array.from(moduleSet);
 
     /*

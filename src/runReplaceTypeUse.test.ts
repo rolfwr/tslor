@@ -13,7 +13,11 @@ function replace(body: string): string | null {
   );
 }
 
-function must<T>(value: T | null | undefined, msg?: string): T {
+// RATIONALE: test helper — test file signatures exempted by convention
+function must<T>(value: T | null | undefined,
+  // ast-grep-ignore: no-optional-param
+  msg?: string,
+): T {
   if (value === null || value === undefined) {
     throw new Error(msg ?? 'Expected value');
   }

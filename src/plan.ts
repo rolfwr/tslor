@@ -93,7 +93,7 @@ export async function writePlan(
  */
 export async function readPlan(planFile: string): Promise<TslorPlan> {
   if (!existsSync(planFile)) {
-    throw new CliError(`Plan file does not exist: ${planFile}`);
+    throw new CliError(`Plan file does not exist: ${planFile}`, {});
   }
 
   const planJson = await fsp.readFile(planFile, 'utf-8');
@@ -109,25 +109,25 @@ export async function readPlan(planFile: string): Promise<TslorPlan> {
  */
 export function validatePlanFormat(plan: TslorPlan): void {
   if (!plan.version) {
-    throw new CliError('Plan missing version field');
+    throw new CliError('Plan missing version field', {});
   }
   if (!plan.command) {
-    throw new CliError('Plan missing command field');
+    throw new CliError('Plan missing command field', {});
   }
   if (!plan.timestamp) {
-    throw new CliError('Plan missing timestamp field');
+    throw new CliError('Plan missing timestamp field', {});
   }
   if (!Array.isArray(plan.sourceFiles)) {
-    throw new CliError('Plan missing sourceFiles array');
+    throw new CliError('Plan missing sourceFiles array', {});
   }
   if (!Array.isArray(plan.targetFiles)) {
-    throw new CliError('Plan missing targetFiles array');
+    throw new CliError('Plan missing targetFiles array', {});
   }
   if (!plan.checksums || typeof plan.checksums !== 'object') {
-    throw new CliError('Plan missing checksums object');
+    throw new CliError('Plan missing checksums object', {});
   }
   if (!Array.isArray(plan.changes)) {
-    throw new CliError('Plan missing changes array');
+    throw new CliError('Plan missing changes array', {});
   }
 }
 
@@ -161,6 +161,7 @@ export async function validateChecksums(
       `The following files no longer exist:\n` +
         missing.map((f) => `  - ${f}`).join('\n') +
         `\n\nPlan cannot be applied.`,
+      {},
     );
   }
 
@@ -169,6 +170,7 @@ export async function validateChecksums(
       `The following files have changed since plan was created:\n` +
         mismatches.map((f) => `  - ${f}`).join('\n') +
         `\n\nPlease create a new plan or use --force to apply anyway.`,
+      {},
     );
   }
 
@@ -259,6 +261,7 @@ function auditChanges(changes: Change[]): void {
       if (!existsSync(change.path)) {
         throw new CliError(
           `Cannot ${change.type}: file does not exist: ${change.path}`,
+          {},
         );
       }
     }
@@ -266,6 +269,7 @@ function auditChanges(changes: Change[]): void {
       if (existsSync(change.path)) {
         throw new CliError(
           `Cannot create file: already exists: ${change.path}`,
+          {},
         );
       }
     }
@@ -294,7 +298,7 @@ export async function executeUndo(
   writer: (message: string) => void,
 ): Promise<void> {
   if (!plan.undo) {
-    throw new CliError('Plan does not contain undo information');
+    throw new CliError('Plan does not contain undo information', {});
   }
 
   writer('Rolling back changes...\n');

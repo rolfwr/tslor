@@ -51,9 +51,10 @@ function loadSourceFile(filePath: string): SourceFile {
     'Input file',
     false,
   );
-  return new Project({
+  const project = new Project({
     skipAddingFilesFromTsConfig: true,
-  }).addSourceFileAtPath(normalizedPath);
+  });
+  return project.addSourceFileAtPath(normalizedPath);
 }
 
 function getMemberName(member: Node): string | null {
@@ -694,7 +695,7 @@ export function parseClassCoupling(
   const sourceFile = loadSourceFile(filePath);
   const classDeclaration = sourceFile.getClass(className);
   if (classDeclaration === undefined) {
-    throw new CliError(`Class ${className} not found in ${filePath}`);
+    throw new CliError(`Class ${className} not found in ${filePath}`, {});
   }
 
   return buildClassCouplingGraph(classDeclaration);

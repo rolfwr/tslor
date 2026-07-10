@@ -114,6 +114,7 @@ export async function runGrep(
     options.verbose || false,
     fileSystem,
     writer,
+    {},
   );
 
   const symbolImports = db.getSymbolImports(symbolName);

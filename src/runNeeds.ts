@@ -26,7 +26,7 @@ export async function runNeeds(
     basePath: repoRoot,
     inMemory: false,
   });
-  await updateStorage(repoRoot, db, verbose, fileSystem, writer);
+  await updateStorage(repoRoot, db, verbose, fileSystem, writer, {});
   db.save();
 
   // Find transitive Node.js requirements

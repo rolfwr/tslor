@@ -36,7 +36,7 @@ export async function runMv(
   writer: (message: string) => void,
 ) {
   if (!oldPathArg || !newPathArg) {
-    throw new CliError('Missing path arguments');
+    throw new CliError('Missing path arguments', {});
   }
 
   const oldPath = normalizeAndValidatePath(oldPathArg, 'Source file', false);
@@ -56,12 +56,12 @@ export async function runMv(
   }
 
   if (oldPath === newPath) {
-    throw new CliError(`Source and destination are the same file: ${oldPath}`);
+    throw new CliError(`Source and destination are the same file: ${oldPath}`, {});
   }
 
   if (!existsSync(newPath)) {
     if (!existsSync(oldPath)) {
-      throw new CliError('Neither old nor new path exists');
+      throw new CliError('Neither old nor new path exists', {});
     }
 
     // Run "git mv" command
@@ -418,7 +418,7 @@ function moveNamedExport(
   const oldNamespaceImport = unres.node.getNamespaceImport();
 
   if (oldNamespaceImport) {
-    throw new CliError('Namespace imports not supported');
+    throw new CliError('Namespace imports not supported', {});
   }
   if (oldNamedImports.length === 0) {
     return false;
@@ -434,7 +434,7 @@ function moveNamedExport(
   const localName = oldNamedImport.getName();
   oldNamedImport.remove();
   if (localName !== fixup.newExport.name) {
-    throw new CliError('Aliases not supported');
+    throw new CliError('Aliases not supported', {});
   }
   targetDecl.addNamedImport(fixup.newExport.name);
   return true;

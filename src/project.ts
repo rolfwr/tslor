@@ -8,7 +8,7 @@ export function findGitRepoRoot(oldPath: string) {
   while (!existsSync(repoRoot + '/.git')) {
     const parent = dirname(repoRoot);
     if (parent === repoRoot) {
-      throw new CliError('Git repo root not found');
+      throw new CliError('Git repo root not found', {});
     }
     repoRoot = parent;
   }

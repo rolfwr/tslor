@@ -53,8 +53,10 @@ function withFile(
   }
 }
 
+// RATIONALE: test helper — test file signatures exempted by convention
 function runCouplingWithOutput(
   filePath: string,
+  // ast-grep-ignore: no-optional-param
   options?: Omit<RunCouplingOptions, 'output'>,
 ): string {
   const chunks: string[] = [];

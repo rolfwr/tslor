@@ -62,10 +62,10 @@ export async function updateStorage(
   verbose: boolean,
   fileSystem: FileSystem,
   writer: (message: string) => void,
-  scopeDir?: string,
+  options: { scopeDir?: string },
 ) {
   const paths: string[] = await getTypeScriptFilePaths(
-    scopeDir ?? repoRoot,
+    options?.scopeDir ?? repoRoot,
     fileSystem,
   );
   if (verbose) {
@@ -716,11 +716,11 @@ export function createModuleInspector(
     try {
       const stat = await fileSystem.stat(srcPath);
       if (!stat.isFile()) {
-        throw new CliError('Not a file: ' + srcPath);
+        throw new CliError('Not a file: ' + srcPath, {});
       }
     } catch (err) {
       if (isEnoentError(err)) {
-        throw new CliError('Not found: ' + srcPath);
+        throw new CliError('Not found: ' + srcPath, {});
       }
       throw err;
     }
@@ -734,7 +734,7 @@ export function createModuleInspector(
       sourceFile = project.getSourceFile(srcPath);
     }
     if (!sourceFile) {
-      throw new CliError('Source file not found');
+      throw new CliError('Source file not found', {});
     }
     return sourceFile;
   }
@@ -2012,7 +2012,7 @@ async function storeImportsFromFile(
       fileSystem,
     );
     if (!exporterTsConfig) {
-      throw new CliError('No tsconfig found');
+      throw new CliError('No tsconfig found', {});
     }
     db.putImport(moduleInfo.path, moduleInfo.tsconfig, pos++, imp.name, {
       path: imp.path,
@@ -2064,11 +2064,11 @@ export async function loadSourceFile(
     try {
       const stat = await fileSystem.stat(srcPath);
       if (!stat.isFile()) {
-        throw new CliError('Not a file: ' + srcPath);
+        throw new CliError('Not a file: ' + srcPath, {});
       }
     } catch (err) {
       if (isEnoentError(err)) {
-        throw new CliError('Not found: ' + srcPath);
+        throw new CliError('Not found: ' + srcPath, {});
       }
       throw err;
     }
@@ -2081,7 +2081,7 @@ export async function loadSourceFile(
 
   const sourceFile = project.getSourceFile(srcPath);
   if (!sourceFile) {
-    throw new CliError('Source file not found');
+    throw new CliError('Source file not found', {});
   }
   return sourceFile;
 }
@@ -2176,7 +2176,7 @@ export async function resolveImportSpec(
     fileSystem,
   );
   if (!tsconfigPath) {
-    throw new CliError('No tsconfig found');
+    throw new CliError('No tsconfig found', {});
   }
 
   const compilerOptions = await getCompilerOptions(tsconfigPath, fileSystem);
@@ -2195,7 +2195,7 @@ export async function getCompilerOptions(
   const tsconfigContent = await fileSystem.readFile(tsconfigFile);
   const tsconfig = ts.parseConfigFileTextToJson(tsconfigFile, tsconfigContent);
   if (tsconfig.error) {
-    throw new CliError('Failed to read tsconfig');
+    throw new CliError('Failed to read tsconfig', {});
   }
   const paths = tsconfig.config.compilerOptions?.paths ?? {};
 
@@ -2278,7 +2278,7 @@ async function importSpecAliasToModulePath(
 ) {
   for (const [alias, paths] of Object.entries(compilerOptions.paths)) {
     if (!alias.endsWith('/*')) {
-      throw new CliError(`Alias "${alias}" does not end with "/*"`);
+      throw new CliError(`Alias "${alias}" does not end with "/*"`, {});
     }
     const aliasPrefix = alias.slice(0, -1);
     if (!importSpec.startsWith(aliasPrefix)) {
@@ -2287,12 +2287,14 @@ async function importSpecAliasToModulePath(
     if (paths.length !== 1) {
       throw new CliError(
         `Alias "${alias}" has ${paths.length} path(s); exactly 1 is required`,
+        {},
       );
     }
     for (const path of paths) {
       if (!path.endsWith('/*')) {
         throw new CliError(
           `Alias "${alias}" path "${path}" does not end with "/*"`,
+          {},
         );
       }
       const pathPrefix = path.slice(0, -1);
@@ -2323,7 +2325,7 @@ export async function resolveImportSpecAlias(
     fileSystem,
   );
   if (!tsconfigPath) {
-    throw new CliError('No tsconfig found');
+    throw new CliError('No tsconfig found', {});
   }
 
   const tsconfigDir = dirname(tsconfigPath);

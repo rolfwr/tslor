@@ -27,7 +27,7 @@ export function validatePathExists(
   description: string,
 ): void {
   if (!existsSync(normalizedPath)) {
-    throw new CliError(`${description} does not exist: ${normalizedPath}`);
+    throw new CliError(`${description} does not exist: ${normalizedPath}`, {});
   }
 }
 

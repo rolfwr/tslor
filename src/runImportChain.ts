@@ -80,7 +80,7 @@ export async function runImportChain(
   const fromRepoRoot = findGitRepoRoot(resolvedFromPath);
   const toRepoRoot = findGitRepoRoot(resolvedToPath);
   if (fromRepoRoot !== toRepoRoot) {
-    throw new CliError('From and to paths are in different repositories');
+    throw new CliError('From and to paths are in different repositories', {});
   }
 
   const db = openStorage(debugOptions, {
@@ -89,7 +89,7 @@ export async function runImportChain(
     basePath: fromRepoRoot,
     inMemory: false,
   });
-  await updateStorage(fromRepoRoot, db, true, fileSystem, writer);
+  await updateStorage(fromRepoRoot, db, true, fileSystem, writer, {});
   db.save();
 
   const { found, chain } = buildImportChain(

@@ -1,0 +1,13 @@
+id: no-new-expression-member-access
+language: TypeScript
+severity: error
+message: "Do not access a member on a freshly constructed throwaway instance (new X(...).member); bind the instance to a named variable first, or expose the operation as a static method or free function. Platform built-ins (Date, URL, TextEncoder, ...) are exempt."
+rule:
+  kind: member_expression
+  has:
+    field: object
+    kind: new_expression
+    has:
+      field: constructor
+      not:
+        regex: '(^|\.)(Date|URL|URLSearchParams|TextEncoder|TextDecoder|AbortController|RegExp|Set|Map|WeakMap|WeakSet|Promise|Blob|Response|Request|Headers|DOMParser|XMLSerializer|DateTimeFormat|NumberFormat|Collator|ListFormat|RelativeTimeFormat|PluralRules)$'

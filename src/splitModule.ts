@@ -787,7 +787,10 @@ function addImportToMap(
 export function computeRequiredImports(
   symbolDefinitions: SymbolDefinition[],
   importUsages: ImportUsage[],
+  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
+  // ast-grep-ignore: no-optional-param
   sourceFilePath?: string,
+  // ast-grep-ignore: no-optional-param
   targetFilePath?: string,
 ): RequiredImport[] {
   const requiredImportsMap = new Map<string, ImportMapEntry>();
@@ -876,6 +879,8 @@ function addImportStructureToFile(
 export function generateNewModuleSource(
   symbolDefinitions: SymbolDefinition[],
   requiredImports: RequiredImport[],
+  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
+  // ast-grep-ignore: no-optional-param
   additionalExports?: Set<string>,
 ): string {
   const project = new Project({ useInMemoryFileSystem: true });
@@ -1083,6 +1088,8 @@ export function removeUnusedImports(
  */
 function classifySymbolsByKind(
   symbols: Set<string>,
+  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
+  // ast-grep-ignore: no-optional-param
   symbolDefinitions?: SymbolDefinition[],
 ): { typeSymbols: Set<string>; valueSymbols: Set<string> } {
   const typeSymbols = new Set<string>();
@@ -1205,6 +1212,8 @@ export function addImportForMovedSymbols(
   movedSymbols: Set<string>,
   newModulePath: string,
   shouldReExport: boolean,
+  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
+  // ast-grep-ignore: no-optional-param
   symbolDefinitions?: SymbolDefinition[],
 ): string {
   if (movedSymbols.size === 0) {

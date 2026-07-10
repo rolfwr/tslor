@@ -22,7 +22,7 @@ describe('resolveProjectPath', () => {
     const { dir: cwdRepo, cleanup } = createGitRepo();
 
     try {
-      const result = resolveProjectPath('common', cwdRepo);
+      const result = resolveProjectPath('common', cwdRepo, {});
 
       assert.equal(
         result.absoluteProjectPath,
@@ -44,7 +44,7 @@ describe('resolveProjectPath', () => {
 
     try {
       const absoluteProjectPath = join(repoRoot, 'common');
-      const result = resolveProjectPath(absoluteProjectPath, '/some/other/dir');
+      const result = resolveProjectPath(absoluteProjectPath, '/some/other/dir', {});
 
       assert.equal(
         result.absoluteProjectPath,
@@ -66,7 +66,7 @@ describe('resolveProjectPath', () => {
     const { dir: targetRepo, cleanup: cleanupTarget } = createGitRepo();
 
     try {
-      const result = resolveProjectPath('common', cwdRepo, targetRepo);
+      const result = resolveProjectPath('common', cwdRepo, { repoRoot: targetRepo });
 
       assert.equal(
         result.absoluteProjectPath,
@@ -94,7 +94,7 @@ describe('resolveProjectPath', () => {
       const result = resolveProjectPath(
         absoluteProjectPath,
         cwdRepo,
-        targetRepo,
+        { repoRoot: targetRepo },
       );
 
       assert.equal(

@@ -107,7 +107,7 @@ export async function runTraceImports(
     basePath: repoRoot,
     inMemory: false,
   });
-  await updateStorage(repoRoot, db, true, fileSystem, writer);
+  await updateStorage(repoRoot, db, true, fileSystem, writer, {});
 
   console.log(`Tracing imports from: ${absoluteEntryFile}`);
   if (options.fromProject) {

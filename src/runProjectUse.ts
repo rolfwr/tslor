@@ -85,7 +85,7 @@ export async function runProjectUse(
     basePath: repoRoot,
     inMemory: false,
   });
-  await updateStorage(repoRoot, db, true, fileSystem, writer);
+  await updateStorage(repoRoot, db, true, fileSystem, writer, {});
 
   if (options.symbols) {
     const usesWithSymbols = db.getProjectUsesWithSymbols(

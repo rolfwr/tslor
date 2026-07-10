@@ -27,6 +27,7 @@ export function modulePathToImportSpecAlias(
     if (paths.length !== 1) {
       throw new CliError(
         `Alias "${alias}" has ${paths.length} path(s); exactly 1 is required`,
+        {},
       );
     }
     // biome-ignore lint/style/noNonNullAssertion: Length guard (paths.length === 1) guarantees at(0) is defined.
@@ -34,6 +35,7 @@ export function modulePathToImportSpecAlias(
     if (!path.endsWith('/*')) {
       throw new CliError(
         `Alias "${alias}" path "${path}" does not end with "/*"`,
+        {},
       );
     }
 

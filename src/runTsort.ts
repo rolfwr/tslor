@@ -112,7 +112,7 @@ export async function runTsort(
       options.writer,
       'writer is required when storage is not provided',
     );
-    await updateStorage(repoRoot, db, true, fileSystem, options.writer);
+    await updateStorage(repoRoot, db, true, fileSystem, options.writer, {});
   }
 
   /*
@@ -157,6 +157,7 @@ export async function runTsort(
     throw new CliError(
       `tsort: cycle detected among ${cyclePaths.length} module${cyclePaths.length === 1 ? '' : 's'}:\n` +
         cyclePaths.map((p) => `  ${p}`).join('\n'),
+      {},
     );
   }
 

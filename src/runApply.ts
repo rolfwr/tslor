@@ -103,11 +103,13 @@ async function runVerificationAndRollback(
     writer('\n');
     throw new CliError(
       'Verification command failed. Changes have been rolled back.',
+      {},
     );
   }
 
   throw new CliError(
     'Verification command failed, but plan has no undo information. Changes cannot be automatically rolled back.',
+    {},
   );
 }
 

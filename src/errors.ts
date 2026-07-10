@@ -27,7 +27,7 @@ export class CliError extends Error {
   public readonly exitCode: number;
   public readonly unexpected: boolean;
 
-  constructor(message: string, opts?: CliErrorOptions) {
+  constructor(message: string, opts: CliErrorOptions) {
     super(message, { cause: opts?.cause });
     this.name = new.target.name;
     this.exitCode = opts?.exitCode ?? 1;

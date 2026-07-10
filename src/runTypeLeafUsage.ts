@@ -26,7 +26,7 @@ export async function runTypeLeafUsage(
     basePath: repoRoot,
     inMemory: false,
   });
-  await updateStorage(repoRoot, db, true, fileSystem, writer);
+  await updateStorage(repoRoot, db, true, fileSystem, writer, {});
   db.save();
 
   const { importers, definers } = findFilesUsingTypes(db, typeNames, directory);

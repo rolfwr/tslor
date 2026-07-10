@@ -110,7 +110,7 @@ export async function runCycles(
     basePath: repoRoot,
     inMemory: false,
   }); // Silent for clean cycle output
-  await updateStorage(repoRoot, db, false, fileSystem, writer);
+  await updateStorage(repoRoot, db, false, fileSystem, writer, {});
 
   const capabilities = detectTerminalCapabilities();
 

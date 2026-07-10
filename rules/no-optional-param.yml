@@ -1,0 +1,9 @@
+id: no-optional-param
+language: TypeScript
+severity: error
+message: "Do not use optional function parameters to avoid updating call site to consider extended function capabilities and semantics. If function capabilities and semantics are genuinely optional with mainstream and sensible baseline behavior see options-object-pattern skill for alternatives."
+ignores:
+  - "**/filesystem.ts"
+  - "**/transformingFileSystem.ts"
+rule:
+  kind: optional_parameter

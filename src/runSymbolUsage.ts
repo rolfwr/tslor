@@ -34,7 +34,7 @@ function collectExporterPaths(
 export function resolveProjectPath(
   projectPath: string,
   cwd: string,
-  repoRoot?: string,
+  opts: { repoRoot?: string },
 ): { absoluteProjectPath: string; repoRoot: string } {
   if (isAbsolute(projectPath)) {
     const absoluteProjectPath = resolve(projectPath);
@@ -43,7 +43,7 @@ export function resolveProjectPath(
   }
 
   const resolvedRepoRoot =
-    repoRoot !== undefined ? repoRoot : findGitRepoRoot(cwd);
+    opts.repoRoot !== undefined ? opts.repoRoot : findGitRepoRoot(cwd);
   const absoluteProjectPath = resolve(resolvedRepoRoot, projectPath);
   return { absoluteProjectPath, repoRoot: resolvedRepoRoot };
 }
@@ -66,10 +66,11 @@ export async function runSymbolUsage(
   fileSystem: FileSystem,
   writer: (message: string) => void,
 ) {
+  const projectOpts = options.repoRoot !== undefined ? { repoRoot: options.repoRoot } : {};
   const { absoluteProjectPath, repoRoot: targetRepoRoot } = resolveProjectPath(
     projectPath,
     options.cwd,
-    options.repoRoot,
+    projectOpts,
   );
   const db = openStorage(debugOptions, {
     verbose: true,
@@ -77,7 +78,7 @@ export async function runSymbolUsage(
     basePath: targetRepoRoot,
     inMemory: false,
   });
-  await updateStorage(targetRepoRoot, db, true, fileSystem, writer);
+  await updateStorage(targetRepoRoot, db, true, fileSystem, writer, {});
 
   console.log(
     '⚠️  WARNING: This command uses loose symbol name matching and may return',

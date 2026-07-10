@@ -65,6 +65,7 @@ export async function runProposeSplit(
   ) {
     throw new CliError(
       'Missing required arguments: sourceModule, targetModule, and at least one symbol',
+      {},
     );
   }
 
@@ -140,11 +141,11 @@ async function validateInputs(
   writer: (message: string) => void,
 ): Promise<StaticModuleInfo> {
   if (!(await fileSystem.exists(sourceModule))) {
-    throw new CliError(`Source module does not exist: ${sourceModule}`);
+    throw new CliError(`Source module does not exist: ${sourceModule}`, {});
   }
 
   if (await fileSystem.exists(targetModule)) {
-    throw new CliError(`Target module already exists: ${targetModule}`);
+    throw new CliError(`Target module already exists: ${targetModule}`, {});
   }
 
   const sourceFile = await loadSourceFile(sourceModule, fileSystem);
@@ -160,6 +161,7 @@ async function validateInputs(
   if (invalidSymbols.length > 0) {
     throw new CliError(
       `The following symbols are not exported from ${sourceModule}: ${invalidSymbols.join(', ')}`,
+      {},
     );
   }
 
@@ -183,6 +185,7 @@ function analyzeDependencies(
     if (!analysis.canSplit) {
       throw new CliError(
         `Cannot split symbol '${symbol}': circular dependencies detected with ${analysis.circularDependencies.join(', ')}`,
+        {},
       );
     }
   }
@@ -231,6 +234,7 @@ function checkNotMovingAllSymbols(
     throw new CliError(
       `Cannot move all ${totalExports} exported symbols. ` +
         `Use 'tslor mv' to move the entire file instead.`,
+      {},
     );
   }
 

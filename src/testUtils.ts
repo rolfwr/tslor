@@ -82,6 +82,8 @@ export function createTestSourceFile(sourceCode: string): SourceFile {
   return project.createSourceFile('test.ts', sourceCode);
 }
 
+// RATIONALE: test helper — test file signatures exempted by convention
+// ast-grep-ignore: no-optional-param
 export function createTempDir(options?: {
   files?: Record<string, string>;
   setup?: (dir: string) => void;

@@ -71,7 +71,7 @@ export async function runImportGroups(
     basePath: repoRoot,
     inMemory: false,
   });
-  await updateStorage(repoRoot, db, true, fileSystem, options.writer);
+  await updateStorage(repoRoot, db, true, fileSystem, options.writer, {});
 
   try {
     const filePaths = Array.from(moduleSet);

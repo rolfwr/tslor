@@ -400,6 +400,8 @@ export function replaceTypeInFile(
   targetType: string,
   sourceModule: string,
   targetModule: string,
+  // RATIONALE: options-object conversion deferred (split across multiple functions)
+  // ast-grep-ignore: no-optional-param
   resolvedExporterPath?: string,
 ): string | null {
   const isVue = filePath.endsWith('.vue');
@@ -505,7 +507,10 @@ function analyzeImports(
   script: string,
   sourceType: string,
   sourceModule: string,
+  // RATIONALE: options-object conversion deferred (split across multiple functions)
+  // ast-grep-ignore: no-optional-param
   importerPath?: string,
+  // ast-grep-ignore: no-optional-param
   resolvedExporterPath?: string,
 ): ImportAnalysis {
   const lines = script.split('\n');

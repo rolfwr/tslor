@@ -138,6 +138,8 @@ export function saveObjStoreAsJsonl(
   filename: string,
   store: ObjStore,
   writeFn: (path: string, data: string) => void,
+  // RATIONALE: callback param — caller omits when verbose logging is unwanted
+  // ast-grep-ignore: no-optional-param
   onVerbose?: (message: string) => void,
 ) {
   const objs = store.allObjs();
