@@ -1,5 +1,5 @@
 import { assert, test, describe } from 'vitest';
-import { resolveImportSpec } from './indexing';
+import { resolveImportSpec } from './resolveImport';
 import { InMemoryFileSystem } from './filesystem';
 
 describe('resolveImportSpec', () => {
