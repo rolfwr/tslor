@@ -150,26 +150,31 @@ type WorkerMessage =
   | { type: 'skip'; path: string; reason: string }
   | { type: 'error'; error: string };
 
-function parseWorkerResult(msg: WorkerMessage): ModuleInfo | null {
-  if (msg.type === 'error') {
-    throw new Error(msg.error);
+/*
+  Deserialize a worker message. The msg parameter is typed unknown
+  because it comes from the Node.js events API which doesn't constrain
+  message types. We validate the shape before narrowing.
+*/
+function parseWorkerResult(msg: unknown): ModuleInfo | null {
+  if (typeof msg !== 'object' || msg === null || !('type' in msg)) {
+    throw new Error('Worker message is not a valid object');
   }
-  if (msg.type === 'skip') {
+  // RATIONALE: validated shape above; Worker postMessage always produces plain objects matching WorkerMessage
+  // ast-grep-ignore: no-type-assertion
+  const workerMsg = msg as WorkerMessage;
+  const msgType = workerMsg.type;
+  if (msgType === 'error') {
+    throw new Error(workerMsg.error);
+  }
+  if (msgType === 'skip') {
     return null;
   }
-  const parsed: unknown = JSON.parse(msg.moduleInfo);
-  if (!isModuleInfo(parsed)) {
-    throw new Error('Worker returned invalid ModuleInfo');
+  if (msgType !== 'result') {
+    throw new Error('Unexpected worker message type: ' + msgType);
   }
-  return parsed;
-}
-
-function isModuleInfo(x: unknown): x is ModuleInfo {
-  return typeof x === 'object' && x !== null && 'path' in x;
-}
-
-function isWorkerMessage(x: unknown): x is WorkerMessage {
-  return typeof x === 'object' && x !== null && 'type' in x;
+  // RATIONALE: JSON boundary — worker serializes ModuleInfo via JSON.stringify/postMessage
+  // ast-grep-ignore: no-type-assertion
+  return JSON.parse(workerMsg.moduleInfo) as ModuleInfo;
 }
 
 async function getWorkerFile(): Promise<URL> {
@@ -378,9 +383,6 @@ async function indexImportFromFilesParallel(
     }
     let moduleInfo: ModuleInfo | null;
     try {
-      if (!isWorkerMessage(msg)) {
-        throw new Error('Invalid worker message');
-      }
       moduleInfo = parseWorkerResult(msg);
     } catch (error) {
       reThrowAsCliError(
