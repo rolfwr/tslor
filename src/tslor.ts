@@ -2,7 +2,7 @@ import { Command, OptionValues, program } from 'commander';
 import { dirname, extname, resolve } from 'path';
 import { CliError } from './errors';
 import { RealFileSystem } from './filesystem';
-import { inspectModule } from './indexing';
+import { inspectModule } from './inspectModule';
 import { findGitRepoRoot } from './project';
 import { GitRepositoryRootProvider } from './repositoryRootProvider';
 import { runApply } from './runApply';
