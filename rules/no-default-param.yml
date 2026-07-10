@@ -1,9 +1,7 @@
 id: no-default-param
 language: TypeScript
 severity: error
-message: "Function parameters must not have default values; pass all values explicitly at every call site"
+message: "Do not use function parameters default values to avoid updating call site to consider extended function capabilities and semantics. If function capabilities and semantics are genuinely optional with mainstream and sensible baseline behavior see options-object-pattern skill for alternatives."
 rule:
   kind: required_parameter
-  has:
-    field: value
-    pattern: $DEFAULT
+  regex: '[^=>]= '

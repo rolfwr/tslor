@@ -4,12 +4,29 @@ severity: error
 message: "Language construct bodies must use a { ... } block body spanning multiple lines"
 rule:
   any:
-    # if consequence: braceless
-    - kind: if_statement
-      has:
-        field: consequence
-        not:
-          kind: statement_block
+    # if consequence: braceless — flagged, EXCEPT a single-line guard clause
+    # whose consequence is a jump statement (return/break/continue/throw),
+    # e.g. `if (foo > 42) return;`. The two-line braceless form stays flagged
+    # because the if_statement text then contains a newline, and braceless
+    # non-jump consequences (`if (x) foo();`) stay flagged because the
+    # consequence is none of the jump kinds.
+    - all:
+        - kind: if_statement
+          has:
+            field: consequence
+            not:
+              kind: statement_block
+        - not:
+            all:
+              - not:
+                  regex: "\n"
+              - has:
+                  field: consequence
+                  any:
+                    - kind: return_statement
+                    - kind: break_statement
+                    - kind: continue_statement
+                    - kind: throw_statement
     # if consequence: single-line block
     - kind: if_statement
       has:
@@ -17,7 +34,7 @@ rule:
         kind: statement_block
         not:
           regex: "\n"
-    # else: braceless (else-if is not flagged because it has an if_statement descendant)
+    # else: braceless (else-if is handled by the if_statement checks)
     - kind: else_clause
       not:
         has:

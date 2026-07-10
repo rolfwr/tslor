@@ -1,0 +1,15 @@
+id: no-arrow-top-level-function
+language: TypeScript
+severity: error
+message: "Use the `function` keyword for top-level module members (not arrow function syntax)."
+rule:
+  any:
+    - kind: lexical_declaration
+    - kind: variable_declaration
+  has:
+    kind: variable_declarator
+    has:
+      kind: arrow_function
+  not:
+    inside:
+      kind: statement_block

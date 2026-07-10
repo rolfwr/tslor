@@ -1,7 +1,7 @@
 id: no-reexport
 language: TypeScript
 severity: error
-message: "Re-export detected: consumers should import directly from the defining module"
+message: "Re-export detected: run `tslor propose-import-directly .` to redirect consumers, then `tslor propose-purge-reexport .` to remove the unused re-export"
 # Test files are excluded because tslor's tests use re-export fixtures
 # to exercise tslor's own re-export analysis features. These are test
 # scaffolding, not architectural re-exports.
