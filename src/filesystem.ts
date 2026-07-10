@@ -9,6 +9,9 @@
  *
  * For in-memory testing, we provide an implementation that works with ts-morph's InMemoryFileSystemHost
  * where possible, but we maintain our own interface for the operations we specifically need.
+ *
+ * `.vue` single-file components are automatically extracted to their `<script>` block
+ * content on read, matching the behavior of TransformingFileSystem for ts-morph callers.
  */
 
 /**
@@ -19,6 +22,22 @@ export interface Dirent {
   isFile(): boolean;
   isDirectory(): boolean;
 }
+
+/**
+ * A file's full on-disk content — for a `.vue` SFC, the raw text including
+ * `<template>`/`<style>`, not the extracted `<script>` block. Branded so a
+ * plain `string` (in particular, the extracted content {@link FileSystem.readFile}
+ * returns) cannot be passed as {@link readTransformableFile}'s or
+ * {@link reconstructFileContent}'s raw-content argument without an explicit,
+ * deliberate cast — passing extracted content where the raw SFC is required
+ * silently corrupts `.vue` files on write. Scoped to that one boundary (not
+ * to {@link reinsertScript}/{@link extractScript} themselves, which stay
+ * plain `string`) so the brand does not force casts onto callers that read
+ * genuinely raw bytes through a path other than {@link FileSystem} — e.g.
+ * `transformingFileSystem.ts`'s direct `fs.readFile` calls, which never had
+ * this defect and gain nothing from re-proving it here.
+ */
+export type RawFileContent = string & { readonly __brand: 'RawFileContent' };
 
 export interface FileSystem {
   /**
@@ -35,12 +54,27 @@ export interface FileSystem {
   exists(filePath: string): Promise<boolean>;
 
   /**
-   * Read a file's contents
+   * Read a file's contents.
+   *
+   * For `.vue` single-file components the returned string is the extracted
+   * `<script>` block rather than the raw SFC text.
+   *
+   * @throws {@link FileSystemError} with code 'ENOENT' if the file does not exist;
+   *         with code 'EBADCONTENT' if the `.vue` `<script>` block is malformed;
+   *         other system errors may also be thrown.
+   */
+  readFile(filePath: string, encoding?: string): Promise<string>;
+
+  /**
+   * Read a file's raw contents without any transformation.
+   *
+   * Unlike {@link readFile}, `.vue` single-file components are returned
+   * as-is (full SFC text) rather than with the `<script>` block extracted.
    *
    * @throws {@link FileSystemError} with code 'ENOENT' if the file does not exist;
    *         other system errors may also be thrown.
    */
-  readFile(filePath: string, encoding?: string): Promise<string>;
+  readFileRaw(filePath: string): Promise<RawFileContent>;
 
   /**
    * Read directory entries.
@@ -76,6 +110,22 @@ export function isEnoentError(err: unknown): err is { code: 'ENOENT' } {
 }
 
 /**
+ * Extract the `<script>` block from `.vue` SFC content, wrapping any
+ * parse error in a {@link FileSystemError} so callers need not distinguish
+ * extraction failures from filesystem failures.
+ */
+function applyVueExtraction(content: string, filePath: string): string {
+  if (!filePath.endsWith('.vue')) {
+    return content;
+  }
+  try {
+    return extractScript(content);
+  } catch (err) {
+    throw new FileSystemError('EBADCONTENT', `read '${filePath}'`, err);
+  }
+}
+
+/**
  * Real filesystem implementation using Node.js fs/promises
  */
 export class RealFileSystem implements FileSystem {
@@ -107,10 +157,17 @@ export class RealFileSystem implements FileSystem {
     }
   }
 
-  async readFile(filePath: string, encoding?: BufferEncoding): Promise<string> {
+  async readFile(filePath: string, _encoding?: BufferEncoding): Promise<string> {
+    const content = await this.readFileRaw(filePath);
+    return applyVueExtraction(content, filePath);
+  }
+
+  async readFileRaw(filePath: string): Promise<RawFileContent> {
     const { readFile } = await import('fs/promises');
     try {
-      return readFile(filePath, { encoding: encoding || 'utf-8' });
+      // RATIONALE: brand-minting point — this is the file's actual on-disk bytes.
+      // ast-grep-ignore: no-type-assertion
+      return (await readFile(filePath, { encoding: 'utf-8' })) as RawFileContent;
     } catch (err) {
       if (isEnoentError(err)) {
         throw new FileSystemError('ENOENT', `open '${filePath}'`, err);
@@ -194,11 +251,18 @@ export class InMemoryFileSystem implements FileSystem {
   }
 
   async readFile(filePath: string, _encoding?: string): Promise<string> {
+    const content = await this.readFileRaw(filePath);
+    return applyVueExtraction(content, filePath);
+  }
+
+  async readFileRaw(filePath: string): Promise<RawFileContent> {
     const file = this.files.get(filePath);
     if (!file) {
       throw new FileSystemError('ENOENT', `open '${filePath}'`);
     }
-    return file.content;
+    // RATIONALE: brand-minting point — this is the in-memory file's raw content.
+    // ast-grep-ignore: no-type-assertion
+    return file.content as RawFileContent;
   }
 
   /**
@@ -265,4 +329,96 @@ export class InMemoryFileSystem implements FileSystem {
       isDirectory: () => type === 'directory',
     }));
   }
+}
+
+/**
+ * Extract the `<script>` block content from a `.vue` single-file component.
+ *
+ * @throws {Error} if the `<script>` tag is malformed or the round-trip
+ *         verification fails.
+ */
+export function extractScript(code: string): string {
+  const pos = code.indexOf('<script');
+  if (pos === -1) {
+    return '';
+  }
+  const start = code.indexOf('>', pos);
+  if (start === -1) {
+    throw new Error('Script tag not closed');
+  }
+  const end = code.indexOf('</script>', start);
+  if (end === -1) {
+    throw new Error('Script tag not closed');
+  }
+
+  const scriptPart = code.slice(start + 1, end);
+  const verify = reinsertScript(code, scriptPart);
+  if (verify !== code) {
+    throw new Error('Safe script extraction failed');
+  }
+
+  return scriptPart;
+}
+
+/**
+ * Reinsert a `<script>` block into a `.vue` single-file component,
+ * replacing the original script content while preserving template and style sections.
+ */
+export function reinsertScript(code: string, scriptContent: string): string {
+  const pos = code.indexOf('<script');
+  if (pos === -1) {
+    if (scriptContent.trim() === '') {
+      return code;
+    }
+    throw new Error('Script tag for reinsertion not found');
+  }
+  const start = code.indexOf('>', pos);
+  if (start === -1) {
+    throw new Error('Script tag not closed');
+  }
+  const end = code.indexOf('</script>', start);
+  if (end === -1) {
+    throw new Error('Script tag not closed');
+  }
+
+  return code.slice(0, start + 1) + scriptContent + code.slice(end);
+}
+
+/**
+ * Read a file for a transformation command that needs both the content to
+ * scan/parse (extracted script for `.vue`, full text otherwise) and the raw
+ * content the file must be reconstructed from and checksummed against. For a
+ * non-`.vue` file these are the same content, read once; for `.vue` the raw
+ * SFC is fetched with one additional read.
+ */
+export async function readTransformableFile(
+  fileSystem: FileSystem,
+  filePath: string,
+): Promise<{ scriptContent: string; rawContent: RawFileContent }> {
+  const scriptContent = await fileSystem.readFile(filePath, 'utf-8');
+  if (filePath.endsWith('.vue')) {
+    return { scriptContent, rawContent: await fileSystem.readFileRaw(filePath) };
+  }
+  // RATIONALE: for a non-.vue file, readFile() and readFileRaw() return
+  // identical content (applyVueExtraction is a no-op for those paths), so
+  // this is genuinely raw content without a second read.
+  // ast-grep-ignore: no-type-assertion
+  const rawContent = scriptContent as RawFileContent;
+  return { scriptContent, rawContent };
+}
+
+/**
+ * Reconstruct a transformed file's full on-disk content: for a `.vue` SFC,
+ * reinsert the modified script into the raw structure (template/style
+ * intact); for any other file, the modified script content already is the
+ * full file.
+ */
+export function reconstructFileContent(
+  filePath: string,
+  rawContent: RawFileContent,
+  modifiedScriptContent: string,
+): string {
+  return filePath.endsWith('.vue')
+    ? reinsertScript(rawContent, modifiedScriptContent)
+    : modifiedScriptContent;
 }

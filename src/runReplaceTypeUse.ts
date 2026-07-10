@@ -20,12 +20,11 @@ import {
   ModifyFileChange,
   createEmptyPlan,
 } from './plan';
-import { extractScript, reinsertScript } from './transformingFileSystem';
 import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem } from './filesystem';
+import { FileSystem, extractScript, reinsertScript } from './filesystem';
 import { Node, Project, SyntaxKind } from 'ts-morph';
 import { dirname, resolve } from 'path';
 

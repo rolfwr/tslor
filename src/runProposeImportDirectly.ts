@@ -26,13 +26,12 @@ import {
   resolveImportSpec as resolveImportSpecFromIndexing,
   resolveImportSpecAlias,
 } from './indexing';
-import { reinsertScript } from './transformingFileSystem';
+import { FileSystem, reinsertScript } from './filesystem';
 import { isGeneratedFile } from './generatedFileDetection';
 import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem } from './filesystem';
 
 /**
  * Propose changing imports of re-exported symbols to point directly to original exports.

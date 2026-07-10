@@ -9,7 +9,7 @@
 
 import { Identifier, ImportDeclaration, SourceFile } from 'ts-morph';
 import { groupBy } from './collections';
-import { FileSystem } from './filesystem';
+import { FileSystem, reinsertScript } from './filesystem';
 import { loadSourceFile } from './indexing';
 import { isPathWithinDirectory, normalizeAndValidatePath } from './pathUtils';
 import {
@@ -25,7 +25,6 @@ import {
   InMemoryRepositoryRootProvider,
   RepositoryRootProvider,
 } from './repositoryRootProvider';
-import { reinsertScript } from './transformingFileSystem';
 
 export async function runNormalizeImports(
   directoryArg: string,

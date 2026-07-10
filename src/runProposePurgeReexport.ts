@@ -21,12 +21,11 @@ import {
 } from './plan';
 import { SourceFile, ExportDeclaration } from 'ts-morph';
 import { loadSourceFile } from './indexing';
-import { reinsertScript } from './transformingFileSystem';
 import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem } from './filesystem';
+import { FileSystem, reinsertScript } from './filesystem';
 import { isGeneratedFile } from './generatedFileDetection';
 
 /**

@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { mkdir, writeFile, stat, readFile } from 'node:fs/promises';
 import type { FileSystemHost, RuntimeDirEntry } from 'ts-morph';
+import { extractScript, reinsertScript } from './filesystem';
 
 export class TransformingFileSystem implements FileSystemHost {
   constructor() {}
@@ -148,51 +149,4 @@ export class TransformingFileSystem implements FileSystemHost {
   globSync(_patterns: ReadonlyArray<string>): string[] {
     throw new Error('globSync not implemented.');
   }
-}
-
-export function extractScript(code: string): string {
-  const pos = code.indexOf('<script');
-  if (pos === -1) {
-    return '';
-  }
-  const start = code.indexOf('>', pos);
-  if (start === -1) {
-    throw new Error('Script tag not closed');
-  }
-  const end = code.indexOf('</script>', start);
-  if (end === -1) {
-    throw new Error('Script tag not closed');
-  }
-
-  const scriptPart = code.slice(start + 1, end);
-  const verify = reinsertScript(code, scriptPart);
-  if (verify !== code) {
-    throw new Error('Safe script extraction failed');
-  }
-
-  return scriptPart;
-}
-
-export function reinsertScript(code: string, scriptPart: string): string {
-  const pos = code.indexOf('<script');
-  if (pos === -1) {
-    if (scriptPart.trim() === '') {
-      return code;
-    }
-    throw new Error('Script tag for reinsertion not found');
-  }
-  const start = code.indexOf('>', pos);
-  if (start === -1) {
-    throw new Error('Script tag not closed');
-  }
-  const end = code.indexOf('</script>', start);
-  if (end === -1) {
-    throw new Error('Script tag not closed');
-  }
-
-  if (!scriptPart.startsWith('\n')) {
-    scriptPart = '\n' + scriptPart;
-  }
-
-  return code.slice(0, start + 1) + scriptPart + code.slice(end);
 }

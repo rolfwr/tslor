@@ -11,7 +11,7 @@ import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem } from './filesystem';
+import { FileSystem, reinsertScript } from './filesystem';
 import { DebugOptions } from './objstore';
 import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
 import {
@@ -27,7 +27,6 @@ import {
 } from './plan';
 import { loadSourceFile, NODEJS_GLOBALS } from './indexing';
 import { openStorage } from './storage';
-import { reinsertScript } from './transformingFileSystem';
 import { isGeneratedFile } from './generatedFileDetection';
 
 export interface NamespaceNormalizationChange {
