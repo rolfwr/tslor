@@ -5,13 +5,7 @@ import { ImportDeclaration, Node, SourceFile, SyntaxKind } from 'ts-morph';
 import { CliError } from './errors';
 import { FileSystem } from './filesystem';
 import { modulePathSpec } from './importSpec';
-import {
-  indexImportFromFiles,
-  loadSourceFile,
-  NamedExport,
-  resolveImportSpec,
-  resolveImportSpecAlias,
-} from './indexing';
+import { indexImportFromFiles } from './indexing';
 import { invariant } from './invariant';
 import { DebugOptions } from './objstore';
 import { normalizeAndValidatePath } from './pathUtils';
@@ -21,6 +15,8 @@ import {
   getTypeScriptFilePaths,
 } from './project';
 import { openStorage, Storage } from './storage';
+import { loadSourceFile } from './loadSourceFile';
+import { resolveImportSpec, resolveImportSpecAlias } from './resolveImport';
 
 interface FileMove {
   oldPath: string;
@@ -102,8 +98,14 @@ export async function runMv(
  * `newExport` points to the location after the move.
  */
 interface MoveFixup {
-  oldExport: NamedExport;
-  newExport: NamedExport;
+  oldExport: MovedExport;
+  newExport: MovedExport;
+}
+
+/** Location of an export, used to track the old and new path of a symbol during a move. */
+interface MovedExport {
+  path: string;
+  name: string;
 }
 
 function toRelativeModuleSpec(fromPath: string, toPath: string): string {
@@ -251,7 +253,7 @@ export async function getFixups(
   fileSystem: FileSystem,
 ): Promise<MoveFixup[]> {
   const sourceFile = await loadSourceFile(srcPath, fileSystem);
-  const exports: NamedExport[] = [];
+  const exports: MovedExport[] = [];
 
   sourceFile.forEachChild((node) => {
     switch (node.getKind()) {
@@ -270,7 +272,6 @@ export async function getFixups(
 
   return exports.map((exp) => ({
     oldExport: {
-      type: 'NamedExport' as const,
       path: oldPath,
       name: exp.name,
     },
@@ -281,7 +282,7 @@ export async function getFixups(
 function collectDeclarationExports(
   node: Node,
   srcPath: string,
-  exports: NamedExport[],
+  exports: MovedExport[],
 ): void {
   let hasExportKeyword = false;
   let identifier: Node | undefined;
@@ -310,14 +311,13 @@ function collectDeclarationExports(
     named export. Only push the identifier for non-default exports.
   */
   if (isDefault) {
-    exports.push({ type: 'NamedExport', path: srcPath, name: 'default' });
+    exports.push({ path: srcPath, name: 'default' });
   } else {
     invariant(
       identifier,
       `Exported declaration in ${srcPath} has no identifier`,
     );
     exports.push({
-      type: 'NamedExport',
       path: srcPath,
       name: identifier.getText(),
     });
@@ -327,7 +327,7 @@ function collectDeclarationExports(
 function collectVariableExports(
   node: Node,
   srcPath: string,
-  exports: NamedExport[],
+  exports: MovedExport[],
 ): void {
   const varStatement = node.asKind(SyntaxKind.VariableStatement);
   if (!varStatement || !varStatement.hasModifier(SyntaxKind.ExportKeyword)) {
@@ -335,7 +335,7 @@ function collectVariableExports(
   }
   for (const decl of varStatement.getDeclarations()) {
     const name = decl.getName();
-    exports.push({ type: 'NamedExport', path: srcPath, name });
+    exports.push({ path: srcPath, name });
   }
 }
 
