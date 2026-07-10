@@ -1,6 +1,6 @@
 import { assert, describe, test } from 'vitest';
 import { InMemoryFileSystem } from './filesystem';
-import { inspectModule } from './indexing';
+import { inspectModule } from './inspectModule';
 import { assertDefined } from './invariant';
 
 describe('inspect resolves re-export paths', () => {

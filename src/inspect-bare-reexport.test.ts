@@ -13,7 +13,8 @@
 
 import { describe, test, expect } from 'vitest';
 import { InMemoryFileSystem } from './filesystem';
-import { inspectModule, parseModule } from './indexing';
+import { inspectModule } from './inspectModule';
+import { parseModule } from './staticAnalysis';
 import { createTestSourceFile } from './testUtils';
 
 describe('parseModule tracks bare export { x } re-exports', () => {
