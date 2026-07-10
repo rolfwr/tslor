@@ -20,12 +20,16 @@ import {
   createEmptyPlan,
 } from './plan';
 import { SourceFile, ExportDeclaration } from 'ts-morph';
-import { loadSourceFile } from './indexing';
+import { loadSourceFile } from './loadSourceFile';
 import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem, reinsertScript } from './filesystem';
+import {
+  FileSystem,
+  readTransformableFile,
+  reconstructFileContent,
+} from './filesystem';
 import { isGeneratedFile } from './generatedFileDetection';
 
 /**
@@ -307,28 +311,28 @@ async function createPurgeReexportPlan(
 
   let skippedGenerated = 0;
   for (const [filePath, fileReExports] of changesByFile) {
-    const originalContent = await fileSystem.readFile(filePath, 'utf-8');
+    const { scriptContent: originalContent, rawContent } =
+      await readTransformableFile(fileSystem, filePath);
 
     if (isGeneratedFile(originalContent)) {
       skippedGenerated++;
       continue;
     }
 
-    const fileChecksum = computeStringChecksum(originalContent);
     const sourceFile = await loadSourceFile(filePath, fileSystem);
 
     applyReexportRemovalsToFile(sourceFile, fileReExports, filePath);
 
     const modifiedScriptContent = sourceFile.getFullText();
+    const finalContent = reconstructFileContent(
+      filePath,
+      rawContent,
+      modifiedScriptContent,
+    );
 
-    let finalContent: string;
-    if (filePath.endsWith('.vue')) {
-      finalContent = reinsertScript(originalContent, modifiedScriptContent);
-    } else {
-      finalContent = modifiedScriptContent;
-    }
+    const fileChecksum = computeStringChecksum(rawContent);
 
-    if (finalContent !== originalContent) {
+    if (finalContent !== rawContent) {
       changes.push({
         type: 'modify-file',
         path: filePath,
@@ -339,7 +343,7 @@ async function createPurgeReexportPlan(
       undo.push({
         type: 'modify-file',
         path: filePath,
-        content: originalContent,
+        content: rawContent,
         originalChecksum: computeStringChecksum(finalContent),
       });
 

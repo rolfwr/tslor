@@ -5,7 +5,7 @@ import {
   filterReExportsByDirectory,
   hasPublicTag,
 } from './runProposePurgeReexport';
-import { parseModule } from './indexing';
+import { parseModule } from './staticAnalysis';
 import { createTestSourceFile } from './testUtils';
 
 test('applyReexportRemovalsToFile preserves type keyword for individual exports', () => {
