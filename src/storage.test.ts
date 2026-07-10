@@ -1,5 +1,8 @@
+import { mkdtempSync, readdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { ObjStore } from './objstore';
-import { Storage } from './storage';
+import { Storage, openStorage } from './storage';
 import { normalizePath } from './pathUtils';
 
 import { assert, test } from 'vitest';
@@ -68,4 +71,40 @@ test('storage import', () => {
   storage.deleteImporterPath('fileC');
   const importersD3 = storage.getImportersOfExport('fileE', 'nameD');
   assert.deepEqual(importersD3, [normalizePath('fileB')]);
+});
+
+test('a freshly opened store persists across reopen without wiping the index', () => {
+  /*
+    Regression guard (this bug shipped three times). A freshly opened store puts
+    _schemaVersion but must also be marked dirty; otherwise save() no-ops, the
+    version is never written, and the next open sees no version, treats the
+    schema as mismatched, and deletes the index — on every open. The bug only
+    surfaces on the no-data-write path: any data put dirties the store and masks
+    it, so this test writes nothing before the first save. It exercises the real
+    openStorage -> save -> reopen path rather than crafting the state directly.
+  */
+  const tmpDir = mkdtempSync(join(tmpdir(), 'tslor-storage-'));
+  const debug = { traceId: null };
+  const options = { verbose: false, basePath: tmpDir, inMemory: false };
+  try {
+    const first = openStorage(debug, options);
+    first.save();
+
+    // A fresh store must persist on save even when nothing else was written.
+    assert.isAbove(
+      readdirSync(tmpDir).length,
+      0,
+      'fresh store did not persist on save',
+    );
+
+    // Reopening a store whose version matches must not wipe the persisted file.
+    openStorage(debug, options);
+    assert.isAbove(
+      readdirSync(tmpDir).length,
+      0,
+      'reopening a matching-version store wiped the index',
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

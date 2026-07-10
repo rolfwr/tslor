@@ -14,6 +14,20 @@ import { normalizePath } from './pathUtils';
 const OBJSTORE_FILENAME = '_objstore.jsonl';
 
 /**
+ * Schema version of the object store.
+ *
+ * Incremented whenever the shape of a stored record changes (e.g., new fields
+ * in needs records). When a stale database with a lower version is detected,
+ * `openStorage` deletes it so a fresh reindex occurs.
+ *
+ * Version history:
+ * 1 — initial version (needs records store ambientNames array)
+ * 2 — removed nodejs boolean from needs records (T8)
+ * 3 — added sideEffectExporter records for side-effect imports
+ */
+const CURRENT_SCHEMA_VERSION = 3;
+
+/**
  * Reference to a module with its governing tsconfig.
  * Used for both forward (exporter) and reverse (importer) dependency queries.
  */
@@ -119,16 +133,19 @@ interface StorageOptions {
   jsonlPath: string;
   verbose: boolean;
   inMemory: boolean;
+  isDirty?: boolean;
 }
 
 export class Storage {
   /** Tracks whether the store has been modified since last load/save */
-  private isDirty = false;
+  private isDirty: boolean;
 
   constructor(
     private objStore: ObjStore,
     private options: StorageOptions,
-  ) {}
+  ) {
+    this.isDirty = options.isDirty ?? false;
+  }
 
   /**
    * Store an import relationship in the index.
@@ -541,9 +558,44 @@ export function openStorage(
     unlinkSync(jsonlPath);
   }
 
-  const objStore = existsSync(jsonlPath)
-    ? loadObjStoreFromJsonl(jsonlPath, debugOptions)
-    : new ObjStore(debugOptions);
+  /*
+    Check for schema mismatch before loading the full store.
+    A mismatch means we need to discard the existing database and
+    create a fresh one.
+  */
+  let objStore: ObjStore;
+  let schemaMismatch: boolean;
+  if (existsSync(jsonlPath)) {
+    const tempStore = loadObjStoreFromJsonl(jsonlPath, debugOptions);
+    const versionObj = tempStore.get('_schemaVersion');
+    const storedVersion =
+      typeof versionObj?.version === 'number'
+        ? versionObj.version
+        : undefined;
+    schemaMismatch = storedVersion !== CURRENT_SCHEMA_VERSION;
+    if (schemaMismatch) {
+      if (verbose) {
+        console.error(
+          'Schema version mismatch (' +
+            (storedVersion ?? 'none') +
+            ' vs ' +
+            CURRENT_SCHEMA_VERSION +
+            ') — deleting index for fresh reindex.',
+        );
+      }
+      unlinkSync(jsonlPath);
+      objStore = new ObjStore(debugOptions);
+    } else {
+      objStore = tempStore;
+    }
+  } else {
+    schemaMismatch = true;
+    objStore = new ObjStore(debugOptions);
+  }
 
-  return new Storage(objStore, { jsonlPath, verbose, inMemory });
+  if (schemaMismatch) {
+    objStore.put({ id: '_schemaVersion', version: CURRENT_SCHEMA_VERSION });
+  }
+
+  return new Storage(objStore, { jsonlPath, verbose, inMemory, isDirty: schemaMismatch });
 }
