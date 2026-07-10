@@ -66,6 +66,14 @@ export async function runApply(
   // If verification command is provided, run it
   await runVerificationAndRollback(plan, options.verify, writer);
 
+  // Suggest purge-reexport after split plans that create re-exports
+  if (plan.command === 'split') {
+    writer('\n');
+    writer(
+      "Tip: Run 'tslor propose-purge-reexport .' to remove unused re-exports.\n",
+    );
+  }
+
   // Archive the plan file
   await archivePlanWithFallback(planFile, warn, archiveFn, writer);
 
