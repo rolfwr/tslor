@@ -20,6 +20,7 @@ import {
   createEmptyPlan,
 } from './plan';
 import { SourceFile, ImportDeclaration } from 'ts-morph';
+import { getOrThrow } from './invariant';
 import { parseModule } from './staticAnalysis';
 import { loadSourceFile } from './loadSourceFile';
 import { resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from './resolveImport';
@@ -498,8 +499,7 @@ function splitImportDeclaration(
   importDecl: ImportDeclaration,
   namedImports: ReturnType<ImportDeclaration['getNamedImports']>,
   specChanges: ImportChange[],
-  importedSymbolNames: Set<string>,
-  changedSymbols: Set<string>,
+  symbolToAlias: Map<string, string>,
 ): void {
   const isDeclarationTypeOnly = importDecl.isTypeOnly();
   const perSymbolTypeOnly = new Map<string, boolean>();
@@ -510,20 +510,35 @@ function splitImportDeclaration(
     );
   }
 
-  const byNewSpec = groupBy(
-    specChanges.filter((change) => importedSymbolNames.has(change.symbolName)),
-    (change) => change.newModuleSpec,
-  );
+  const byNewSpec = groupBy(specChanges, (change) => change.newModuleSpec);
 
   for (const namedImport of namedImports) {
-    if (changedSymbols.has(namedImport.getName())) {
+    if (specChanges.some((c) => c.symbolName === namedImport.getName())) {
       namedImport.remove();
     }
   }
 
+  // Remove the original import if all symbols were moved
+  if (importDecl.getNamedImports().length === 0) {
+    importDecl.remove();
+  }
+
   for (const [newSpec, newSpecChanges] of byNewSpec) {
-    const newNamedImports = newSpecChanges.map((c) => c.symbolName);
-    const allTypeOnly = newNamedImports.every((n) => perSymbolTypeOnly.get(n));
+    const newNamedImports = newSpecChanges.map((c) => {
+      const localName = getOrThrow(
+        symbolToAlias,
+        c.symbolName,
+        `symbolToAlias missing key ${c.symbolName}`,
+      );
+      if (localName !== c.symbolName) {
+        return { name: c.symbolName, alias: localName };
+      }
+      return c.symbolName;
+    });
+    const allTypeOnly = newNamedImports.every((n) => {
+      const originalName = typeof n === 'string' ? n : n.name;
+      return perSymbolTypeOnly.get(originalName);
+    });
     sourceFile.addImportDeclaration({
       moduleSpecifier: newSpec,
       namedImports: newNamedImports,
@@ -545,25 +560,56 @@ function processImportDecl(
       return;
     }
     const namedImports = importDecl.getNamedImports();
-    const importedSymbolNames = new Set(namedImports.map((ni) => ni.getName()));
-    const changedSymbols = new Set(
-      specChanges.map((change) => change.symbolName),
-    );
-    const allSymbolsCanBeChanged = Array.from(importedSymbolNames).every((s) =>
-      changedSymbols.has(s),
+
+    /*
+      Build a mapping from original symbol name (e.g., resolveImportSpec)
+      to local name used in this import (e.g., resolveImportSpecFromIndexing).
+      `getName()` returns the original imported name, while
+      `compilerNode.name.getText()` returns the local binding (alias).
+      This is needed because the indexed storage only records the original name.
+    */
+    const symbolToAlias = new Map<string, string>();
+    for (const ni of namedImports) {
+      const originalName = ni.getName();
+      const localName = ni.compilerNode.name.getText();
+      symbolToAlias.set(originalName, localName);
+    }
+
+    /*
+      Filter to only changes whose symbols are actually in this import.
+      `specChanges` may contain stale index entries for symbols that are no
+      longer in this declaration.
+    */
+    const relevantChanges = specChanges.filter(
+      (c) => symbolToAlias.has(c.symbolName),
     );
 
-    if (importedSymbolNames.size > 0 && allSymbolsCanBeChanged) {
-      // biome-ignore lint/style/noNonNullAssertion: groupBy never produces empty arrays as map values.
-      importDecl.setModuleSpecifier(specChanges[0]!.newModuleSpec);
+    if (relevantChanges.length === 0) {
+      return;
+    }
+    /*
+      The shortcut (rewriting the module specifier in-place) is valid only
+      when every symbol in the import is being changed and all changes
+      redirect to the same target.
+    */
+    const allSymbolsCanBeChanged = Array.from(symbolToAlias.keys()).every(
+      (s) => relevantChanges.some((c) => c.symbolName === s),
+    );
+    // biome-ignore lint/style/noNonNullAssertion: relevantChanges is non-empty (checked above).
+    const firstTarget = relevantChanges[0]!.newModuleSpec;
+    const allSameTarget = relevantChanges.every(
+      (c) => c.newModuleSpec === firstTarget,
+    );
+
+    if (allSymbolsCanBeChanged && allSameTarget) {
+      importDecl.setModuleSpecifier(firstTarget);
     } else {
       splitImportDeclaration(
         sourceFile,
         importDecl,
         namedImports,
-        specChanges,
-        importedSymbolNames,
-        changedSymbols,
+        relevantChanges,
+        symbolToAlias,
       );
     }
   } catch (importError) {
