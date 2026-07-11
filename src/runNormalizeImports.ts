@@ -9,7 +9,7 @@
 
 import { Identifier, ImportDeclaration, SourceFile } from 'ts-morph';
 import { groupBy } from './collections';
-import { FileSystem, reinsertScript } from './filesystem';
+import { FileSystem, reconstructFileContent } from './filesystem';
 import { loadSourceFile } from './loadSourceFile';
 import { isPathWithinDirectory, normalizeAndValidatePath } from './pathUtils';
 import {
@@ -25,6 +25,66 @@ import {
   InMemoryRepositoryRootProvider,
   RepositoryRootProvider,
 } from './repositoryRootProvider';
+
+async function processFile(
+  filePath: string,
+  fileSystem: FileSystem,
+  writer: (message: string) => void,
+  changes: ModifyFileChange[],
+  undo: ModifyFileChange[],
+  sourceFiles: Set<string>,
+  checksums: { [filePath: string]: string },
+): Promise<void> {
+  const sourceFile = await loadSourceFile(filePath, fileSystem);
+  const { changed, conflicts } = normalizeImportsInFile(sourceFile);
+
+  for (const c of conflicts) {
+    writer(
+      `Warning: conflicting default imports from '${c.module}': ` +
+        `'${c.winnerDefault}' vs '${c.donorDefault}'. Skipping merge of this declaration.\n`,
+    );
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  let rawContent;
+  try {
+    rawContent = await fileSystem.readFileRaw(filePath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writer(`Warning: skipping '${filePath}': ${message}\n`);
+    return;
+  }
+
+  const modifiedScriptContent = sourceFile.getFullText();
+  const finalContent = reconstructFileContent(
+    filePath,
+    rawContent,
+    modifiedScriptContent,
+  );
+
+  if (finalContent === rawContent) {
+    return;
+  }
+
+  const fileChecksum = computeStringChecksum(rawContent);
+  changes.push({
+    type: 'modify-file',
+    path: filePath,
+    content: finalContent,
+    originalChecksum: fileChecksum,
+  });
+  undo.push({
+    type: 'modify-file',
+    path: filePath,
+    content: rawContent,
+    originalChecksum: computeStringChecksum(finalContent),
+  });
+  sourceFiles.add(filePath);
+  checksums[filePath] = fileChecksum;
+}
 
 export async function runNormalizeImports(
   directoryArg: string,
@@ -56,52 +116,15 @@ export async function runNormalizeImports(
   const checksums: { [filePath: string]: string } = {};
 
   for (const filePath of filteredPaths) {
-    let originalContent: string;
-    try {
-      originalContent = await fileSystem.readFile(filePath);
-    } catch {
-      continue;
-    }
-
-    const sourceFile = await loadSourceFile(filePath, fileSystem);
-    const { changed, conflicts } = normalizeImportsInFile(sourceFile);
-
-    for (const c of conflicts) {
-      writer(
-        `Warning: conflicting default imports from '${c.module}': ` +
-          `'${c.winnerDefault}' vs '${c.donorDefault}'. Skipping merge of this declaration.\n`,
-      );
-    }
-
-    if (!changed) {
-      continue;
-    }
-
-    const modifiedScriptContent = sourceFile.getFullText();
-    let finalContent: string;
-    if (filePath.endsWith('.vue')) {
-      finalContent = reinsertScript(originalContent, modifiedScriptContent);
-    } else {
-      finalContent = modifiedScriptContent;
-    }
-
-    if (finalContent !== originalContent) {
-      const fileChecksum = computeStringChecksum(originalContent);
-      changes.push({
-        type: 'modify-file',
-        path: filePath,
-        content: finalContent,
-        originalChecksum: fileChecksum,
-      });
-      undo.push({
-        type: 'modify-file',
-        path: filePath,
-        content: originalContent,
-        originalChecksum: computeStringChecksum(finalContent),
-      });
-      sourceFiles.add(filePath);
-      checksums[filePath] = fileChecksum;
-    }
+    await processFile(
+      filePath,
+      fileSystem,
+      writer,
+      changes,
+      undo,
+      sourceFiles,
+      checksums,
+    );
   }
 
   const plan: TslorPlan = {
