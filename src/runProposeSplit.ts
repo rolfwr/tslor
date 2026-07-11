@@ -9,8 +9,6 @@ import { dirname, relative } from 'node:path';
 import { Project } from 'ts-morph';
 import { CliError } from './errors';
 import { FileSystem } from './filesystem';
-import { analyzeImportUsageFromStaticInfo, parseModule, StaticModuleInfo } from './staticAnalysis';
-import { loadSourceFileForAnalysis } from './loadSourceFile';
 import {
   denormalizePath,
   normalizeAndValidatePath,
@@ -41,6 +39,8 @@ import {
   SplitAnalysis,
   validateSymbolsHaveDeclarations,
 } from './splitModule';
+import { analyzeImportUsageFromStaticInfo, parseModule, StaticModuleInfo } from './staticAnalysis';
+import { loadSourceFileForAnalysis } from './loadSourceFile';
 
 /**
  * Propose a split operation, creating a plan file.

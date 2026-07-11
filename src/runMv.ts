@@ -5,7 +5,9 @@ import { ImportDeclaration, Node, SourceFile, SyntaxKind } from 'ts-morph';
 import { CliError } from './errors';
 import { FileSystem } from './filesystem';
 import { modulePathSpec } from './importSpec';
-import { indexImportFromFiles } from './indexing';
+import {
+  indexImportFromFiles
+} from './indexing';
 import { invariant } from './invariant';
 import { DebugOptions } from './objstore';
 import { normalizeAndValidatePath } from './pathUtils';

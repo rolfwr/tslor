@@ -14,8 +14,8 @@
 import { describe, test, expect } from 'vitest';
 import { InMemoryFileSystem } from './filesystem';
 import { inspectModule } from './inspectModule';
-import { parseModule } from './staticAnalysis';
 import { createTestSourceFile } from './testUtils';
+import { parseModule } from './staticAnalysis';
 
 describe('parseModule tracks bare export { x } re-exports', () => {
   test('bare export of local import tracked as re-export', () => {

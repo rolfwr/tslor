@@ -70,7 +70,7 @@ export async function runApply(
   if (plan.command === 'split') {
     writer('\n');
     writer(
-      "Tip: Run 'tslor propose-purge-reexport .' to remove unused re-exports.\n",
+      'Tip: Run \'tslor propose-purge-reexport .\' to remove unused re-exports.\n',
     );
   }
 
