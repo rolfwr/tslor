@@ -3,8 +3,19 @@ import {
   SyntaxKind,
   ImportDeclaration,
   PropertyAccessExpression,
+  PropertyAssignment,
+  PropertySignature,
   QualifiedName,
   Node,
+  Identifier,
+  BindingElement,
+  EnumMember,
+  PropertyDeclaration,
+  MethodDeclaration,
+  MethodSignature,
+  GetAccessorDeclaration,
+  SetAccessorDeclaration,
+  ParameterDeclaration,
 } from 'ts-morph';
 import { promises as fsp } from 'fs';
 import {
@@ -25,9 +36,9 @@ import {
   ModifyFileChange,
   createEmptyPlan,
 } from './plan';
-import { loadSourceFile } from './loadSourceFile';
 import { openStorage } from './storage';
 import { isGeneratedFile } from './generatedFileDetection';
+import { loadSourceFile } from './loadSourceFile';
 
 export interface NamespaceNormalizationChange {
   moduleSpec: string;
@@ -76,10 +87,6 @@ export function normalizeNamespaceImportsInFile(
     return changes;
   }
 
-  /*
-    Collect all identifiers in the file that are NOT part of the import declarations
-    to detect potential name conflicts
-  */
   const existingBindings = collectExistingBindings(
     sourceFile,
     new Set(namespaceImports.map((ns) => ns.nsName)),
@@ -317,33 +324,93 @@ export async function runNormalizeNamespaceImports(
   return plan;
 }
 
-function addNamed<T extends { getName(): string | undefined }>(
-  bindings: Set<string>,
-  nodes: T[],
-): void {
-  for (const node of nodes) {
-    const name = node.getName();
-    if (name) {
-      bindings.add(name);
-    }
-  }
+function isNameNode(id: Node, parent: Node): boolean {
+  /*
+    Check whether `id` is the name (not a value reference) of a declaration
+    or member that doesn't create a module-level binding. These identifiers
+    are excluded from the collision set because they resolve within their
+    containing scope rather than at the module level.
+  */
+  const isMemberDecl = (
+    PropertyAssignment.isPropertyAssignment(parent) ||
+    PropertySignature.isPropertySignature(parent) ||
+    EnumMember.isEnumMember(parent) ||
+    PropertyDeclaration.isPropertyDeclaration(parent) ||
+    MethodDeclaration.isMethodDeclaration(parent) ||
+    MethodSignature.isMethodSignature(parent) ||
+    GetAccessorDeclaration.isGetAccessorDeclaration(parent) ||
+    SetAccessorDeclaration.isSetAccessorDeclaration(parent)
+  );
+  return isMemberDecl && parent.getNameNode() === id;
 }
 
-function addImportBindings(
-  bindings: Set<string>,
-  importDecl: ImportDeclaration,
+function isExcludedIdentifier(id: Node): boolean {
+  const parent = id.getParent();
+  if (!parent) {
+    return false;
+  }
+
+  // Property access names (right side of '.') resolve against the expression.
+  if (
+    PropertyAccessExpression.isPropertyAccessExpression(parent) &&
+    parent.getNameNode() === id
+  ) {
+    return true;
+  }
+
+  // Qualified name right sides (X.Y) resolve against the left container.
+  if (QualifiedName.isQualifiedName(parent) && parent.getRight() === id) {
+    return true;
+  }
+
+  // Names of declarations/members that don't create module-level bindings
+  if (isNameNode(id, parent)) {
+    return true;
+  }
+
+  // Destructuring source keys (const { foo: bar } = obj) — foo is a property
+  // name, not a binding. Only bar (getNameNode) creates a binding.
+  if (
+    BindingElement.isBindingElement(parent) &&
+    parent.getPropertyNameNode() === id
+  ) {
+    return true;
+  }
+
+  // Function parameter names (function foo(bar)) — bar is scoped to the function.
+  if (
+    ParameterDeclaration.isParameterDeclaration(parent) &&
+    parent.getNameNode() === id
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function collectImportBindings(
+  sourceFile: SourceFile,
   namespaceNames: Set<string>,
+  bindings: Set<string>,
 ): void {
-  const nsImport = importDecl.getNamespaceImport();
-  if (nsImport && namespaceNames.has(nsImport.getText())) {
-    return;
-  }
-  const defaultImport = importDecl.getDefaultImport();
-  if (defaultImport) {
-    bindings.add(defaultImport.getText());
-  }
-  for (const named of importDecl.getNamedImports()) {
-    bindings.add(named.getName());
+  for (const importDecl of sourceFile.getImportDeclarations()) {
+    const nsImport = importDecl.getNamespaceImport();
+    if (nsImport) {
+      // Skip namespace imports being normalized — their binding will be
+      // replaced by the new named imports. Non-normalized namespace imports
+      // remain and must not collide.
+      if (!namespaceNames.has(nsImport.getText())) {
+        bindings.add(nsImport.getText());
+      }
+      continue;
+    }
+    const defaultImport = importDecl.getDefaultImport();
+    if (defaultImport) {
+      bindings.add(defaultImport.getText());
+    }
+    for (const named of importDecl.getNamedImports()) {
+      bindings.add(named.getName());
+    }
   }
 }
 
@@ -353,40 +420,22 @@ function collectExistingBindings(
 ): Set<string> {
   const bindings = new Set<string>();
 
-  for (const decl of sourceFile.getDescendantsOfKind(
-    SyntaxKind.VariableDeclaration,
-  )) {
-    bindings.add(decl.getName());
-  }
-  for (const param of sourceFile.getDescendantsOfKind(SyntaxKind.Parameter)) {
-    bindings.add(param.getName());
-  }
-  addNamed(
-    bindings,
-    sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration),
-  );
-  addNamed(
-    bindings,
-    sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
-  );
-  for (const iface of sourceFile.getDescendantsOfKind(
-    SyntaxKind.InterfaceDeclaration,
-  )) {
-    bindings.add(iface.getName());
-  }
-  for (const typeAlias of sourceFile.getDescendantsOfKind(
-    SyntaxKind.TypeAliasDeclaration,
-  )) {
-    bindings.add(typeAlias.getName());
-  }
-  for (const enumDecl of sourceFile.getDescendantsOfKind(
-    SyntaxKind.EnumDeclaration,
-  )) {
-    bindings.add(enumDecl.getName());
-  }
+  /*
+    Collect all names that would conflict with a new named import.
+    Covers both module-level bindings and ambient references.
+  */
+  // Collect bindings from import declarations.
+  collectImportBindings(sourceFile, namespaceNames, bindings);
 
-  for (const importDecl of sourceFile.getImportDeclarations()) {
-    addImportBindings(bindings, importDecl, namespaceNames);
+  // Walk all identifiers (non-import) to capture binding names and ambient references.
+  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (id.getFirstAncestorByKind(SyntaxKind.ImportDeclaration)) {
+      continue;
+    }
+    if (isExcludedIdentifier(id)) {
+      continue;
+    }
+    bindings.add(id.getText());
   }
 
   return bindings;
@@ -402,12 +451,9 @@ interface NamespaceUsageResult {
 }
 
 function tryGetPropertyAccessMember(
-  id: ReturnType<SourceFile['getDescendantsOfKind']>[number],
+  id: Identifier,
   parent: Node | undefined,
 ): { node: Node; memberName: string; isTypePosition: false } | null {
-  if (!parent || parent.getKind() !== SyntaxKind.PropertyAccessExpression) {
-    return null;
-  }
   if (!PropertyAccessExpression.isPropertyAccessExpression(parent)) {
     return null;
   }
@@ -418,7 +464,7 @@ function tryGetPropertyAccessMember(
 }
 
 function tryGetQualifiedNameMember(
-  id: ReturnType<SourceFile['getDescendantsOfKind']>[number],
+  id: Identifier,
   parent: Node | undefined,
 ): { node: Node; memberName: string; isTypePosition: true } | null {
   if (!QualifiedName.isQualifiedName(parent)) {

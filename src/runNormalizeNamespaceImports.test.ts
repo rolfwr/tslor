@@ -140,6 +140,27 @@ export function claimRequest(request: dtos.ClaimRequestDto): dtos.ResponseDto | 
   assert.notInclude(result, 'import * as dtos');
 });
 
+test('normalizeNamespaceImportsInFile does not shadow ambient references', () => {
+  /*
+    A file using the global `document` (browser ambient) while also accessing
+    `ui.document` on a namespace import. The conversion to `import { document }`
+    would silently re-bind every pre-existing `document` reference in the file.
+  */
+  const sourceFile = createTestSourceFile(`
+import * as ui from './ui';
+
+document.title = 'hello';
+const el = ui.document;
+`);
+
+  const changes = normalizeNamespaceImportsInFile(sourceFile);
+  assert.lengthOf(
+    changes,
+    0,
+    'Should skip when a member name would shadow an ambient reference',
+  );
+});
+
 test('normalizeNamespaceImportsInFile detects name conflicts inside nested scopes', () => {
   const sourceFile = createTestSourceFile(`
 import * as testData from './data';
@@ -156,9 +177,66 @@ export function test() {
     0,
     'Should skip when a member name conflicts with a nested variable',
   );
+});
 
-  // Source should be unchanged
+test('normalizeNamespaceImportsInFile detects conflicts with non-normalized namespace imports', () => {
+  /*
+    When multiple namespace imports exist and a member name from one matches
+    the binding name of another namespace import (that is not being normalized
+    because it has no member access), the collision must be detected.
+  */
+  const sourceFile = createTestSourceFile(`
+import * as utils from './utils';
+import * as logger from './logger';
+
+// utils has no member access — used as a value
+export const x = doSomething(utils);
+// logger has member access with member name 'utils'
+export const y = logger.utils;
+`);
+
+  const changes = normalizeNamespaceImportsInFile(sourceFile);
+  assert.lengthOf(
+    changes,
+    0,
+    'Should skip when a member name would conflict with another namespace import binding',
+  );
+});
+
+test('normalizeNamespaceImportsInFile ignores non-binding member names in interfaces, enums, and classes', () => {
+  /*
+    Interface property names, enum member names, class property/method names
+    don't create module-level bindings. They should not be treated as collisions
+    that block namespace import normalization.
+  */
+  const sourceFile = createTestSourceFile(`
+import * as cfg from './config';
+
+interface Settings {
+  mode: string;
+}
+
+enum Status {
+  Active,
+  Inactive,
+}
+
+class Processor {
+  mode = 'default';
+  process() {}
+}
+
+export const result = cfg.mode;
+`);
+
+  const changes = normalizeNamespaceImportsInFile(sourceFile);
+  assert.lengthOf(
+    changes,
+    1,
+    'Should normalize even though interface/enum/class members share the name',
+  );
+
   const result = sourceFile.getFullText();
-  assert.include(result, 'import * as testData');
-  assert.include(result, 'testData.updateEvent');
+  assert.include(result, "import { mode } from './config'");
+  assert.notInclude(result, 'import * as cfg');
 });
