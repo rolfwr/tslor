@@ -14,6 +14,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols,
+  validateSymbolsHaveDeclarations,
   type IntraModuleDependencies,
 } from './splitModule';
 import { createTestSourceFile } from './testUtils';
@@ -205,6 +206,40 @@ function funcE(): string {
     const splitAnalysis = analyzeSplit(deps, 'funcC');
     assert.isTrue(splitAnalysis.canSplit);
     assert.deepEqual(splitAnalysis.requiredDependencies, new Set(['funcD', 'funcE']));
+  });
+
+  test('does not treat arrow function parameters as dependencies', () => {
+    /*
+      Bug: arrow function parameters like (path: string) => path were
+      incorrectly treated as identifier dependencies of the enclosing
+      function. This caused false positive dependencies (e.g., 'path')
+      in the dependency graph, leading to spurious imports in split plans.
+    */
+    const source = `
+export function getConfig(): object {
+  return {
+    handler: (path: string) => path,
+    other: (item: number) => String(item),
+  };
+}
+
+export function standalone(): string {
+  return 'ok';
+}
+`;
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+    const analysis = analyzeSplit(deps, 'getConfig');
+
+    // 'path' and 'item' are arrow function parameters, NOT dependencies
+    assert.isTrue(
+      !analysis.requiredDependencies.has('path'),
+      'Arrow function parameter path should not be a dependency',
+    );
+    assert.isTrue(
+      !analysis.requiredDependencies.has('item'),
+      'Arrow function parameter item should not be a dependency',
+    );
   });
 
   test('handles shared dependencies across exports', () => {
@@ -1059,6 +1094,145 @@ const API_URL = 'https://api.example.com';
     assert.include(modifiedSource, 'function validateEmail');
     assert.include(modifiedSource, 'const API_URL');
   });
+
+  test('does not add import when only match is a local variable declaration', () => {
+    /*
+      Bug: findReferencedSymbols scans all identifiers in the source,
+      including declarations (loop vars, params, etc.) and their
+      references within the same scope. When a moved symbol shares
+      a name with a local variable, it incorrectly adds an import
+      for it, causing a compile error.
+    */
+    const source = `
+export function processItems(items: Item[]): void {
+  for (const item of items) {
+    console.log(item);
+  }
+}
+`;
+    /*
+      Simulate: 'item' is in movedSymbols. It's only a local variable
+      in the remaining code, not a real reference to a moved symbol.
+    */
+    const movedSymbols = new Set(['item']);
+
+    // shouldReExport=true triggers findReferencedSymbols
+    const modifiedSource = addImportForMovedSymbols(
+      source,
+      movedSymbols,
+      './moved',
+      true,
+      {},
+    );
+
+    // Should NOT generate an import for 'item' — it's a declaration, not a reference
+    assert.notMatch(
+      modifiedSource,
+      /import\s*{.*item.*}/,
+      'Must not import local variable declaration as a symbol',
+    );
+    assert.include(modifiedSource, 'for (const item of items)');
+  });
+
+  test('still imports when symbol is genuinely referenced', () => {
+    /*
+      A moved symbol that is genuinely used (not shadowed by a local
+      variable) should still trigger an import.
+    */
+    const source = `
+export function processItems(items: Item[]): void {
+  const result = Item.transform(items);
+  console.log(result);
+}
+`;
+    // Item is a moved type used as a genuine reference
+    const movedSymbols = new Set(['Item']);
+
+    const modifiedSource = addImportForMovedSymbols(
+      source,
+      movedSymbols,
+      './moved',
+      true,
+      {},
+    );
+
+    // Should generate an import for Item
+    assert.match(
+      modifiedSource,
+      /import.*Item.*from.*moved/,
+      'Should import genuinely referenced symbol',
+    );
+  });
+
+  test('imports moved symbol used outside local variable scope', () => {
+    /*
+      A moved symbol that is both a local variable name (inside the loop)
+      AND used outside the loop's scope should still be imported.
+    */
+    const source = `
+export function processItems(items: Item[]): void {
+  const count = Item.count(items);
+  for (const item of items) {
+    // 'item' here refers to the loop variable, not the moved 'Item'
+    console.log(item);
+  }
+  const total = Item.total(items);
+  console.log(count, total);
+}
+`;
+    const movedSymbols = new Set(['Item']);
+
+    const modifiedSource = addImportForMovedSymbols(
+      source,
+      movedSymbols,
+      './moved',
+      true,
+      {},
+    );
+
+    // Should import Item because it's genuinely referenced (Item.count, Item.total)
+    assert.match(
+      modifiedSource,
+      /import.*Item.*from.*moved/,
+      'Should import symbol used outside local scope',
+    );
+  });
+
+  test('imports symbol when shadowed in one scope but used in another', () => {
+    /*
+      A moved symbol that shadows a local variable in one function
+      but is genuinely referenced in another function should still
+      be imported. The filter must be scope-aware, not global.
+    */
+    const source = `
+const Item = { transform: () => 1 };
+
+export function hasShadow() {
+  const Item = 42;
+  console.log(Item);
+}
+
+export function usesItem() {
+  const x = Item.transform();
+}
+`;
+    const movedSymbols = new Set(['Item']);
+
+    const modifiedSource = addImportForMovedSymbols(
+      source,
+      movedSymbols,
+      './moved',
+      true,
+      {},
+    );
+
+    // Should import Item because usesItem() references the unshadowed Item
+    assert.match(
+      modifiedSource,
+      /import.*Item.*from.*moved/,
+      'Should import symbol referenced outside shadowing scope',
+    );
+  });
 });
 
 describe('computeRequiredImports', () => {
@@ -1249,6 +1423,79 @@ export function otherFunction(): string {
 
     assert.notMatch(finalSource, /import.*Promise.*from.*guard/);
     assert.notMatch(finalSource, /import.*Date.*from.*guard/);
+  });
+});
+
+describe('class property initializers', () => {
+  test('value references in instance property initializers are tracked', () => {
+    const source = `
+import { defaultValue } from './defaults';
+
+export class Service {
+  config = defaultValue();
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const serviceUses = getOrThrow(
+      moduleInfo.identifierUses,
+      'Service',
+      'Service identifiers should exist',
+    );
+    assert.include(serviceUses, 'defaultValue');
+  });
+
+  test('value references in static property initializers are tracked', () => {
+    const source = `
+import { createCache } from './cache';
+
+export class Service {
+  static cache = createCache();
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const serviceUses = getOrThrow(
+      moduleInfo.identifierUses,
+      'Service',
+      'Service identifiers should exist',
+    );
+    assert.include(serviceUses, 'createCache');
+  });
+
+  test('self-references in property initializers are filtered out', () => {
+    const source = `
+export class Counter {
+  count = this.count ?? 0;
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const counterUses = getOrThrow(
+      moduleInfo.identifierUses,
+      'Counter',
+      'Counter identifiers should exist',
+    );
+    // 'count' is the property being defined, should be filtered
+    assert.notInclude(counterUses, 'count');
+  });
+
+  test('computed property name expressions are tracked', () => {
+    const source = `
+import { KEY } from './config';
+
+export class Service {
+  [KEY] = 'value';
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const serviceUses = getOrThrow(
+      moduleInfo.identifierUses,
+      'Service',
+      'Service identifiers should exist',
+    );
+    assert.include(serviceUses, 'KEY');
   });
 });
 
@@ -1581,5 +1828,220 @@ export function parseArgs(args: string[]): string {
     );
     assertDefined(packageImport, 'packageImport should be defined');
     assert.equal(packageImport.moduleSpec, '../../package.json');
+  });
+});
+
+describe('elimination semantics', () => {
+  test('local function named Error is tracked as a local declaration despite builtin collision', () => {
+    /*
+      A module-scope symbol whose name collides with a builtin (e.g. a local
+      function Error) is tracked and movable like any other symbol. With
+      elimination semantics, Error IS in the module-binding set because the
+      module declares it, so it is a local declaration regardless of the
+      ambient global with the same name.
+    */
+    const source = `
+function Error(message: string): string {
+  return '[Error] ' + message;
+}
+
+export function formatError(msg: string): string {
+  return Error(msg);
+}
+
+export function other(): string {
+  return 'ok';
+}
+`;
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    // 'Error' is a local declaration (declared in this module), not ambient
+    assert.isTrue(deps.definitions.has('Error'));
+
+    const analysis = analyzeSplit(deps, 'formatError');
+    // Error should be a required dependency
+    assert.isTrue(
+      analysis.requiredDependencies.has('Error'),
+      'local Error should be a required dependency',
+    );
+    assert.isTrue(analysis.canSplit);
+  });
+
+  test('local const named Promise is tracked as a local declaration', () => {
+    /*
+      Same principle as above: a local binding named 'Promise' shadows the
+      ambient global and is tracked as a local declaration.
+    */
+    const source = `
+const Promise = { resolve: (v: string) => v };
+
+export function doThing(x: string): string {
+  return Promise.resolve(x);
+}
+
+export function other(): string {
+  return 'ok';
+}
+`;
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    assert.isTrue(deps.definitions.has('Promise'));
+    const analysis = analyzeSplit(deps, 'doThing');
+    assert.isTrue(analysis.requiredDependencies.has('Promise'));
+  });
+
+  test('moved symbol depends on local enum, enum follows via dependency graph', () => {
+    const source = `
+enum Status {
+  Active = 'active',
+  Inactive = 'inactive',
+}
+
+export function getStatusLabel(s: Status): string {
+  return Status[s];
+}
+
+export function other(): string {
+  return 'ok';
+}
+`;
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    // Both 'Status' and 'getStatusLabel' are local declarations
+    assert.isTrue(deps.definitions.has('Status'));
+    assert.isTrue(deps.definitions.has('getStatusLabel'));
+
+    const analysis = analyzeSplit(deps, 'getStatusLabel');
+    assert.isTrue(
+      analysis.requiredDependencies.has('Status'),
+      'Status enum should be a required dependency of getStatusLabel',
+    );
+    assert.isTrue(analysis.canSplit);
+  });
+
+  test('ambient globals are excluded from the dependency graph', () => {
+    const source = `
+export function fetchData(): string {
+  return fetch('/api').toString();
+}
+
+export function encodeText(text: string): string {
+  const encoder = new TextEncoder();
+  return encoder.encode(text).toString();
+}
+
+export function observe(target: Element): void {
+  new IntersectionObserver(() => {});
+}
+
+export function other(): string {
+  return 'ok';
+}
+`;
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    // None of these should be in definitions (all ambient)
+    assert.isFalse(deps.definitions.has('fetch'));
+    assert.isFalse(deps.definitions.has('TextEncoder'));
+    assert.isFalse(deps.definitions.has('IntersectionObserver'));
+
+    // Only local declarations should be in definitions
+    assert.isTrue(deps.definitions.has('fetchData'));
+    assert.isTrue(deps.definitions.has('encodeText'));
+    assert.isTrue(deps.definitions.has('observe'));
+    assert.isTrue(deps.definitions.has('other'));
+  });
+
+  test('ambient globals like process do not enter the dependency graph', () => {
+    const source = `
+function helper(): string {
+  return process.env.NODE_ENV || 'dev';
+}
+
+export function moved(): string {
+  return process.env.API_URL || 'http://localhost';
+}
+
+export function staying(): string {
+  return helper();
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    assert.isTrue(deps.definitions.has('helper'));
+    assert.isFalse(deps.definitions.has('process'));
+
+    const analysis = analyzeSplit(deps, 'moved');
+    assert.equal(analysis.requiredDependencies.size, 0);
+    assert.isTrue(analysis.canSplit);
+  });
+});
+
+describe('validateSymbolsHaveDeclarations (fail-fast invariant)', () => {
+  test('passes when all symbols have actual declarations', () => {
+    const source = `
+function helper(): string {
+  return 'value';
+}
+
+export function moved(): string {
+  return helper();
+}
+
+export function staying(): string {
+  return helper();
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    const moduleInfo = parseModule(sourceFile);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+
+    const symbolsToMove = new Set(['moved', 'helper']);
+    const shared = findSharedNonExportedDeps(deps, symbolsToMove);
+
+    // Should not throw — all symbols have declarations
+    const symbolsToValidate = new Set([...symbolsToMove, ...shared]);
+    validateSymbolsHaveDeclarations(sourceFile, symbolsToValidate, 'source.ts');
+  });
+
+  test('passes for empty symbol set', () => {
+    const source = `export function foo(): void {}`;
+    const sourceFile = createTestSourceFile(source);
+    // Should not throw on empty set
+    validateSymbolsHaveDeclarations(sourceFile, new Set(), 'source.ts');
+  });
+
+  test('error message names each missing symbol', () => {
+    const source = `
+export function moved(): string {
+  return fetch('/api').toString();
+}
+`;
+    const sourceFile = createTestSourceFile(source);
+    // Simulate: the graph thinks 'fetch' and 'anotherPhantom' are definitions
+    const symbolsToValidate = new Set(['moved', 'fetch', 'anotherPhantom']);
+
+    let errorMessage: string | null = null;
+    try {
+      validateSymbolsHaveDeclarations(sourceFile, symbolsToValidate, 'myModule.ts');
+    } catch (e) {
+      if (e instanceof Error) {
+        errorMessage = e.message;
+      } else {
+        throw e;
+      }
+    }
+    assert.isNotNull(errorMessage, 'Expected validateSymbolsHaveDeclarations to throw');
+    assert.include(errorMessage, 'fetch');
+    assert.include(errorMessage, 'anotherPhantom');
+    assert.include(errorMessage, 'myModule.ts');
+    // 'moved' should NOT be in the error (it has a declaration)
+    assert.notInclude(errorMessage, 'moved');
   });
 });
