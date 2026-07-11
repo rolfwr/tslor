@@ -242,24 +242,35 @@ export function analyzeSplit(
 
   /*
     Filter to only include dependencies that are actually defined in this module
-    (exclude imported symbols).
+    (exclude imported symbols and the target itself — requiredDependencies
+    are symbols that must move WITH the target, not the target).
   */
   const requiredDeps = new Set<string>();
   for (const dep of allTransitiveDeps) {
-    if (deps.definitions.has(dep)) {
+    if (dep !== targetSymbol && deps.definitions.has(dep)) {
       requiredDeps.add(dep);
     }
   }
 
   const cycles = detectCircularDependencies(deps);
 
-  // Check if any of the required dependencies are involved in cycles
+  // Flag only cycles that cross the split boundary (some move, some stay).
+  // Cycles entirely within the moving set are harmless — they move together.
+  // Cycles entirely outside the moving set don't affect this split.
+  const symbolsToMove = new Set([
+    targetSymbol,
+    ...requiredDeps,
+  ]);
   const involvedInCycle: string[] = [];
   for (const cycle of cycles) {
-    for (const symbol of cycle) {
-      if (requiredDeps.has(symbol) || symbol === targetSymbol) {
-        involvedInCycle.push(...cycle);
-      }
+    const someMoving = cycle.some((symbol) =>
+      symbolsToMove.has(symbol),
+    );
+    const someStaying = cycle.some((symbol) =>
+      !symbolsToMove.has(symbol),
+    );
+    if (someMoving && someStaying) {
+      involvedInCycle.push(...cycle);
     }
   }
 

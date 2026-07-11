@@ -148,13 +148,63 @@ export function independent(): string {
 
     assert.isTrue(cycles.length > 0);
 
+    /*
+      funcA's cycle (A->B->C->A) is self-contained: all three move together.
+      This is allowed — the cycle just moves into the new module.
+      requiredDependencies are symbols that move WITH the target, not the target itself.
+    */
     const splitAnalysis = analyzeSplit(deps, 'funcA');
-    assert.isFalse(splitAnalysis.canSplit);
-    assert.isTrue(splitAnalysis.circularDependencies.length > 0);
+    assert.isTrue(splitAnalysis.canSplit);
+    assert.equal(splitAnalysis.circularDependencies.length, 0);
+    assert.deepEqual(splitAnalysis.requiredDependencies, new Set(['funcB', 'funcC']));
 
-    const independentSplit = analyzeSplit(deps, 'independent');
-    assert.isTrue(independentSplit.canSplit);
-    assert.equal(independentSplit.requiredDependencies.size, 0);
+    // independent is not part of any cycle and has no dependencies
+    const splitAnalysisB = analyzeSplit(deps, 'independent');
+    assert.isTrue(splitAnalysisB.canSplit);
+    assert.equal(splitAnalysisB.requiredDependencies.size, 0);
+  });
+
+  test('allows moving symbols with disjoint cycles', () => {
+    const source = `
+export function funcA(): string {
+  return funcB() + 'A';
+}
+
+function funcB(): string {
+  return funcA() + 'B';
+}
+
+export function funcC(): string {
+  return funcD() + 'C';
+}
+
+function funcD(): string {
+  return funcE() + 'D';
+}
+
+function funcE(): string {
+  return funcD() + 'E';
+}
+`;
+    /*
+      Two disjoint cycles:
+      - funcA <-> funcB
+      - funcD <-> funcE
+
+      Moving funcC pulls in funcD and funcE (their cycle moves with it).
+      funcA/funcB cycle is untouched — it stays behind.
+      No cross-boundary issue because the target's transitive deps
+      form a self-contained set (if any cycle member is a transitive
+      dep, all members are, since cycles are strongly connected).
+    */
+    const moduleInfo = parseModule(createTestSourceFile(source));
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
+    const cycles = detectCircularDependencies(deps);
+    assert.equal(cycles.length, 2);
+
+    const splitAnalysis = analyzeSplit(deps, 'funcC');
+    assert.isTrue(splitAnalysis.canSplit);
+    assert.deepEqual(splitAnalysis.requiredDependencies, new Set(['funcD', 'funcE']));
   });
 
   test('handles shared dependencies across exports', () => {
