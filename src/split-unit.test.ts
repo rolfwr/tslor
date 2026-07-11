@@ -964,6 +964,57 @@ export function otherFunction(): string {
     );
     assert.include(modifiedSource, 'export function otherFunction');
   });
+
+  test('preserves type keyword on import when removing partial named imports', () => {
+    const source = `import type { Item, Unused } from './types';\nconst x: Item = {};`;
+    const onlyUsedByRemoved = new Set(['./types:Unused']);
+    const modifiedSource = removeUnusedImports(source, onlyUsedByRemoved);
+
+    // type keyword must be preserved
+    assert.include(
+      modifiedSource,
+      "import type { Item } from './types'",
+      'type keyword must be preserved on partial removal',
+    );
+    assert.notInclude(modifiedSource, 'Unused');
+  });
+
+  test('preserves import aliases when removing partial named imports', () => {
+    /*
+      Aliased imports must keep the alias. Without this, the local binding
+      changes (e.g., 'MyItem' becomes undefined because it was replaced
+      with a non-aliased 'Item').
+    */
+    const source = `import { Item as MyItem, Unused } from './source';\nconst x: MyItem = {};`;
+    const onlyUsedByRemoved = new Set(['./source:Unused']);
+    const modifiedSource = removeUnusedImports(source, onlyUsedByRemoved);
+
+    assert.include(
+      modifiedSource,
+      'Item as MyItem',
+      'Alias must be preserved',
+    );
+    assert.notInclude(modifiedSource, 'Unused');
+  });
+
+  test('preserves inline type keyword when removing partial named imports', () => {
+    /*
+      TypeScript 4.5+ allows inline type keywords:
+      `import { type A, B } from '...'`
+      These must not be stripped when other imports are removed.
+    */
+    const source = `import { type Item, Other, type Unused } from './types';\nconst x: Item = {};`;
+    const onlyUsedByRemoved = new Set(['./types:Unused']);
+    const modifiedSource = removeUnusedImports(source, onlyUsedByRemoved);
+
+    assert.include(
+      modifiedSource,
+      'type Item',
+      'Inline type keyword must be preserved',
+    );
+    assert.include(modifiedSource, 'Other');
+    assert.notInclude(modifiedSource, 'Unused');
+  });
 });
 
 describe('addImportForMovedSymbols', () => {

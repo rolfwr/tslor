@@ -831,49 +831,41 @@ export function removeUnusedImports(
   sourceFile.getImportDeclarations().forEach((importDecl) => {
     const moduleSpec = importDecl.getModuleSpecifierValue();
 
-    // Check default import
+    // Remove default import if unused
     const defaultImport = importDecl.getDefaultImport();
-    const defaultImportText = defaultImport?.getText();
-    const shouldRemoveDefault =
+    if (
       defaultImport &&
-      onlyUsedByRemovedSymbols.has(`${moduleSpec}:${defaultImportText}`);
+      onlyUsedByRemovedSymbols.has(`${moduleSpec}:${defaultImport.getText()}`)
+    ) {
+      importDecl.removeDefaultImport();
+    }
 
-    // Check namespace import
+    // Remove namespace import if unused
     const namespaceImport = importDecl.getNamespaceImport();
-    const shouldRemoveNamespace =
+    if (
       namespaceImport &&
       onlyUsedByRemovedSymbols.has(
         `${moduleSpec}:${namespaceImport.getText()}`,
-      );
+      )
+    ) {
+      importDecl.removeNamespaceImport();
+    }
 
-    // Check named imports
-    const namedImports = importDecl.getNamedImports();
-    const importsToKeep = namedImports.filter((namedImport) => {
+    // Remove individual named imports that are unused
+    for (const namedImport of importDecl.getNamedImports()) {
       const importName = namedImport.getName();
-      const importKey = `${moduleSpec}:${importName}`;
-      return !onlyUsedByRemovedSymbols.has(importKey);
-    });
+      if (onlyUsedByRemovedSymbols.has(`${moduleSpec}:${importName}`)) {
+        namedImport.remove();
+      }
+    }
 
-    // Determine if entire import should be removed
-    const hasNoNamedImports = namedImports.length === 0;
-    const hasNoKeptNamedImports = importsToKeep.length === 0;
-    const shouldRemoveEntireImport =
-      (hasNoNamedImports && (shouldRemoveDefault || shouldRemoveNamespace)) ||
-      (!hasNoNamedImports &&
-        hasNoKeptNamedImports &&
-        !defaultImport &&
-        !namespaceImport);
-
-    if (shouldRemoveEntireImport) {
-      // Remove entire import declaration
+    // If the import declaration is now empty, remove it entirely
+    if (
+      !importDecl.getDefaultImport() &&
+      !importDecl.getNamespaceImport() &&
+      importDecl.getNamedImports().length === 0
+    ) {
       importDecl.remove();
-    } else if (importsToKeep.length < namedImports.length) {
-      // Some named imports removed - reconstruct the import
-      const keptImportNames = importsToKeep
-        .map((imp) => imp.getName())
-        .join(', ');
-      const newImportText = `import { ${keptImportNames} } from '${moduleSpec}';`;
-      importDecl.replaceWithText(newImportText);
     }
   });
 
