@@ -69,6 +69,7 @@ export interface RequiredImport {
   importedNames: string[]; // ['helper', 'validator'] (empty for default imports)
   isTypeOnly: boolean;
   defaultImport?: string; // If present, this is a default import with this local name
+  namespaceImport?: string; // If present, this is a namespace import with this local name
 }
 
 /**
@@ -529,6 +530,7 @@ function adjustModuleSpecForNewLocation(
 type ImportMapEntry = {
   namedImports: Set<string>;
   defaultImport?: string;
+  namespaceImport?: string;
   isTypeOnly: boolean;
 };
 
@@ -539,6 +541,7 @@ function addImportToMap(
     importedName: string;
     isTypeOnly: boolean;
     isDefault: boolean;
+    isNamespace: boolean;
   },
 ): void {
   let entry = requiredImportsMap.get(imp.moduleSpec);
@@ -548,6 +551,8 @@ function addImportToMap(
   }
   if (imp.isDefault) {
     entry.defaultImport = imp.importedName;
+  } else if (imp.isNamespace) {
+    entry.namespaceImport = imp.importedName;
   } else {
     entry.namedImports.add(imp.importedName);
   }
@@ -578,8 +583,8 @@ export function computeRequiredImports(
     }
   }
 
-  const { sourceFilePath, targetFilePath } = options;
   return Array.from(requiredImportsMap.entries()).map(([moduleSpec, info]) => {
+    const { sourceFilePath, targetFilePath } = options;
     const adjustedModuleSpec =
       sourceFilePath && targetFilePath
         ? adjustModuleSpecForNewLocation(
@@ -594,6 +599,9 @@ export function computeRequiredImports(
       isTypeOnly: info.isTypeOnly,
       ...(info.defaultImport !== undefined && {
         defaultImport: info.defaultImport,
+      }),
+      ...(info.namespaceImport !== undefined && {
+        namespaceImport: info.namespaceImport,
       }),
     };
   });
@@ -636,7 +644,19 @@ function addImportStructureToFile(
     moduleSpecifier: imp.moduleSpec,
     ...(imp.isTypeOnly ? { isTypeOnly: true } : {}),
   };
-  if (imp.defaultImport && imp.importedNames.length > 0) {
+  if (imp.namespaceImport) {
+    newFile.addImportDeclaration({ ...base, namespaceImport: imp.namespaceImport });
+    // Namespace imports cannot share a declaration with other import forms.
+    // Add separate statements for any remaining imports.
+    if (imp.defaultImport && imp.importedNames.length > 0) {
+      newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
+      newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
+    } else if (imp.defaultImport) {
+      newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
+    } else if (imp.importedNames.length > 0) {
+      newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
+    }
+  } else if (imp.defaultImport && imp.importedNames.length > 0) {
     newFile.addImportDeclaration({ ...base, defaultImport: imp.defaultImport });
     newFile.addImportDeclaration({ ...base, namedImports: imp.importedNames });
   } else if (imp.defaultImport) {
