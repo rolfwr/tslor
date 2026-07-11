@@ -283,9 +283,13 @@ program
 program
   .command('needs <path>')
   .description(
-    'Trace the import path from a module to a Node.js built-in dependency',
+    'Trace ambient names and external module specifiers a module depends on',
   )
-  .action(async (path: string, cmd) => {
+  .option(
+    '--ambient-only',
+    'Report only ambient names (exclude external module specifiers)',
+  )
+  .action(async (path: string, opts: { ambientOnly?: boolean }, cmd) => {
     const { traceId, fresh } = getGlobalOptions(cmd);
     const fileSystem = new RealFileSystem();
     await runNeeds(
@@ -295,6 +299,7 @@ program
       fileSystem,
       writeStderr,
       isInteractive,
+      opts.ambientOnly === true,
     );
   });
 
