@@ -158,7 +158,7 @@ async function inspectModuleCore(
       resolvedPathsBySpec,
     );
   } catch (error) {
-    reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`, false);
+    reThrowAsCliError(error, `Failed to inspect module ${tsFilePath}`, 'expected');
   }
 }
 

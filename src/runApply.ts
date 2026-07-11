@@ -60,7 +60,7 @@ export async function runApply(
     await executeChanges(plan.changes);
     writer('✓ Changes applied\n');
   } catch (error) {
-    reThrowAsCliError(error, 'Failed to apply changes', true);
+    reThrowAsCliError(error, 'Failed to apply changes', 'unexpected');
   }
 
   // If verification command is provided, run it

@@ -5,16 +5,22 @@
  * exit code.
  */
 
+/**
+ * Whether a {@link CliError} is an expected, user-facing error (bad path,
+ * missing input file, checksum mismatch — the user sees a single clean
+ * `tslor: <message>` line, no stack trace) or an unexpected internal
+ * failure (worker crash, native I/O fault, a bug — the cause's stack
+ * trace is additionally printed for diagnosis). A string literal rather
+ * than a boolean so a taxonomy change at a call site is a whole-word diff
+ * (`'expected'` → `'unexpected'`), not a one-character flip easy to miss
+ * while skimming a larger refactor.
+ */
+export type ErrorExpectedness = 'expected' | 'unexpected';
+
 interface CliErrorOptions {
   exitCode?: number;
   cause?: unknown;
-  /**
-   * When true, the error represents an unexpected internal failure and
-   * the error handler should print the cause's stack trace for debugging.
-   * When false (default), the error is an expected user-facing error
-   * (e.g. bad path) and no stack is printed.
-   */
-  unexpected?: boolean;
+  expectedness?: ErrorExpectedness;
 }
 
 /**
@@ -25,13 +31,13 @@ interface CliErrorOptions {
  */
 export class CliError extends Error {
   public readonly exitCode: number;
-  public readonly unexpected: boolean;
+  public readonly expectedness: ErrorExpectedness;
 
   constructor(message: string, opts: CliErrorOptions) {
-    super(message, { cause: opts?.cause });
+    super(message, { cause: opts.cause });
     this.name = new.target.name;
-    this.exitCode = opts?.exitCode ?? 1;
-    this.unexpected = opts?.unexpected ?? false;
+    this.exitCode = opts.exitCode ?? 1;
+    this.expectedness = opts.expectedness ?? 'expected';
   }
 }
 
@@ -42,16 +48,16 @@ export class CliError extends Error {
  *
  * @param error - The original error
  * @param context - Context prefix for the error message
- * @param unexpected - Whether this is an unexpected internal failure (prints cause stack trace)
+ * @param expectedness - 'expected' or 'unexpected'; see {@link ErrorExpectedness}
  */
 export function reThrowAsCliError(
   error: unknown,
   context: string,
-  unexpected: boolean,
+  expectedness: ErrorExpectedness,
 ): never {
   if (error instanceof CliError) {
     throw error;
   }
   const msg = error instanceof Error ? error.message : String(error);
-  throw new CliError(`${context}: ${msg}`, { cause: error, unexpected });
+  throw new CliError(`${context}: ${msg}`, { cause: error, expectedness });
 }

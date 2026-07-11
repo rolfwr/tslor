@@ -624,7 +624,7 @@ process.on('unhandledRejection', (reason) => {
 function handleCliError(err: unknown): never {
   if (err instanceof CliError) {
     console.error('tslor:', err.message);
-    if (err.unexpected && err.cause instanceof Error) {
+    if (err.expectedness === 'unexpected' && err.cause instanceof Error) {
       console.error(err.cause.stack);
     }
     process.exit(err.exitCode);

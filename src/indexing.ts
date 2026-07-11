@@ -348,7 +348,7 @@ async function indexImportFromFilesParallel(
       reThrowAsCliError(
         error,
         `Failed to process file ${currentItem.path}`,
-        true,
+        'unexpected',
       );
     }
     if (moduleInfo) {
@@ -363,7 +363,7 @@ async function indexImportFromFilesParallel(
         reThrowAsCliError(
           error,
           `Failed to process file ${currentItem.path}`,
-          true,
+          'unexpected',
         );
       }
     }
@@ -402,7 +402,7 @@ async function indexImportFromFilesParallel(
             ? err
             : new CliError(err instanceof Error ? err.message : String(err), {
                 cause: err,
-                unexpected: true,
+                expectedness: 'unexpected',
               });
       }
       wrapper.terminate();
@@ -447,7 +447,7 @@ async function refreshImportsFromFile(
     }
     await storeImportsFromFile(moduleInfo, db, mtimeMs, fileSystem);
   } catch (error) {
-    reThrowAsCliError(error, `Failed to process file ${somePath}`, true);
+    reThrowAsCliError(error, `Failed to process file ${somePath}`, 'unexpected');
   }
 }
 

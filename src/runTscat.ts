@@ -8,6 +8,6 @@ export async function runTscat(path: string, _debugOptions: DebugOptions) {
     const content = fshost.readFileSync(path);
     console.log(content);
   } catch (err: unknown) {
-    reThrowAsCliError(err, 'tscat', false);
+    reThrowAsCliError(err, 'tscat', 'expected');
   }
 }
