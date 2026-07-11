@@ -10,7 +10,7 @@ import { Project } from 'ts-morph';
 import { CliError } from './errors';
 import { FileSystem } from './filesystem';
 import { analyzeImportUsageFromStaticInfo, parseModule, StaticModuleInfo } from './staticAnalysis';
-import { loadSourceFile } from './loadSourceFile';
+import { loadSourceFileForAnalysis } from './loadSourceFile';
 import {
   denormalizePath,
   normalizeAndValidatePath,
@@ -39,6 +39,7 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   SplitAnalysis,
+  validateSymbolsHaveDeclarations,
 } from './splitModule';
 
 /**
@@ -77,7 +78,7 @@ export async function runProposeSplit(
   writer(`Symbols to move: ${symbols.join(', ')}\n`);
 
   // Phase 1: Validation
-  const staticModuleInfo = await validateInputs(
+  const { staticModuleInfo, sourceText } = await validateInputs(
     sourceModule,
     targetModule,
     symbols,
@@ -89,6 +90,7 @@ export async function runProposeSplit(
   const { dependencies, splitAnalyses } = analyzeDependencies(
     symbols,
     staticModuleInfo,
+    sourceText,
     writer,
   );
 
@@ -104,13 +106,13 @@ export async function runProposeSplit(
 
   // Phase 4: Generate Changes
   const { sourceContent, targetContent, originalSourceContent } =
-    await generateChanges(
+    generateChanges(
       sourceModule,
       targetModule,
       allSymbolsToMove,
       dependencies,
       staticModuleInfo,
-      fileSystem,
+      sourceText,
     );
 
   // Phase 5: Create Plan
@@ -135,7 +137,7 @@ async function validateInputs(
   symbols: string[],
   fileSystem: FileSystem,
   writer: (message: string) => void,
-): Promise<StaticModuleInfo> {
+): Promise<{ staticModuleInfo: StaticModuleInfo; sourceText: string }> {
   if (!(await fileSystem.exists(sourceModule))) {
     throw new CliError(`Source module does not exist: ${sourceModule}`, {});
   }
@@ -144,8 +146,9 @@ async function validateInputs(
     throw new CliError(`Target module already exists: ${targetModule}`, {});
   }
 
-  const sourceFile = await loadSourceFile(sourceModule, fileSystem);
+  const sourceFile = await loadSourceFileForAnalysis(sourceModule, fileSystem);
   const staticModuleInfo = parseModule(sourceFile);
+  const sourceText = sourceFile.getText();
 
   const invalidSymbols: string[] = [];
   for (const symbol of symbols) {
@@ -163,15 +166,16 @@ async function validateInputs(
 
   writer('✓ Input validation passed\n');
 
-  return staticModuleInfo;
+  return { staticModuleInfo, sourceText };
 }
 
 function analyzeDependencies(
   symbols: string[],
   staticModuleInfo: StaticModuleInfo,
+  sourceText: string,
   writer: (message: string) => void,
 ): { dependencies: IntraModuleDependencies; splitAnalyses: SplitAnalysis[] } {
-  const dependencies = buildIntraModuleDependencies(staticModuleInfo);
+  const dependencies = buildIntraModuleDependencies(staticModuleInfo, sourceText);
 
   const splitAnalyses: SplitAnalysis[] = [];
   for (const symbol of symbols) {
@@ -243,23 +247,19 @@ function checkNotMovingAllSymbols(
  * Generate the actual file contents for source and target.
  * This is the core transformation logic.
  */
-async function generateChanges(
+function generateChanges(
   sourceModule: string,
   targetModule: string,
   symbolsToMove: Set<string>,
   dependencies: IntraModuleDependencies,
   staticModuleInfo: StaticModuleInfo,
-  fileSystem: FileSystem,
-): Promise<{
+  sourceText: string,
+): {
   sourceContent: string;
   targetContent: string;
   originalSourceContent: string;
-}> {
-  // Read source module content once; reused for AST and checksum
-  const originalSourceContent = await fileSystem.readFile(
-    sourceModule,
-    'utf-8',
-  );
+} {
+  const originalSourceContent = sourceText;
 
   // Create ts-morph project and load source file
   const project = new Project({ useInMemoryFileSystem: true });
@@ -267,6 +267,11 @@ async function generateChanges(
     'source.ts',
     originalSourceContent,
   );
+
+  // Invariant: every symbol scheduled for extraction must have an actual
+  // declaration — abort with CliError if a phantom name slipped into the
+  // dependency graph.
+  validateSymbolsHaveDeclarations(sourceFile, symbolsToMove, sourceModule);
 
   // Extract symbol definitions for symbols to move
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, symbolsToMove);

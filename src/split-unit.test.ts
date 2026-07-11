@@ -74,7 +74,7 @@ export function validateEmail(email: string): boolean {
     assert.ok(moduleInfo.exportedNames.has('formatDate'));
     assert.ok(moduleInfo.exportedNames.has('validateEmail'));
 
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
     const formatDateDeps = getOrThrow(
       deps.dependencies,
       'formatDate',
@@ -82,12 +82,10 @@ export function validateEmail(email: string): boolean {
     );
     assert.isTrue(formatDateDeps.has('formatISODate'));
 
-    const validateEmailDeps = getOrThrow(
-      deps.dependencies,
-      'validateEmail',
-      'validateEmailDeps should be defined',
-    );
-    assert.equal(validateEmailDeps.size, 0);
+    // validateEmail has no internal dependencies, so it is not in the
+    // dependencies map (only symbols with non-empty dependency sets are stored).
+    assert.ok(!deps.dependencies.has('validateEmail'));
+    assert.ok(deps.definitions.has('validateEmail'));
   });
 
   test('tracks transitive dependencies', () => {
@@ -112,7 +110,7 @@ function formatOutput(data: string): string {
 export function otherFunction(): void {}
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
     const splitAnalysis = analyzeSplit(deps, 'processData');
 
     assert.isTrue(splitAnalysis.canSplit);
@@ -143,7 +141,7 @@ export function independent(): string {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
     const cycles = detectCircularDependencies(deps);
 
     assert.isTrue(cycles.length > 0);
@@ -180,7 +178,7 @@ function capitalize(str: string): string {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     const formatUserSplit = analyzeSplit(deps, 'formatUser');
     assert.isTrue(formatUserSplit.canSplit);
@@ -216,7 +214,7 @@ function formatOutput(data: string): string {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     assert.isFalse(deps.definitions.has('trim'));
     assert.isFalse(deps.definitions.has('toUpperCase'));
@@ -228,7 +226,7 @@ function formatOutput(data: string): string {
 
   test('handles typeof dependencies on const values', () => {
     const moduleInfo = parseModule(createTestSourceFile(TYPEOF_CONST_FIXTURE));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, TYPEOF_CONST_FIXTURE);
 
     const derivedDeps = getOrThrow(
       deps.dependencies,
@@ -269,7 +267,7 @@ export interface Data {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     const symbolsToMove = new Set(['IconMap', 'Request', 'Entry']);
     const allRequired = collectAllRequiredDeps(deps, symbolsToMove);
@@ -295,7 +293,7 @@ export type ItemCustomIconUpdateDto = {
 export type ItemCustomIconsBlendedDto = (ItemCustomIconBlendedDto | null)[];
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     const updateDtoDeps = getOrThrow(
       deps.dependencies,
@@ -351,7 +349,7 @@ export interface OtherType {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     const requestedSymbols = [
       'Item',
@@ -402,7 +400,7 @@ export interface UnrelatedType {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
 
     const allSymbolsToMove = collectAllRequiredDeps(deps, ['ComplexItem']);
 
@@ -438,7 +436,7 @@ export const otherSchema = z.number();
     assert.notInclude(mySchemaUses, 'example');
     assert.include(mySchemaUses, 'z');
 
-    const deps = buildIntraModuleDependencies(staticModuleInfo);
+    const deps = buildIntraModuleDependencies(staticModuleInfo, source);
     const analysis = analyzeSplit(deps, 'mySchema');
     assert.isTrue(analysis.canSplit);
   });
@@ -1088,7 +1086,7 @@ export function otherFunction(): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile('async.ts', source);
     const staticModuleInfo = parseModule(sourceFile);
-    const dependencies = buildIntraModuleDependencies(staticModuleInfo);
+    const dependencies = buildIntraModuleDependencies(staticModuleInfo, source);
 
     assert.isFalse(dependencies.definitions.has('Promise'));
     assert.isFalse(dependencies.definitions.has('Date'));
@@ -1158,7 +1156,7 @@ export const stayingSchema = z.object({
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile('source.ts', source);
     const staticModuleInfo = parseModule(sourceFile);
-    const dependencies = buildIntraModuleDependencies(staticModuleInfo);
+    const dependencies = buildIntraModuleDependencies(staticModuleInfo, source);
 
     const symbolsToMove = collectAllRequiredDeps(dependencies, [
       'movingSchema',
@@ -1223,7 +1221,7 @@ export const movingSchema = z.object({
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile('source.ts', source);
     const staticModuleInfo = parseModule(sourceFile);
-    const dependencies = buildIntraModuleDependencies(staticModuleInfo);
+    const dependencies = buildIntraModuleDependencies(staticModuleInfo, source);
 
     const analysis = analyzeSplit(dependencies, 'movingSchema');
     assert.isTrue(analysis.canSplit);
@@ -1302,7 +1300,7 @@ export interface CustomData {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, source);
     const symbolsToMove = new Set(['CustomData']);
     const analysis = analyzeSplit(deps, 'CustomData');
     assert.equal(analysis.requiredDependencies.size, 0);
@@ -1343,7 +1341,7 @@ export interface CustomData {
 
   test('complete split workflow with type/value separation', () => {
     const moduleInfo = parseModule(createTestSourceFile(TYPEOF_CONST_FIXTURE));
-    const deps = buildIntraModuleDependencies(moduleInfo);
+    const deps = buildIntraModuleDependencies(moduleInfo, TYPEOF_CONST_FIXTURE);
     const symbolsToMove = new Set([
       'DerivedFromConst',
       'UsesImportedType',

@@ -18,315 +18,9 @@ import {
   TypeAliasDeclaration,
   VariableStatement,
 } from 'ts-morph';
+import { CliError } from './errors';
+import { getModuleBindingSet } from './sealedBinder';
 import { ImportUsage, StaticModuleInfo } from './staticAnalysis';
-
-/**
- * JavaScript/TypeScript built-in global identifiers that must not be treated
- * as local module definitions. These are standalone identifiers from the
- * ECMAScript standard library (lib.es*.d.ts) and the DOM lib (lib.dom.d.ts).
- * Window instance properties (e.g. `length`, `cookie`, `onabort`) are NOT
- * included because they are not accessible as bare identifiers.
- */
-const BUILTIN_GLOBALS = new Set([
-  // ECMAScript intrinsics
-  'Object',
-  'Function',
-  'Boolean',
-  'Symbol',
-  'Error',
-  'EvalError',
-  'RangeError',
-  'ReferenceError',
-  'SyntaxError',
-  'TypeError',
-  'URIError',
-  'DecodeError',
-  'InternalError',
-  'AggregateError',
-  'Number',
-  'BigInt',
-  'Math',
-  'Date',
-  'String',
-  'RegExp',
-  'Array',
-  'Int8Array',
-  'Uint8Array',
-  'Uint8ClampedArray',
-  'Int16Array',
-  'Uint16Array',
-  'Int32Array',
-  'Uint32Array',
-  'Float32Array',
-  'Float64Array',
-  'BigInt64Array',
-  'BigUint64Array',
-  'Map',
-  'Set',
-  'WeakMap',
-  'WeakSet',
-  'WeakRef',
-  'FinalizationRegistry',
-  'ArrayBuffer',
-  'SharedArrayBuffer',
-  'Atomics',
-  'DataView',
-  'JSON',
-  'Promise',
-  'Generator',
-  'AsyncGenerator',
-  'AsyncGeneratorFunction',
-  'AsyncFunction',
-  'Reflect',
-  'Proxy',
-  'Iterator',
-  'Iterable',
-  'AsyncIterator',
-  'AsyncIterable',
-  'TypedArray',
-  'Int8',
-  'Uint8',
-  'Int16',
-  'Uint16',
-  'Int32',
-  'Uint32',
-  'Float32',
-  'Float64',
-  'BigInt64',
-  'BigUint64',
-  // ECMAScript globals (not constructors)
-  'globalThis',
-  'Infinity',
-  'NaN',
-  'undefined',
-  'eval',
-  'isFinite',
-  'isNaN',
-  'parseFloat',
-  'parseInt',
-  'decodeURI',
-  'decodeURIComponent',
-  'encodeURI',
-  'encodeURIComponent',
-  'escape',
-  'unescape',
-  // Built-in functions
-  'queueMicrotask',
-  'structuredClone',
-  'atob',
-  'btoa',
-  'confirm',
-  'alert',
-  'prompt',
-  'getComputedStyle',
-  'matchMedia',
-  'reportError',
-  'setTimeout',
-  'setInterval',
-  'setImmediate',
-  'clearTimeout',
-  'clearInterval',
-  'clearImmediate',
-  // Console
-  'console',
-  // Intl
-  'Intl',
-  // WebAssembly
-  'WebAssembly',
-  // DOM globals accessible as bare identifiers
-  'window',
-  'document',
-  'navigator',
-  'location',
-  'history',
-  'screen',
-  'parent',
-  'top',
-  'frames',
-  'self',
-  // CSS/DOM types
-  'CSSRuleList',
-  'CSSStyleDeclaration',
-  'DOMMatrix',
-  'DOMParser',
-  'Element',
-  'HTMLElement',
-  'HTMLDocument',
-  'XMLDocument',
-  'NodeList',
-  'NamedNodeMap',
-  'Attr',
-  'CharacterData',
-  'Comment',
-  'Text',
-  'CDATASection',
-  'DocumentType',
-  'DocumentFragment',
-  'Document',
-  'XMLSerializer',
-  'XPathResult',
-  'XPathExpression',
-  'XPathEvaluator',
-  'XPathNSResolver',
-  'MutationObserver',
-  'MutationRecord',
-  'TreeWalker',
-  'NodeIterator',
-  'Range',
-  'StaticRange',
-  'AbstractRange',
-  'Selection',
-  'Slotable',
-  'ShadowRoot',
-  'SVGElement',
-  'SVGSVGElement',
-  'SVGGraphicsElement',
-  'Event',
-  'EventTarget',
-  'EventModifierInit',
-  'UIEvent',
-  'FocusEvent',
-  'InputEvent',
-  'KeyboardEvent',
-  'MouseEvent',
-  'PointerEvent',
-  'Touch',
-  'TouchEvent',
-  'WheelEvent',
-  'CompositionEvent',
-  'DragEvent',
-  'ClipboardEvent',
-  'Clipboard',
-  'Blob',
-  'File',
-  'FileList',
-  'FileReader',
-  'URL',
-  'URLSearchParams',
-  'Headers',
-  'Request',
-  'Response',
-  'FetchEvent',
-  'AbortSignal',
-  'AbortController',
-  'DOMException',
-  'DOMError',
-  'DOMStringList',
-  'DOMStringMap',
-  'DOMTokenList',
-  'BarProp',
-  'External',
-  'Plugin',
-  'PluginArray',
-  'MimeType',
-  'MimeTypeArray',
-  'ImageBitmap',
-  'ImageBitmapRenderingContext',
-  'OffscreenCanvas',
-  'CanvasGradient',
-  'CanvasPattern',
-  'CanvasRenderingContext2D',
-  'OffscreenCanvasRenderingContext2D',
-  'WebGLRenderingContext',
-  'WebGL2RenderingContext',
-  'WebGLBuffer',
-  'WebGLFramebuffer',
-  'WebGLProgram',
-  'WebGLRenderbuffer',
-  'WebGLShader',
-  'WebGLTexture',
-  'WebGLActiveInfo',
-  'WebGLQuery',
-  'WebGLSampler',
-  'WebGLSync',
-  'WebGLTransformFeedback',
-  'WebGLVertexArrayObject',
-  'WebGLContextEvent',
-  'WebGLUniformLocation',
-  'WebGLVertexArrayObjectOES',
-  'AnimationEvent',
-  'BeforeUnloadEvent',
-  'HashChangeEvent',
-  'MessageEvent',
-  'PageTransitionEvent',
-  'PopStateEvent',
-  'ProgressEvent',
-  'StorageEvent',
-  'SubmitEvent',
-  'WebSocket',
-  'XMLHttpRequest',
-  'XMLHttpRequestEventTarget',
-  'XMLHttpRequestUpload',
-  'FormData',
-  'ReadableStream',
-  'WritableStream',
-  'TransformStream',
-  'ByteLengthQueuingStrategy',
-  'CountQueuingStrategy',
-  'ReadableStreamBYOBRequest',
-  'ReadableStreamDefaultController',
-  'ReadableByteStreamController',
-  'WritableStreamDefaultController',
-  'TransformStreamDefaultController',
-  'ReadableStreamDefaultReader',
-  'ReadableStreamBYOBReader',
-  'WritableStreamDefaultWriter',
-  'ReadableStreamGenericReader',
-  'MessageChannel',
-  'MessagePort',
-  'BroadcastChannel',
-  'ServiceWorker',
-  'ServiceWorkerContainer',
-  'ServiceWorkerRegistration',
-  'PeriodicWork',
-  'Work',
-  'Worklet',
-  'Worker',
-  'WorkerGlobalScope',
-  'WorkerLocation',
-  'WorkerNavigator',
-  'SharedWorker',
-  'Notification',
-  'PeriodicSyncManager',
-  'PushManager',
-  'PushSubscription',
-  'PushSubscriptionOptions',
-  'SyncManager',
-  'Cache',
-  'CacheStorage',
-  'Crypto',
-  'CryptoKey',
-  'SubtleCrypto',
-  'KeyAlgorithm',
-  'KeyUsage',
-  'AesCbcParams',
-  'AesCtrParams',
-  'AesGcmParams',
-  'AesKeyAlgorithm',
-  'AesKeyGenParams',
-  'CryptoKeyPair',
-  'EcKeyAlgorithm',
-  'EcKeyGenParams',
-  'EcKeyImportParams',
-  'HkdfParams',
-  'HmacImportParams',
-  'HmacKeyAlgorithm',
-  'HmacKeyGenParams',
-  'Pbkdf2Params',
-  'RsaHashedImportParams',
-  'RsaHashedKeyAlgorithm',
-  'RsaHashedKeyGenParams',
-  'RsaKeyAlgorithm',
-  'RsaKeyGenParams',
-  'RsaOaepParams',
-  'RsaPssParams',
-  'RsaOtherPrimesInfo',
-  // Common utility globals
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'requestIdleCallback',
-  'cancelIdleCallback',
-]);
 
 /**
  * Represents the dependency relationships within a module
@@ -376,17 +70,21 @@ export interface RequiredImport {
 }
 
 /**
- * Filter a symbol reference: returns true if it should be tracked as a local
- * dependency (not a built-in global and not an import).
+ * Classify a name: is it a local module declaration (not an import, not ambient)?
+ *
+ * Uses elimination against the module-scope binding set: a name is a local
+ * declaration only if it is bound at module scope AND is not an import.
+ * Everything else (unbound references) is ambient and excluded.
  */
-function isLocalDependency(
-  usedSymbol: string,
+function isLocalDeclaration(
+  name: string,
   moduleInfo: StaticModuleInfo,
+  moduleBindings: Set<string>,
 ): boolean {
-  if (BUILTIN_GLOBALS.has(usedSymbol)) {
+  if (!moduleBindings.has(name)) {
     return false;
   }
-  if (moduleInfo.unresolvedExportsByImportNames.has(usedSymbol)) {
+  if (moduleInfo.unresolvedExportsByImportNames.has(name)) {
     return false;
   }
   return true;
@@ -394,22 +92,26 @@ function isLocalDependency(
 
 /**
  * Build a clean dependency graph from parsed module info.
+ *
+ * Uses elimination semantics: a name is a local declaration if and only if it
+ * is bound at module scope (per the binding set derived from the TypeScript
+ * binder) and is not an import. Ambient names are excluded regardless of
+ * whether they resolve in the target environment.
+ *
+ * @param moduleInfo - Parsed static module info from {@link parseModule}.
+ * @param sourceText - Source text of the module, used to compute the
+ *                     module-scope binding set via the sealed binder.
  */
 export function buildIntraModuleDependencies(
   moduleInfo: StaticModuleInfo,
+  sourceText: string,
 ): IntraModuleDependencies {
-  const exports = moduleInfo.exportedNames;
+  const moduleBindings = getModuleBindingSet(sourceText, {});
 
-  /*
-    Collect all symbols defined in this module:
-    1. All symbols that use other symbols (keys of identifierUses)
-    2. All exported symbols (from exports)
-    Note: We explicitly exclude imported symbols and built-in globals.
-  */
   const allDefinedSymbols = new Set<string>();
 
   for (const symbol of moduleInfo.identifierUses.keys()) {
-    if (isLocalDependency(symbol, moduleInfo)) {
+    if (isLocalDeclaration(symbol, moduleInfo, moduleBindings)) {
       allDefinedSymbols.add(symbol);
     }
   }
@@ -420,30 +122,25 @@ export function buildIntraModuleDependencies(
   const dependencies = new Map<string, Set<string>>();
 
   for (const [symbol, uses] of moduleInfo.identifierUses) {
-    if (!isLocalDependency(symbol, moduleInfo)) {
+    if (!isLocalDeclaration(symbol, moduleInfo, moduleBindings)) {
       continue;
     }
     const cleanDeps = new Set<string>();
 
     for (const usedSymbol of uses) {
-      if (isLocalDependency(usedSymbol, moduleInfo)) {
+      if (isLocalDeclaration(usedSymbol, moduleInfo, moduleBindings)) {
         cleanDeps.add(usedSymbol);
         allDefinedSymbols.add(usedSymbol);
       }
     }
 
-    dependencies.set(symbol, cleanDeps);
-  }
-
-  // Ensure all defined symbols have dependency entries, even if they have no dependencies
-  for (const symbol of allDefinedSymbols) {
-    if (!dependencies.has(symbol)) {
-      dependencies.set(symbol, new Set<string>());
+    if (cleanDeps.size > 0) {
+      dependencies.set(symbol, cleanDeps);
     }
   }
 
   return {
-    exports,
+    exports: moduleInfo.exportedNames,
     definitions: allDefinedSymbols,
     dependencies,
   };
@@ -585,7 +282,7 @@ export function extractSymbolDefinitions(
         kind: 'function',
         node: func,
         jsDocs: func.getJsDocs(),
-        isExported: func.isExported(),
+        isExported: func.hasModifier(SyntaxKind.ExportKeyword),
         startPos: func.getStart(),
         endPos: func.getEnd(),
       });
@@ -602,7 +299,7 @@ export function extractSymbolDefinitions(
           kind: stmt.getDeclarationKind() === 'const' ? 'const' : 'variable',
           node: stmt,
           jsDocs: stmt.getJsDocs(),
-          isExported: stmt.isExported(),
+          isExported: stmt.hasModifier(SyntaxKind.ExportKeyword),
           startPos: stmt.getStart(),
           endPos: stmt.getEnd(),
         });
@@ -619,7 +316,7 @@ export function extractSymbolDefinitions(
         kind: 'type',
         node: type,
         jsDocs: type.getJsDocs(),
-        isExported: type.isExported(),
+        isExported: type.hasModifier(SyntaxKind.ExportKeyword),
         startPos: type.getStart(),
         endPos: type.getEnd(),
       });
@@ -635,7 +332,7 @@ export function extractSymbolDefinitions(
         kind: 'interface',
         node: iface,
         jsDocs: iface.getJsDocs(),
-        isExported: iface.isExported(),
+        isExported: iface.hasModifier(SyntaxKind.ExportKeyword),
         startPos: iface.getStart(),
         endPos: iface.getEnd(),
       });
@@ -651,7 +348,7 @@ export function extractSymbolDefinitions(
         kind: 'class',
         node: cls,
         jsDocs: cls.getJsDocs(),
-        isExported: cls.isExported(),
+        isExported: cls.hasModifier(SyntaxKind.ExportKeyword),
         startPos: cls.getStart(),
         endPos: cls.getEnd(),
       });
@@ -659,6 +356,47 @@ export function extractSymbolDefinitions(
   });
 
   return definitions;
+}
+
+/**
+ * Fail-fast invariant: every symbol scheduled for extraction or import
+ * generation must have an actual module-scope declaration.
+ *
+ * This guarantee is not compiler-provable because the dependency graph
+ * is built from `identifierUses` (static AST references), which may
+ * include leaked inner-scope names that shadow a module-scope binding.
+ * Although elimination semantics exclude ambient names, a leaked local
+ * whose name shadows a module-scope binding is still misattributed as a
+ * use of that binding. The compiler would need full scope
+ * analysis to distinguish them, but the split pipeline deliberately
+ * avoids checker-level resolution. Therefore a runtime check validates
+ * that the pipeline's assumptions about declarations hold before
+ * generating output.
+ *
+ * @param sourceFile - The source file to check declarations against.
+ * @param symbolsToCheck - Names that must have module-scope declarations.
+ * @param moduleLabel - Human-readable label for error messages.
+ * @throws CliError naming each undeclared symbol and the module.
+ */
+export function validateSymbolsHaveDeclarations(
+  sourceFile: SourceFile,
+  symbolsToCheck: Set<string>,
+  moduleLabel: string,
+): void {
+  if (symbolsToCheck.size === 0) {
+    return;
+  }
+
+  const declarations = extractSymbolDefinitions(sourceFile, symbolsToCheck);
+  const found = new Set(declarations.map((def) => def.name));
+  const missing = [...symbolsToCheck].filter((name) => !found.has(name));
+
+  if (missing.length > 0) {
+    throw new CliError(
+      `Cannot split module: the following symbols have no declaration in ${moduleLabel}: ${missing.join(', ')}`,
+      {},
+    );
+  }
 }
 
 /**
@@ -960,7 +698,7 @@ export function removeSymbolsFromSource(
       stmt.replaceWithText('');
     } else if (declarationsToKeep.length < declarations.length) {
       const kind = stmt.getDeclarationKind();
-      const isExported = stmt.isExported();
+      const isExported = stmt.hasModifier(SyntaxKind.ExportKeyword);
 
       const newDeclarations = declarationsToKeep.map((decl) => {
         const name = decl.getName();

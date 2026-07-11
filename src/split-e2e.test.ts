@@ -28,7 +28,7 @@ function runSplit(
   const targetFileName = 'target.ts';
 
   const moduleInfo = parseIsolatedSourceCode(sourceInput);
-  const deps = buildIntraModuleDependencies(moduleInfo);
+  const deps = buildIntraModuleDependencies(moduleInfo, sourceInput);
   const allSymbols = new Set(symbolsToMove);
 
   for (const symbol of symbolsToMove) {
