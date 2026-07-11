@@ -315,59 +315,38 @@ function generateChanges(
     onlyUsedByMovedSymbols,
   );
 
-  // Check if any remaining symbols need the moved symbols (for re-export)
-  const remainingNeedMoved = checkIfRemainingSymbolsNeedMoved(
-    symbolsToMove,
-    dependencies.exports,
-  );
-  const relativePath = getRelativeImportPath(sourceModule, targetModule);
-
-  if (remainingNeedMoved.size > 0) {
-    // Add import and re-export for moved symbols that are still needed
-    sourceContent = addImportForMovedSymbols(
-      sourceContent,
-      remainingNeedMoved,
-      relativePath,
-      true,
-      { symbolDefinitions },
-    );
-  }
-
-  // Add imports (without re-export) for shared non-exported deps
-  if (sharedNonExportedDeps.size > 0) {
-    sourceContent = addImportForMovedSymbols(
-      sourceContent,
-      sharedNonExportedDeps,
-      relativePath,
-      false,
-      { symbolDefinitions },
-    );
-  }
-
-  return {
-    sourceContent,
-    targetContent: targetContent,
-    originalSourceContent,
-  };
-}
-
-/**
- * Check if remaining symbols need moved symbols (for re-export).
- */
-function checkIfRemainingSymbolsNeedMoved(
-  movedSymbols: Set<string>,
-  originallyExportedSymbols: Set<string>,
-): Set<string> {
-  // Only re-export symbols that were originally exported (not internal dependencies)
+  // Re-export only symbols that were originally exported (not internal deps)
   const symbolsToReExport = new Set<string>();
-
-  for (const symbol of movedSymbols) {
-    if (originallyExportedSymbols.has(symbol)) {
+  for (const symbol of symbolsToMove) {
+    if (dependencies.exports.has(symbol)) {
       symbolsToReExport.add(symbol);
     }
   }
+  const relativePath = getRelativeImportPath(sourceModule, targetModule);
 
-  return symbolsToReExport;
+  // Add import and re-export for moved symbols that are still needed
+  sourceContent = addImportForMovedSymbols(
+    sourceContent,
+    symbolsToReExport,
+    relativePath,
+    true,
+    { symbolDefinitions },
+  );
+
+  // Add imports (without re-export) for shared non-exported deps
+  sourceContent = addImportForMovedSymbols(
+    sourceContent,
+    sharedNonExportedDeps,
+    relativePath,
+    false,
+    { symbolDefinitions },
+  );
+
+  return {
+    sourceContent,
+    targetContent,
+    originalSourceContent,
+  };
 }
 
 /**
