@@ -134,8 +134,13 @@ export function buildIntraModuleDependencies(
       }
     }
 
-    if (cleanDeps.size > 0) {
-      dependencies.set(symbol, cleanDeps);
+    dependencies.set(symbol, cleanDeps);
+  }
+
+  // Ensure all defined symbols have dependency entries, even if they have no dependencies
+  for (const symbol of allDefinedSymbols) {
+    if (!dependencies.has(symbol)) {
+      dependencies.set(symbol, new Set<string>());
     }
   }
 

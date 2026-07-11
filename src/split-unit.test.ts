@@ -82,10 +82,12 @@ export function validateEmail(email: string): boolean {
     );
     assert.isTrue(formatDateDeps.has('formatISODate'));
 
-    // validateEmail has no internal dependencies, so it is not in the
-    // dependencies map (only symbols with non-empty dependency sets are stored).
-    assert.ok(!deps.dependencies.has('validateEmail'));
-    assert.ok(deps.definitions.has('validateEmail'));
+    const validateEmailDeps = getOrThrow(
+      deps.dependencies,
+      'validateEmail',
+      'validateEmailDeps should be defined',
+    );
+    assert.equal(validateEmailDeps.size, 0);
   });
 
   test('tracks transitive dependencies', () => {
