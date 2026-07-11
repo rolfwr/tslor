@@ -8,6 +8,7 @@
 import path from 'node:path';
 import {
   ClassDeclaration,
+  EnumDeclaration,
   FunctionDeclaration,
   InterfaceDeclaration,
   JSDoc,
@@ -46,13 +47,14 @@ export interface SplitAnalysis {
  */
 export interface SymbolDefinition {
   name: string;
-  kind: 'function' | 'variable' | 'type' | 'class' | 'interface' | 'const';
+  kind: 'function' | 'variable' | 'type' | 'class' | 'interface' | 'const' | 'enum';
   node:
     | FunctionDeclaration
     | VariableStatement
     | TypeAliasDeclaration
     | InterfaceDeclaration
-    | ClassDeclaration;
+    | ClassDeclaration
+    | EnumDeclaration;
   jsDocs?: JSDoc[];
   isExported: boolean;
   startPos: number; // For debugging/verification
@@ -360,6 +362,22 @@ export function extractSymbolDefinitions(
     }
   });
 
+  // Find enum declarations
+  sourceFile.getEnums().forEach((enm) => {
+    const name = enm.getName();
+    if (symbolNames.has(name)) {
+      definitions.push({
+        name,
+        kind: 'enum',
+        node: enm,
+        jsDocs: enm.getJsDocs(),
+        isExported: enm.hasModifier(SyntaxKind.ExportKeyword),
+        startPos: enm.getStart(),
+        endPos: enm.getEnd(),
+      });
+    }
+  });
+
   return definitions;
 }
 
@@ -592,7 +610,8 @@ function exportStatementIfNeeded(stmt: Node, exportNames: Set<string>): void {
     }
   } else if (
     Node.isTypeAliasDeclaration(stmt) ||
-    Node.isInterfaceDeclaration(stmt)
+    Node.isInterfaceDeclaration(stmt) ||
+    Node.isEnumDeclaration(stmt)
   ) {
     const name = stmt.getName();
     if (exportNames.has(name)) {
@@ -750,6 +769,14 @@ export function removeSymbolsFromSource(
     const name = cls.getName();
     if (name && symbolsToRemove.has(name)) {
       cls.replaceWithText('');
+    }
+  });
+
+  // Remove enum declarations
+  sourceFile.getEnums().forEach((enm) => {
+    const name = enm.getName();
+    if (symbolsToRemove.has(name)) {
+      enm.replaceWithText('');
     }
   });
 
