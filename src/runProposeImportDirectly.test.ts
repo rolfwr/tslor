@@ -728,6 +728,253 @@ import type { FileSystem } from './filesystem';
   assert.deepEqual(loadSourceFileSymbols, ['loadSourceFile']);
 });
 
+test('runProposeImportDirectly handles mixed imports with re-exports to different modules', async () => {
+  /*
+    Full-pipeline test for the mixed-import case where some symbols are
+    locally-defined in the barrel and re-exported symbols go to DIFFERENT
+    target modules. This mirrors the real-world case:
+
+      import { loadSourceFile, NODEJS_GLOBALS } from './indexing';
+
+    where indexing.ts re-exports loadSourceFile from ./loadSourceFile and
+    NODEJS_GLOBALS from ./staticAnalysis, plus defines local symbols.
+  */
+
+  const files = new Map<string, string>([
+    [
+      '/repo/tsconfig.json',
+      JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ES2022',
+          moduleResolution: 'Bundler',
+        },
+        include: ['*.ts'],
+      }),
+    ],
+    ['/repo/moduleA.ts', "export const symbolA = 'a';"],
+    ['/repo/moduleB.ts', "export const symbolB = 'b';"],
+    [
+      '/repo/barrel.ts',
+      [
+        "export const localSymbol = 'local';",
+        "export { symbolA } from './moduleA';",
+        "export { symbolB } from './moduleB';",
+      ].join('\n'),
+    ],
+    ['/repo/consumer.ts', 'import { localSymbol, symbolA, symbolB } from "./barrel";'],
+  ]);
+
+  const fileSystem = new InMemoryFileSystem(files);
+  const repoProvider = new InMemoryRepositoryRootProvider('/repo', [
+    '/repo/moduleA.ts',
+    '/repo/moduleB.ts',
+    '/repo/barrel.ts',
+    '/repo/consumer.ts',
+  ]);
+  const debugOptions: DebugOptions = { traceId: null };
+
+  const plan = await runProposeImportDirectly(
+    '/repo',
+    debugOptions,
+    false,
+    repoProvider,
+    fileSystem,
+    () => {},
+    '/repo',
+  );
+
+  assert.isAbove(
+    plan.changes.length,
+    0,
+    'Plan should have at least one change',
+  );
+  const consumerChange = plan.changes.find(
+    (c): c is ModifyFileChange =>
+      c.type === 'modify-file' && c.path === '/repo/consumer.ts',
+  );
+  if (consumerChange === undefined) {
+    assert.fail(
+      'consumer.ts should be modified to split the mixed import across different modules',
+    );
+  }
+
+  const content = consumerChange.content;
+
+  assert.match(
+    content,
+    /\{\s*localSymbol\s*\}\s*from\s*['"]\.\/barrel['"]/,
+    'localSymbol must remain imported from barrel',
+  );
+
+  assert.match(
+    content,
+    /\{\s*symbolA\s*\}\s*from\s*['"]\.\/moduleA['"]/,
+    'symbolA must be redirected to moduleA',
+  );
+
+  assert.match(
+    content,
+    /\{\s*symbolB\s*\}\s*from\s*['"]\.\/moduleB['"]/,
+    'symbolB must be redirected to moduleB',
+  );
+
+  assert.notMatch(
+    content,
+    /\{[^}]*symbolA[^}]*\}\s*from\s*['"]\.\/barrel['"]/,
+    'symbolA must NOT remain in barrel import',
+  );
+  assert.notMatch(
+    content,
+    /\{[^}]*symbolB[^}]*\}\s*from\s*['"]\.\/barrel['"]/,
+    'symbolB must NOT remain in barrel import',
+  );
+});
+
+test('applyImportChangesToFile splits mixed import with re-exports to different modules', () => {
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile(
+    'consumer.ts',
+    `import { localSymbol, symbolA, symbolB } from './barrel';
+`,
+  );
+
+  const changes = [
+    {
+      symbolName: 'symbolA',
+      currentModuleSpec: './barrel',
+      newModuleSpec: './moduleA',
+      isTypeOnly: false,
+    },
+    {
+      symbolName: 'symbolB',
+      currentModuleSpec: './barrel',
+      newModuleSpec: './moduleB',
+      isTypeOnly: false,
+    },
+  ];
+
+  applyImportChangesToFile(sourceFile, changes, 'consumer.ts');
+
+  const importDecls = sourceFile.getImportDeclarations();
+
+  assert.equal(importDecls.length, 3);
+
+  const barrelImport = importDecls.find(
+    (d) => d.getModuleSpecifierValue() === './barrel',
+  );
+  assertDefined(barrelImport, 'barrel import missing');
+  const barrelSymbols = barrelImport.getNamedImports().map((ni) => ni.getName());
+  assert.deepEqual(barrelSymbols, ['localSymbol']);
+
+  const moduleAImport = importDecls.find(
+    (d) => d.getModuleSpecifierValue() === './moduleA',
+  );
+  assertDefined(moduleAImport, 'moduleA import missing');
+  assert.deepEqual(
+    moduleAImport.getNamedImports().map((ni) => ni.getName()),
+    ['symbolA'],
+  );
+
+  const moduleBImport = importDecls.find(
+    (d) => d.getModuleSpecifierValue() === './moduleB',
+  );
+  assertDefined(moduleBImport, 'moduleB import missing');
+  assert.deepEqual(
+    moduleBImport.getNamedImports().map((ni) => ni.getName()),
+    ['symbolB'],
+  );
+});
+
+test('applyImportChangesToFile preserves type-only on aliased symbols when splitting', () => {
+  /*
+    Regression: the allTypeOnly lookup in splitImportDeclaration used
+    the alias (local name) to look up perSymbolTypeOnly, which is keyed
+    by the original symbol name. Aliased per-symbol type imports were
+    incorrectly emitted without the type keyword.
+  */
+
+  const project = new Project({ useInMemoryFileSystem: true });
+  const sourceFile = project.createSourceFile(
+    'consumer.ts',
+    `import { localSymbol, type SomeType as AliasedType } from './barrel';
+`,
+  );
+
+  const changes = [
+    {
+      symbolName: 'SomeType',
+      currentModuleSpec: './barrel',
+      newModuleSpec: './types',
+      isTypeOnly: true,
+    },
+  ];
+
+  applyImportChangesToFile(sourceFile, changes, 'consumer.ts');
+
+  const imports = sourceFile.getImportDeclarations();
+  assert.equal(imports.length, 2);
+
+  const newImport = imports.find(
+    (i) => i.getModuleSpecifierValue() === './types',
+  );
+  assertDefined(newImport, 'types import missing');
+  assert.isTrue(newImport.isTypeOnly());
+  const newNames = newImport.getNamedImports().map((ni) => ni.getName());
+  assert.deepEqual(newNames, ['SomeType']);
+  const newLocalNames = newImport.getNamedImports().map(
+    (ni) => ni.compilerNode.name.getText(),
+  );
+  assert.deepEqual(newLocalNames, ['AliasedType']);
+
+  const originalImport = imports.find(
+    (i) => i.getModuleSpecifierValue() === './barrel',
+  );
+  assertDefined(originalImport, 'barrel import missing');
+  const originalNames = originalImport
+    .getNamedImports()
+    .map((ni) => ni.getName());
+  assert.deepEqual(originalNames, ['localSymbol']);
+});
+
+test('applyImportChangesToFile uses shortcut when all symbols redirect to same module', () => {
+  const project = new Project({ useInMemoryFileSystem: true });
+  const source = `import { parseModule, StaticModuleInfo } from './indexing';
+`;
+
+  const sf = project.createSourceFile('test.ts', source);
+
+  const changes = [
+    {
+      symbolName: 'parseModule',
+      currentModuleSpec: './indexing',
+      newModuleSpec: './staticAnalysis',
+      isTypeOnly: false,
+    },
+    {
+      symbolName: 'StaticModuleInfo',
+      currentModuleSpec: './indexing',
+      newModuleSpec: './staticAnalysis',
+      isTypeOnly: false,
+    },
+  ];
+
+  applyImportChangesToFile(sf, changes, 'test.ts');
+
+  const imports = sf.getImportDeclarations();
+  assert.equal(imports.length, 1);
+
+  // biome-ignore lint/style/noNonNullAssertion: assert.equal(imports.length, 1) guarantees index 0 is in bounds.
+  const importDecl = imports[0]!;
+  assert.equal(
+    importDecl.getModuleSpecifierValue(),
+    './staticAnalysis',
+  );
+  const symbols = importDecl.getNamedImports().map((ni) => ni.getName());
+  assert.include(symbols, 'parseModule');
+  assert.include(symbols, 'StaticModuleInfo');
+});
+
 test('applyImportChangesToFile preserves import aliases', () => {
   /*
     When a symbol is imported with an alias (e.g., `X as Y`), the alias must
@@ -819,55 +1066,4 @@ test('applyImportChangesToFile preserves import aliases when splitting', () => {
     .getNamedImports()
     .map((ni) => ni.getName());
   assert.deepEqual(originalNames, ['localSymbol', 'otherSymbol']);
-});
-
-test('applyImportChangesToFile preserves type-only on aliased symbols when splitting', () => {
-  /*
-    Regression: the allTypeOnly lookup in splitImportDeclaration used
-    the alias (local name) to look up perSymbolTypeOnly, which is keyed
-    by the original symbol name. Aliased per-symbol type imports were
-    incorrectly emitted without the type keyword.
-  */
-
-  const project = new Project({ useInMemoryFileSystem: true });
-  const sourceFile = project.createSourceFile(
-    'consumer.ts',
-    `import { localSymbol, type SomeType as AliasedType } from './barrel';
-`,
-  );
-
-  const changes = [
-    {
-      symbolName: 'SomeType',
-      currentModuleSpec: './barrel',
-      newModuleSpec: './types',
-      isTypeOnly: true,
-    },
-  ];
-
-  applyImportChangesToFile(sourceFile, changes, 'consumer.ts');
-
-  const imports = sourceFile.getImportDeclarations();
-  assert.equal(imports.length, 2);
-
-  const newImport = imports.find(
-    (i) => i.getModuleSpecifierValue() === './types',
-  );
-  assertDefined(newImport, 'types import missing');
-  assert.isTrue(newImport.isTypeOnly());
-  const newNames = newImport.getNamedImports().map((ni) => ni.getName());
-  assert.deepEqual(newNames, ['SomeType']);
-  const newLocalNames = newImport.getNamedImports().map(
-    (ni) => ni.compilerNode.name.getText(),
-  );
-  assert.deepEqual(newLocalNames, ['AliasedType']);
-
-  const originalImport = imports.find(
-    (i) => i.getModuleSpecifierValue() === './barrel',
-  );
-  assertDefined(originalImport, 'barrel import missing');
-  const originalNames = originalImport
-    .getNamedImports()
-    .map((ni) => ni.getName());
-  assert.deepEqual(originalNames, ['localSymbol']);
 });

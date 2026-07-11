@@ -8,6 +8,7 @@
 import { openStorage, Storage, ReExportItem } from './storage';
 import { DebugOptions, Obj } from './objstore';
 import { normalizeAndValidatePath, isPathWithinDirectory } from './pathUtils';
+import { dirname, relative } from 'path';
 import { groupBy } from './collections';
 import {
   TslorPlan,
@@ -21,15 +22,19 @@ import {
 } from './plan';
 import { SourceFile, ImportDeclaration } from 'ts-morph';
 import { getOrThrow } from './invariant';
-import { parseModule } from './staticAnalysis';
-import { loadSourceFile } from './loadSourceFile';
-import { resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from './resolveImport';
-import { FileSystem, reinsertScript } from './filesystem';
 import { isGeneratedFile } from './generatedFileDetection';
 import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
+import {
+  FileSystem,
+  readTransformableFile,
+  reconstructFileContent,
+} from './filesystem';
+import { loadSourceFile, loadSourceFileForAnalysis } from './loadSourceFile';
+import { parseModule } from './staticAnalysis';
+import { resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from './resolveImport';
 
 /**
  * Propose changing imports of re-exported symbols to point directly to original exports.
@@ -135,6 +140,7 @@ async function buildLiteralSpecMap(
   importerPath: string,
   repoRoot: string,
   fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<Map<string, string>> {
   const specMap = new Map<string, string>();
   try {
@@ -151,8 +157,12 @@ async function buildLiteralSpecMap(
         specMap.set(resolved, literal);
       }
     }
-  } catch {
-    // If we can't load the file, leave cache empty
+  } catch (err) {
+    const errorDetail =
+      err instanceof Error ? err.message : String(err);
+    writer(
+      `Could not load ${importerPath} (${errorDetail}), skipping\n`,
+    );
   }
   return specMap;
 }
@@ -163,10 +173,16 @@ async function getLiteralModuleSpec(
   cache: Map<string, Map<string, string>>,
   repoRoot: string,
   fileSystem: FileSystem,
+  writer: (message: string) => void,
 ): Promise<string | undefined> {
   let specMap = cache.get(importerPath);
   if (specMap === undefined) {
-    specMap = await buildLiteralSpecMap(importerPath, repoRoot, fileSystem);
+    specMap = await buildLiteralSpecMap(
+      importerPath,
+      repoRoot,
+      fileSystem,
+      writer,
+    );
     cache.set(importerPath, specMap);
   }
   return specMap.get(exporterPath);
@@ -178,9 +194,8 @@ async function resolveNewModuleSpec(
   originalModulePath: string,
   repoRoot: string,
   fileSystem: FileSystem,
-): Promise<string | undefined> {
+): Promise<string | null> {
   if (currentModuleSpec.startsWith('.')) {
-    const { relative, dirname } = await import('path');
     const relPath = relative(
       dirname(importerPath),
       originalModulePath.replace(/\.ts$/, ''),
@@ -188,13 +203,73 @@ async function resolveNewModuleSpec(
     return relPath.startsWith('.') ? relPath : './' + relPath;
   }
   return (
-    (await resolveImportSpecAlias(
+    await resolveImportSpecAlias(
       repoRoot,
       importerPath,
       originalModulePath,
       fileSystem,
-    )) ?? undefined
+    )
   );
+}
+
+async function resolveNonBareModuleSpec({
+  originalModuleSpec,
+  currentModuleSpec,
+  importerPath,
+  exporterPath,
+  symbolName,
+  repoRoot,
+  fileSystem,
+  writer,
+}: {
+  originalModuleSpec: string;
+  currentModuleSpec: string;
+  importerPath: string;
+  exporterPath: string;
+  symbolName: string;
+  repoRoot: string;
+  fileSystem: FileSystem;
+  writer: (message: string) => void;
+}): Promise<string | null> {
+  const originalModulePath = await resolveImportSpecFromIndexing(
+    repoRoot,
+    exporterPath,
+    originalModuleSpec,
+    fileSystem,
+  );
+  if (!originalModulePath) {
+    return null;
+  }
+  const newModuleSpec = await resolveNewModuleSpec(
+    currentModuleSpec,
+    importerPath,
+    originalModulePath,
+    repoRoot,
+    fileSystem,
+  );
+  if (!newModuleSpec) {
+    return null;
+  }
+
+  try {
+    const originalSourceFile = await loadSourceFileForAnalysis(
+      originalModulePath,
+      fileSystem,
+    );
+    const originalModuleInfo = parseModule(originalSourceFile);
+    if (!originalModuleInfo.exportedNames.has(symbolName)) {
+      return null;
+    }
+  } catch (err) {
+    const errorDetail =
+      err instanceof Error ? err.message : String(err);
+    writer(
+      `Could not verify exports from ${originalModulePath} (${errorDetail}), skipping change for ${symbolName}\n`,
+    );
+    return null;
+  }
+
+  return newModuleSpec;
 }
 
 async function buildImportChange({
@@ -222,6 +297,7 @@ async function buildImportChange({
     literalSpecCache,
     repoRoot,
     fileSystem,
+    writer,
   );
   if (!currentModuleSpec) {
     return null;
@@ -230,7 +306,7 @@ async function buildImportChange({
   const isBarePackage =
     !originalModuleSpec.startsWith('.') && !originalModuleSpec.startsWith('/');
 
-  let newModuleSpec: string | undefined;
+  let newModuleSpec: string | null;
 
   if (isBarePackage) {
     /*
@@ -241,39 +317,17 @@ async function buildImportChange({
     */
     newModuleSpec = originalModuleSpec;
   } else {
-    const originalModulePath = await resolveImportSpecFromIndexing(
-      repoRoot,
-      exporterPath,
+    newModuleSpec = await resolveNonBareModuleSpec({
       originalModuleSpec,
-      fileSystem,
-    );
-    if (!originalModulePath) {
-      return null;
-    }
-    newModuleSpec = await resolveNewModuleSpec(
       currentModuleSpec,
       importerPath,
-      originalModulePath,
+      exporterPath,
+      symbolName,
       repoRoot,
       fileSystem,
-    );
+      writer,
+    });
     if (!newModuleSpec) {
-      return null;
-    }
-
-    try {
-      const originalSourceFile = await loadSourceFile(
-        originalModulePath,
-        fileSystem,
-      );
-      const originalModuleInfo = parseModule(originalSourceFile);
-      if (!originalModuleInfo.exportedNames.has(symbolName)) {
-        return null;
-      }
-    } catch {
-      writer(
-        `Could not verify exports from ${originalModulePath}, skipping change for ${symbolName}\n`,
-      );
       return null;
     }
   }
@@ -418,15 +472,14 @@ async function createImportDirectlyPlan(
   // Process each file
   let skippedGenerated = 0;
   for (const [filePath, fileChanges] of changesByFile) {
-    const originalContent = await fileSystem.readFile(filePath);
+    const { scriptContent: originalContent, rawContent } =
+      await readTransformableFile(fileSystem, filePath);
 
     // Skip files marked as @generated
     if (isGeneratedFile(originalContent)) {
       skippedGenerated++;
       continue;
     }
-
-    const fileChecksum = computeStringChecksum(originalContent);
 
     // Load the file through TransformingFileSystem for proper AST analysis
     const sourceFile = await loadSourceFile(filePath, fileSystem);
@@ -438,15 +491,15 @@ async function createImportDirectlyPlan(
     const modifiedScriptContent = sourceFile.getFullText();
 
     // Reconstruct full file content (handles Vue files properly)
-    let finalContent: string;
-    if (filePath.endsWith('.vue')) {
-      finalContent = reinsertScript(originalContent, modifiedScriptContent);
-    } else {
-      finalContent = modifiedScriptContent;
-    }
+    const finalContent = reconstructFileContent(
+      filePath,
+      rawContent,
+      modifiedScriptContent,
+    );
 
     // Only include files in the plan if content actually changed
-    if (finalContent !== originalContent) {
+    const fileChecksum = computeStringChecksum(rawContent);
+    if (finalContent !== rawContent) {
       changes.push({
         type: 'modify-file',
         path: filePath,
@@ -462,7 +515,7 @@ async function createImportDirectlyPlan(
       undo.push({
         type: 'modify-file',
         path: filePath,
-        content: originalContent,
+        content: rawContent,
         originalChecksum: computeStringChecksum(finalContent),
       });
 
