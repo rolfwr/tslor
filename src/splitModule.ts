@@ -13,6 +13,7 @@ import {
   InterfaceDeclaration,
   JSDoc,
   Node,
+  PropertyAssignment,
   Project,
   SourceFile,
   SyntaxKind,
@@ -851,7 +852,6 @@ export function removeUnusedImports(
       importDecl.removeNamespaceImport();
     }
 
-    // Remove individual named imports that are unused
     for (const namedImport of importDecl.getNamedImports()) {
       const importName = namedImport.getName();
       if (onlyUsedByRemovedSymbols.has(`${moduleSpec}:${importName}`)) {
@@ -907,31 +907,127 @@ function classifySymbolsByKind(
 }
 
 /**
- * Find which symbols are actually referenced in the source file
+ * Check if an identifier resolves to a symbol declared within the source file.
+ *
+ * Uses the TypeScript binder via getSymbol() to resolve the identifier,
+ * then checks if any declaration is a descendant of the source file.
+ * This leverages ts-morph's own analysis rather than enumerating
+ * declaration kinds by hand.
+ *
+ * @param excludeModuleLevelNames - Names to exclude ONLY when they resolve
+ * to a module-level declaration (direct child of the source file).
+ * Inner-scope bindings (parameters, loop variables) that shadow a
+ * moved symbol are still treated as local, preventing false-positive
+ * imports for shadowed locals.
+ */
+function isLocalSymbol(
+  node: Node,
+  sourceFile: SourceFile,
+  options: { excludeModuleLevelNames?: Set<string> },
+): boolean {
+  const symbol = node.getSymbol();
+  if (!symbol) {
+    return false;
+  }
+
+  for (const decl of symbol.getDeclarations()) {
+    // Check if this declaration is at module scope.
+    // Direct children of SourceFile: function, class, interface, type alias, enum.
+    // Variable declarations have extra wrapping: VariableDeclaration > VariableDeclarationList
+    // > VariableStatement > SourceFile, so check two levels up.
+    const parent = decl.getParent();
+    const isModuleLevel =
+      parent === sourceFile ||
+      (Node.isVariableStatement(parent?.getParent()) &&
+        parent?.getParent()?.getParent() === sourceFile);
+
+    if (isModuleLevel) {
+      // Module-level declaration
+      const name = node.getText();
+      const { excludeModuleLevelNames } = options;
+      return !excludeModuleLevelNames?.has(name);
+    }
+    // Inner-scope declaration (parameter, loop variable, nested block, etc.)
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if an identifier is a property name rather than a variable reference.
+ * Covers property access expressions, non-shorthand property assignments,
+ * class members, interface members, and enum members — all contexts where
+ * the identifier is a literal key, not a binding or reference.
+ */
+function isPropertyKeyName(node: Node): boolean {
+  const parent = node.getParent();
+  if (!parent) {
+    return false;
+  }
+
+  // Property access: `obj.helper`
+  if (Node.isPropertyAccessExpression(parent)) {
+    return parent.getNameNode() === node;
+  }
+
+  // Non-shorthand property assignment: `{ helper: 1 }`
+  if (PropertyAssignment.isPropertyAssignment(parent)) {
+    return parent.getNameNode() === node;
+  }
+
+  // Class property, interface member, or enum member — literal keys
+  if (
+    Node.isPropertyDeclaration(parent) ||
+    Node.isPropertySignature(parent) ||
+    Node.isEnumMember(parent)
+  ) {
+    return parent.getNameNode() === node;
+  }
+
+  return false;
+}
+
+/**
+ * Find which candidate symbols are actually referenced in the source file
+ * (excluding declarations, shadowed locals, and property key names).
+ *
+ * @param excludeModuleLevelNames - Names to exclude from the isLocalSymbol
+ * check. References to these names are treated as external even if the
+ * name is also declared in the file. Used for symbols being moved,
+ * whose declarations are still present but which need imports from
+ * the new module.
  */
 function findReferencedSymbols(
   sourceFile: SourceFile,
   candidateSymbols: Set<string>,
+  options: { excludeModuleLevelNames?: Set<string> },
 ): Set<string> {
   const referencedSymbols = new Set<string>();
 
   sourceFile.forEachDescendant((node) => {
-    if (node.getKind() === SyntaxKind.Identifier) {
-      // Skip property names in object literal assignments (non-shorthand)
-      const parent = node.getParent();
-      if (parent && parent.getKind() === SyntaxKind.PropertyAssignment) {
-        const propAssignment = parent.asKindOrThrow(
-          SyntaxKind.PropertyAssignment,
-        );
-        if (propAssignment.getNameNode() === node) {
-          return;
-        }
-      }
+    if (node.getKind() !== SyntaxKind.Identifier) {
+      return;
+    }
 
-      const identifierText = node.getText();
-      if (candidateSymbols.has(identifierText)) {
-        referencedSymbols.add(identifierText);
-      }
+    // Skip identifiers that are not references (property keys, etc.)
+    if (isPropertyKeyName(node)) {
+      return;
+    }
+
+    // Skip identifiers that resolve to a symbol declared within this file,
+    // unless the identifier name is in the exclusion set (moved symbols
+    // whose declarations are still present but need external imports).
+    // Also skips identifiers where getSymbol() returns null (unresolved)
+    // — isLocalSymbol returns false for those, but candidateSymbols.has()
+    // below filters them out anyway.
+    if (isLocalSymbol(node, sourceFile, options)) {
+      return;
+    }
+
+    const identifierText = node.getText();
+    if (candidateSymbols.has(identifierText)) {
+      referencedSymbols.add(identifierText);
     }
   });
 
@@ -1006,7 +1102,17 @@ export function addImportForMovedSymbols(
     return sourceCode;
   }
 
-  const project = new Project({ useInMemoryFileSystem: true });
+  /*
+    Sealed in-memory project with lib loading disabled — findReferencedSymbols
+    below calls getSymbol() (binder), which creates a ts.Program. Without
+    skipLoadingLibFiles the program parses the full lib.d.ts set (~50ms/file)
+    even though lib globals never affect the result of getSymbol() on local
+    identifiers.
+  */
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipLoadingLibFiles: true,
+  });
   const sourceFile = project.createSourceFile('source.ts', sourceCode);
 
   // Classify symbols by kind (type vs value)
@@ -1018,9 +1124,11 @@ export function addImportForMovedSymbols(
   /*
     Determine which symbols need imports.
     When re-exporting, only import symbols that are actually used in the file.
+    Pass movedSymbols as exclusion so that references to symbols still
+    declared locally (not yet removed) are still treated as needing imports.
   */
   const symbolsToImport = shouldReExport
-    ? findReferencedSymbols(sourceFile, movedSymbols)
+    ? findReferencedSymbols(sourceFile, movedSymbols, { excludeModuleLevelNames: movedSymbols })
     : movedSymbols;
 
   // Filter types and values by what needs to be imported
