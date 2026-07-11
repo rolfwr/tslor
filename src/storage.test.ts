@@ -1,9 +1,9 @@
-import { mkdtempSync, readdirSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
 import { ObjStore } from './objstore';
 import { Storage, openStorage } from './storage';
 import { normalizePath } from './pathUtils';
+import { mkdtempSync, readdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 import { assert, test } from 'vitest';
 

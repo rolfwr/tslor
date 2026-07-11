@@ -89,12 +89,12 @@ test('putModuleNeeds normalizes paths', () => {
   const relativePath = 'src/foo.ts';
   const absolutePath = normalizePath('src/foo.ts');
 
-  storage.putModuleNeeds(relativePath, { nodejs: true });
+  storage.putModuleNeeds(relativePath, { ambientNames: ['process'] });
 
   const needs = storage.getModuleNeeds(absolutePath);
   assert.deepEqual(
     needs,
-    { nodejs: true },
+    { ambientNames: ['process'] },
     'Relative and absolute paths must resolve to the same needs key',
   );
 });

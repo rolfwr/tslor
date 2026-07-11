@@ -60,7 +60,7 @@ function findNodejsRequirement(
 
   // Check if this module directly needs Node.js
   const needs = db.getModuleNeeds(modulePath);
-  if (needs?.nodejs) {
+  if (needs && needs.ambientNames.length > 0) {
     return [modulePath];
   }
 

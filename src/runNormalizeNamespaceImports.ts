@@ -25,7 +25,7 @@ import {
   ModifyFileChange,
   createEmptyPlan,
 } from './plan';
-import { loadSourceFile, NODEJS_GLOBALS } from './indexing';
+import { loadSourceFile } from './loadSourceFile';
 import { openStorage } from './storage';
 import { isGeneratedFile } from './generatedFileDetection';
 
@@ -383,10 +383,6 @@ function collectExistingBindings(
     SyntaxKind.EnumDeclaration,
   )) {
     bindings.add(enumDecl.getName());
-  }
-
-  for (const name of NODEJS_GLOBALS) {
-    bindings.add(name);
   }
 
   for (const importDecl of sourceFile.getImportDeclarations()) {

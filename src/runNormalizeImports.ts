@@ -10,7 +10,7 @@
 import { Identifier, ImportDeclaration, SourceFile } from 'ts-morph';
 import { groupBy } from './collections';
 import { FileSystem, reinsertScript } from './filesystem';
-import { loadSourceFile } from './indexing';
+import { loadSourceFile } from './loadSourceFile';
 import { isPathWithinDirectory, normalizeAndValidatePath } from './pathUtils';
 import {
   computeStringChecksum,

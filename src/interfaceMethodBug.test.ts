@@ -1,7 +1,7 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
 import { assertDefined } from './invariant';
-import { analyzeImportUsageFromStaticInfo, parseModule } from './indexing';
+import { analyzeImportUsageFromStaticInfo, parseModule } from './staticAnalysis';
 
 import {
   extractSymbolDefinitions,

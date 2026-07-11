@@ -20,12 +20,9 @@ import {
   createEmptyPlan,
 } from './plan';
 import { SourceFile, ImportDeclaration } from 'ts-morph';
-import {
-  loadSourceFile,
-  parseModule,
-  resolveImportSpec as resolveImportSpecFromIndexing,
-  resolveImportSpecAlias,
-} from './indexing';
+import { parseModule } from './staticAnalysis';
+import { loadSourceFile } from './loadSourceFile';
+import { resolveImportSpec as resolveImportSpecFromIndexing, resolveImportSpecAlias } from './resolveImport';
 import { FileSystem, reinsertScript } from './filesystem';
 import { isGeneratedFile } from './generatedFileDetection';
 import {

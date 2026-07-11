@@ -98,21 +98,43 @@ export function isObjWithExporterPath(
  *
  * - import|{importerPath}|{index} - Individual import statements
  * - importPath|{importerPath} - All imports from a file
+ * - sideEffectImport|{importerPath}|{exporterPath} - Side-effect imports
+ * - sideEffectImportPath|{importerPath} - All side-effect imports from a file
  * - export|{exporterPath}|{exportName} - Specific exports
- * - exportPath|{exporterPath} - All exports from a file
+ * - exportPath|{exporterPath} - All imports pointing to a file
+ * - exportSpec|{spec} - Imports of unresolved specifiers
  * - projectUse|{fromTsconfig}|{toTsconfig} - Cross-project dependencies
- * - symbolName|{symbolName} - All imports of a specific symbol name (for efficient symbol lookup)
+ * - symbolName|{symbolName} - All imports of a specific symbol name
+ * - reexport|{reExporterPath}|{index} - Individual re-export statements
+ * - reexportPath|{reExporterPath} - All re-exports from a file
+ * - reexportName|{symbolName} - All re-exports of a specific symbol name
  * - filetime|{filePath} - File modification timestamps
+ * - needs|{filePath} - Module ambient-name dependencies
  */
 
-function isModuleNeeds(value: unknown): value is { nodejs: boolean } {
+function isModuleNeeds(value: unknown): value is { ambientNames: string[] } {
   if (value === null || typeof value !== 'object') {
     return false;
   }
-  if (!('nodejs' in value)) {
+  if (!('ambientNames' in value)) {
     return false;
   }
-  return typeof value.nodejs === 'boolean';
+  return (
+    Array.isArray(value.ambientNames) &&
+    value.ambientNames.every((name) => typeof name === 'string')
+  );
+}
+
+function isExporterSpec(
+  obj: Obj,
+): obj is Obj & { exporter: ExporterSpec } {
+  const exporter = obj.exporter;
+  return (
+    typeof exporter === 'object' &&
+    exporter !== null &&
+    'spec' in exporter &&
+    typeof exporter.spec === 'string'
+  );
 }
 
 function isReExportObj(obj: Obj): obj is Obj & { reExport: ReExportInfo } {
@@ -127,6 +149,20 @@ function isReExportObj(obj: Obj): obj is Obj & { reExport: ReExportInfo } {
     return false;
   }
   return true;
+}
+
+function isSideEffectExporterObj(
+  obj: Obj,
+): obj is Obj & { sideEffectExporter: ExporterPath } {
+  const info = obj.sideEffectExporter;
+  return (
+    typeof info === 'object' &&
+    info !== null &&
+    'path' in info &&
+    typeof info.path === 'string' &&
+    'tsconfig' in info &&
+    typeof info.tsconfig === 'string'
+  );
 }
 
 interface StorageOptions {
@@ -193,10 +229,41 @@ export class Storage {
     this.objStore.put({ id, groups, exporter });
   }
 
+  /**
+   * Store a side-effect import relationship (e.g., `import 'module'`).
+   *
+   * Unlike regular imports, side-effect imports have no symbol name and are
+   * indexed only by importer/exporter paths and project relationships.
+   */
+  putSideEffectImport(
+    importerPath: string,
+    importerTsConfig: string,
+    exporter: ExporterPath,
+  ) {
+    this.isDirty = true;
+    const normalizedImporter = normalizePath(importerPath);
+    const normalizedImporterTsconfig = normalizePath(importerTsConfig);
+    const normalizedExporterPath = normalizePath(exporter.path);
+    const normalizedExporterTsconfig = normalizePath(exporter.tsconfig);
+    const groups = [
+      'sideEffectImportPath|' + normalizedImporter,
+      'exportPath|' + normalizedExporterPath,
+      'projectUse|' + normalizedImporterTsconfig + '|' + normalizedExporterTsconfig,
+    ];
+    this.objStore.put({
+      id: 'sideEffectImport|' + normalizedImporter + '|' + normalizedExporterPath,
+      groups,
+      sideEffectExporter: exporter,
+    });
+  }
+
   deleteImporterPath(importerPath: string) {
-    const idsToDelete = this.objStore
-      .getGroup('importPath|' + normalizePath(importerPath))
-      .map((obj) => obj.id);
+    const normalizedPath = normalizePath(importerPath);
+    const idsToDelete = [
+      ...this.objStore.getGroup('importPath|' + normalizedPath),
+      ...this.objStore.getGroup('sideEffectImportPath|' + normalizedPath),
+      ...this.objStore.getGroup('reexportPath|' + normalizedPath),
+    ].map((obj) => obj.id);
     if (idsToDelete.length === 0) {
       return;
     }
@@ -207,13 +274,17 @@ export class Storage {
   }
 
   getExporterPathsOfImport(importerPath: string): ExporterPath[] {
-    const exporters = this.objStore.getGroup(
-      'importPath|' + normalizePath(importerPath),
-    );
+    const normalizedImporter = normalizePath(importerPath);
+    const entries = [
+      ...this.objStore.getGroup('importPath|' + normalizedImporter),
+      ...this.objStore.getGroup('sideEffectImportPath|' + normalizedImporter),
+    ];
     const result: ExporterPath[] = [];
-    for (const obj of exporters) {
+    for (const obj of entries) {
       if (isObjWithExporterPath(obj)) {
         result.push(obj.exporter);
+      } else if (isSideEffectExporterObj(obj)) {
+        result.push(obj.sideEffectExporter);
       }
     }
     return result;
@@ -234,9 +305,7 @@ export class Storage {
     );
     const result = new Set<string>();
     for (const obj of importers) {
-      const id = obj.id;
-      const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
-      result.add(importerPath);
+      result.add(this.extractPathFromId(obj.id));
     }
     return result;
   }
@@ -256,7 +325,7 @@ export class Storage {
 
     for (const obj of importRecords) {
       const id = obj.id;
-      const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
+      const importerPath = this.extractPathFromId(id);
       if (seen.has(importerPath)) {
         continue;
       }
@@ -264,7 +333,6 @@ export class Storage {
 
       const importerTsconfig = this.extractImporterTsconfig(obj.groups);
       if (importerTsconfig === undefined) {
-        // Skip imports of unresolved specifiers (e.g., third-party packages)
         continue;
       }
       result.push({ path: importerPath, tsconfig: importerTsconfig });
@@ -307,8 +375,7 @@ export class Storage {
         normalizePath(toTsconfig),
     );
     return importers.map((obj) => {
-      const id = obj.id;
-      const importerPath = id.slice('import|'.length, id.lastIndexOf('|'));
+      const importerPath = this.extractPathFromId(obj.id);
       const exporterPath = this.extractExporterPath(obj);
       invariant(exporterPath, 'projectUse record missing exporter path');
       return { importerPath, exporterPath };
@@ -332,16 +399,10 @@ export class Storage {
     }[] = [];
 
     for (const obj of projectUseImports) {
-      const importerPath = obj.id.slice(
-        'import|'.length,
-        obj.id.lastIndexOf('|'),
-      );
+      const importerPath = this.extractPathFromId(obj.id);
       const exporterPath = this.extractExporterPath(obj);
       invariant(exporterPath, 'projectUse record missing exporter path');
-      for (const symbolName of this.extractSymbolNamesFromGroups(
-        obj.groups,
-        exporterPath,
-      )) {
+      for (const symbolName of this.extractSymbolNamesFromGroups(obj.groups, exporterPath)) {
         result.push({ importerPath, exporterPath, symbolName });
       }
     }
@@ -349,13 +410,41 @@ export class Storage {
     return result;
   }
 
+  /**
+   * Extract the exporter path from an index object.
+   * Handles import records (which carry an `exporter` object) and
+   * side-effect import records (which carry a `sideEffectExporter` object).
+   */
   private extractExporterPath(obj: Readonly<Obj>): string | undefined {
-    if (!isObjWithExporterPath(obj)) {
-      return undefined;
+    if (isObjWithExporterPath(obj)) {
+      return obj.exporter.path;
     }
-    return obj.exporter.path;
+    if (isSideEffectExporterObj(obj)) {
+      return obj.sideEffectExporter.path;
+    }
+    return undefined;
   }
 
+  /**
+   * Extract the importer path from an index object ID.
+   * Handles import and side-effect import record IDs.
+   */
+  private extractPathFromId(id: string): string {
+    if (id.startsWith('sideEffectImport|')) {
+      return id.slice('sideEffectImport|'.length, id.lastIndexOf('|'));
+    }
+    invariant(
+      id.startsWith('import|'),
+      'extractPathFromId called with unsupported ID format: ' + id,
+    );
+    return id.slice('import|'.length, id.lastIndexOf('|'));
+  }
+
+  /**
+   * Extract symbol names from the groups of an index object.
+   * Looks for `export|{path}|{name}` groups; side-effect import records
+   * have no such groups and produce an empty result.
+   */
   private extractSymbolNamesFromGroups(
     groups: string[] | undefined,
     exporterPath: string,
@@ -384,9 +473,31 @@ export class Storage {
     return undefined;
   }
 
-  putModuleNeeds(filePath: string, needs: { nodejs: boolean }) {
+  putModuleNeeds(filePath: string, needs: { ambientNames: string[] }) {
     this.isDirty = true;
     this.objStore.put({ id: 'needs|' + normalizePath(filePath), needs });
+  }
+
+  /**
+   * Get unresolved module specifiers imported by a file.
+   *
+   * Returns the raw specifiers for imports that could not be resolved to
+   * a local file path (e.g., `node:fs`, `lodash`, `@scope/pkg`),
+   * plus all re-export specifiers (`export { x } from '...'`).
+   */
+  getExternalSpecifiers(importerPath: string): string[] {
+    const specs = new Set<string>();
+    for (const obj of this.getImportsFromFile(importerPath)) {
+      if (isExporterSpec(obj)) {
+        specs.add(obj.exporter.spec);
+      }
+    }
+    for (const obj of this.getReExportsFromFile(importerPath)) {
+      if (isReExportObj(obj)) {
+        specs.add(obj.reExport.moduleSpec);
+      }
+    }
+    return [...specs];
   }
 
   putReExport(
@@ -405,7 +516,7 @@ export class Storage {
     this.objStore.put({ id, groups, reExport });
   }
 
-  getModuleNeeds(filePath: string): { nodejs: boolean } | undefined {
+  getModuleNeeds(filePath: string): { ambientNames: string[] } | undefined {
     const obj = this.objStore.get('needs|' + normalizePath(filePath));
     const needs = obj?.needs;
     if (isModuleNeeds(needs)) {

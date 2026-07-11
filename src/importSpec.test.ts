@@ -37,18 +37,22 @@ test('Parse imports', () => {
   assert.deepEqual(info.unresolvedExportsByImportNames.get('foo'), {
     moduleSpec: './baz',
     name: 'foo',
+    isTypeOnly: false,
   });
   assert.deepEqual(info.unresolvedExportsByImportNames.get('bar'), {
     moduleSpec: './baz',
     name: 'bar',
+    isTypeOnly: false,
   });
   assert.deepEqual(info.unresolvedExportsByImportNames.get('spam'), {
     moduleSpec: 'eggs',
     name: 'spam',
+    isTypeOnly: false,
   });
   assert.deepEqual(info.unresolvedExportsByImportNames.get('ham'), {
     moduleSpec: 'eggs',
     name: 'ham',
+    isTypeOnly: false,
   });
 });
 
@@ -56,15 +60,15 @@ test('Parse exported variable', () => {
   const info = parseIsolatedSourceCode(
     'export const foo = 42;\nconst bar = 69;\n',
   );
-  assert.hasAllKeys(info.exports, ['foo']);
-  assert.doesNotHaveAnyKeys(info.exports, ['bar']);
+  assert.ok(info.exportedNames.has('foo'));
+  assert.ok(!info.exportedNames.has('bar'));
 });
 
 test('Parse exported function', () => {
   const info = parseIsolatedSourceCode(
     "export function greet() {\n  console.log('Hello!');\n}\n",
   );
-  assert.hasAllKeys(info.exports, ['greet']);
+  assert.ok(info.exportedNames.has('greet'));
 });
 
 test('Parse function using imports', () => {
@@ -75,14 +79,14 @@ test('Parse function using imports', () => {
     { moduleSpec: './mystery', names: ['answer'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
-  assert.hasAllKeys(info.exports, ['getAnswer']);
+  assert.ok(info.exportedNames.has('getAnswer'));
 
-  const exportInfo = info.exports.get('getAnswer');
-  assert.isDefined(exportInfo);
-
-  assert.deepEqual(exportInfo?.uses, [
-    { name: 'answer', moduleSpec: './mystery' },
-  ]);
+  const getAnswerUses = getOrThrow(
+    info.identifierUses,
+    'getAnswer',
+    'getAnswer identifier uses should be tracked',
+  );
+  assert.include(getAnswerUses, 'answer');
 });
 
 test('Parse transitive import use', () => {
@@ -117,27 +121,29 @@ export function qux() {
     { moduleSpec: './mypath', names: ['join'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
-  assert.hasAllKeys(info.exports, ['baz', 'qux']);
+  assert.ok(info.exportedNames.has('baz'));
+  assert.ok(info.exportedNames.has('qux'));
 
-  const bazExportInfo = info.exports.get('baz');
-  assert.isDefined(bazExportInfo);
-  assert.deepEqual(bazExportInfo?.uses, [
-    { name: 'stat', moduleSpec: './myfs' },
-  ]);
+  const bazUses = getOrThrow(
+    info.identifierUses,
+    'baz',
+    'baz identifier uses should be tracked',
+  );
+  assert.include(bazUses, 'stat');
 
-  const quxExportInfo = info.exports.get('qux');
-  assert.isDefined(quxExportInfo);
-  assert.deepEqual(quxExportInfo?.uses, [
-    { name: 'join', moduleSpec: './mypath' },
-  ]);
-
-  const fooUses = info.identifierUses.get('foo');
-  assert.isDefined(fooUses);
-  assert.deepEqual(fooUses, ['join']);
-
-  const quxUses = info.identifierUses.get('qux');
-  assert.isDefined(quxUses);
+  const quxUses = getOrThrow(
+    info.identifierUses,
+    'qux',
+    'qux identifier uses should be tracked',
+  );
   assert.deepEqual(quxUses, ['foo']);
+
+  const fooUses = getOrThrow(
+    info.identifierUses,
+    'foo',
+    'foo identifier uses should be tracked',
+  );
+  assert.deepEqual(fooUses, ['join']);
 });
 
 test('Parse import aliases correctly', () => {
@@ -197,19 +203,6 @@ export function processFile(filename: string, content: string): string {
   assert.include(processFileUses, 'parseDate');
   assert.include(processFileUses, 'formatDate');
   assert.include(processFileUses, 'pathJoin');
-
-  // Export should show transitive dependency on the original export names
-  const processFileExport = getOrThrow(
-    info.exports,
-    'processFile',
-    'processFile export should be tracked',
-  );
-  const expectedUses = [
-    { name: 'format', moduleSpec: 'date-fns' },
-    { name: 'parse', moduleSpec: 'date-fns' },
-    { name: 'join', moduleSpec: 'path' },
-  ];
-  assert.sameDeepMembers(processFileExport.uses, expectedUses);
 });
 
 test('Parse namespace imports correctly', () => {
@@ -260,4 +253,46 @@ export function processUser(user: User): string {
     { moduleSpec: 'date-fns', names: ['format'], typeOnly: false },
   ];
   assert.deepEqual(info.imports, expectedImports);
+});
+
+test('Parse inline type specifiers correctly', () => {
+  const src = `
+import { type A, B } from 'mod';
+
+export function foo(a: A): B {
+  return B;
+}
+`;
+
+  const info = parseIsolatedSourceCode(src);
+
+  // Mixed import should be split: A is type-only, B is value
+  const expectedImports = [
+    { moduleSpec: 'mod', names: ['A'], typeOnly: true },
+    { moduleSpec: 'mod', names: ['B'], typeOnly: false },
+  ];
+  assert.deepEqual(info.imports, expectedImports);
+
+  // Verify per-specifier isTypeOnly in unresolvedExportsByImportNames
+  const aExport = getOrThrow(
+    info.unresolvedExportsByImportNames,
+    'A',
+    'A should be in unresolved exports',
+  );
+  assert.equal(aExport.isTypeOnly, true);
+  const bExport = getOrThrow(
+    info.unresolvedExportsByImportNames,
+    'B',
+    'B should be in unresolved exports',
+  );
+  assert.equal(bExport.isTypeOnly, false);
+
+  // identifierUses should track both the type-only A (type annotation) and value B (return type + body)
+  const fooUses = getOrThrow(
+    info.identifierUses,
+    'foo',
+    'foo identifier uses should be tracked',
+  );
+  assert.include(fooUses, 'A');
+  assert.include(fooUses, 'B');
 });

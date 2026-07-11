@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execSync, spawn } from 'node:child_process';
 import { Project, SourceFile } from 'ts-morph';
-import { parseModule, StaticModuleInfo } from './indexing';
+import { parseModule, StaticModuleInfo } from './staticAnalysis';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(__dirname);
@@ -78,7 +78,10 @@ export function initGitRepo(repoDir: string): void {
 }
 
 export function createTestSourceFile(sourceCode: string): SourceFile {
-  const project = new Project({ useInMemoryFileSystem: true });
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipLoadingLibFiles: true,
+  });
   return project.createSourceFile('test.ts', sourceCode);
 }
 

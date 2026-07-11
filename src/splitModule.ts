@@ -18,7 +18,7 @@ import {
   TypeAliasDeclaration,
   VariableStatement,
 } from 'ts-morph';
-import { ImportUsage, StaticModuleInfo } from './indexing';
+import { ImportUsage, StaticModuleInfo } from './staticAnalysis';
 
 /**
  * JavaScript/TypeScript built-in global identifiers that must not be treated
@@ -398,7 +398,7 @@ function isLocalDependency(
 export function buildIntraModuleDependencies(
   moduleInfo: StaticModuleInfo,
 ): IntraModuleDependencies {
-  const exports = new Set<string>(moduleInfo.exports.keys());
+  const exports = moduleInfo.exportedNames;
 
   /*
     Collect all symbols defined in this module:
@@ -413,7 +413,7 @@ export function buildIntraModuleDependencies(
       allDefinedSymbols.add(symbol);
     }
   }
-  for (const symbol of moduleInfo.exports.keys()) {
+  for (const symbol of moduleInfo.exportedNames) {
     allDefinedSymbols.add(symbol);
   }
 

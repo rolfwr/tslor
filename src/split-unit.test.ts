@@ -1,6 +1,6 @@
 import { assert, describe, test } from 'vitest';
 import { Project } from 'ts-morph';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
+import { parseModule, analyzeImportUsageFromStaticInfo } from './staticAnalysis';
 import { assertDefined, getOrThrow } from './invariant';
 import {
   buildIntraModuleDependencies,
@@ -71,7 +71,8 @@ export function validateEmail(email: string): boolean {
 }
 `;
     const moduleInfo = parseModule(createTestSourceFile(source));
-    assert.hasAllKeys(moduleInfo.exports, ['formatDate', 'validateEmail']);
+    assert.ok(moduleInfo.exportedNames.has('formatDate'));
+    assert.ok(moduleInfo.exportedNames.has('validateEmail'));
 
     const deps = buildIntraModuleDependencies(moduleInfo);
     const formatDateDeps = getOrThrow(
@@ -470,8 +471,8 @@ function processData(data: unknown): unknown {
       parseModule(sourceFile),
     );
 
-    // All four symbols have identifier uses; formatISODate's (Date) resolves to built-ins.
-    assert.equal(importUsages.length, 4);
+    // formatISODate references only Date (built-in) so it has no import usage and is excluded.
+    assert.equal(importUsages.length, 3);
 
     const usageMap = new Map(importUsages.map((u) => [u.symbol, u]));
     const formatDateUsage = getOrThrow(

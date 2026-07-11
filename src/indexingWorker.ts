@@ -2,11 +2,11 @@
  * Worker thread entry point for parallel file indexing.
  *
  * Receives { type: 'index', path, repoRoot } messages from the main thread,
- * runs the cached module inspector on each file, and posts back the serialized ModuleInfo.
+ * runs the cached module inspector on each file, and posts back the
+ * serialized ModuleInfo.
  *
- * Uses createModuleInspector() which caches tsconfig path lookups and compiler
- * options across files, and reuses a single ts-morph Project to avoid the
- * per-file Project creation overhead.
+ * Uses createModuleInspector() which caches tsconfig path lookups and
+ * compiler options across files.
  */
 
 import { parentPort as pp } from 'node:worker_threads';
@@ -15,8 +15,8 @@ const parentPort = pp;
 if (!parentPort) {
   throw new Error('indexingWorker must be run as a worker thread');
 }
-import { createModuleInspector } from './indexing.js';
-import { RealFileSystem } from './filesystem.js';
+import { createModuleInspector } from './inspectModule';
+import { RealFileSystem } from './filesystem';
 
 const fileSystem = new RealFileSystem();
 

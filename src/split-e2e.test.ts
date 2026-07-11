@@ -1,7 +1,7 @@
 import { assert, test } from 'vitest';
 import { Project } from 'ts-morph';
 import { parseIsolatedSourceCode } from './testUtils';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './indexing';
+import { parseModule, analyzeImportUsageFromStaticInfo } from './staticAnalysis';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,

@@ -9,12 +9,8 @@ import { dirname, relative } from 'node:path';
 import { Project } from 'ts-morph';
 import { CliError } from './errors';
 import { FileSystem } from './filesystem';
-import {
-  analyzeImportUsageFromStaticInfo,
-  loadSourceFile,
-  parseModule,
-  StaticModuleInfo,
-} from './indexing';
+import { analyzeImportUsageFromStaticInfo, parseModule, StaticModuleInfo } from './staticAnalysis';
+import { loadSourceFile } from './loadSourceFile';
 import {
   denormalizePath,
   normalizeAndValidatePath,
@@ -153,7 +149,7 @@ async function validateInputs(
 
   const invalidSymbols: string[] = [];
   for (const symbol of symbols) {
-    if (!staticModuleInfo.exports.has(symbol)) {
+    if (!staticModuleInfo.exportedNames.has(symbol)) {
       invalidSymbols.push(symbol);
     }
   }
