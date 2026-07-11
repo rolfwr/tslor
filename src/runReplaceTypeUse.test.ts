@@ -10,6 +10,7 @@ function replace(body: string): string | null {
     'NewItem',
     './source',
     './target',
+    {},
   );
 }
 
@@ -53,6 +54,7 @@ test('sole import preserves deeper relative path when target module equals sourc
     'ItemEntity',
     './entity/item',
     './entity/item',
+    {},
   );
   assert.isNotNull(result);
   assert.include(must(result), "from '../entity/item'");
@@ -68,6 +70,7 @@ test('shared import preserves deeper relative path on both lines', () => {
     'ItemEntity',
     './entity/item',
     './entity/item',
+    {},
   );
   assert.isNotNull(result);
   assert.include(
@@ -87,6 +90,7 @@ test('different target module computes correct relative path', () => {
     'NewItem',
     './entity/item',
     './entity/newItem',
+    {},
   );
   assert.isNotNull(result);
   assert.include(must(result), "from '../entity/newItem'");
@@ -107,7 +111,7 @@ test('relative import matches when source-module is a package specifier (same ta
     'ItemEntity',
     '@pkg/entity/item',
     '@pkg/entity/item',
-    '/repo/packages/server-common/src/entity/item.ts',
+    { resolvedExporterPath: '/repo/packages/server-common/src/entity/item.ts' },
   );
   assert.isNotNull(result);
   assert.include(must(result), 'ItemEntity');
@@ -125,7 +129,7 @@ test('relative import matches when source and target are different package modul
     'NewItem',
     '@pkg/entity/item',
     '@pkg/entity/newItem',
-    '/repo/packages/server-common/src/entity/item.ts',
+    { resolvedExporterPath: '/repo/packages/server-common/src/entity/item.ts' },
   );
   assert.isNotNull(result);
   assert.include(must(result), 'NewItem');
@@ -146,7 +150,7 @@ test('does not match same-named symbol from a different module', () => {
     'ItemEntity',
     '@mimir/server-common/entity/item',
     '@mimir/server-common/entity/item',
-    '/repo/common/src/dto/searchResultHit.ts',
+    { resolvedExporterPath: '/repo/common/src/dto/searchResultHit.ts' },
   );
   assert.isNull(result);
 });
@@ -165,6 +169,7 @@ test('inline type keyword in mixed imports is recognized', () => {
     'NewItem',
     './source',
     './target',
+    {},
   );
   assert.isNotNull(result);
   // Original import must be split: OtherName kept, Item removed
@@ -190,6 +195,7 @@ test('re-export lines are updated alongside imports', () => {
     'NewItem',
     './source',
     './target',
+    {},
   );
   assert.isNotNull(result);
   // Re-export must be updated with new name AND new module path
@@ -209,6 +215,7 @@ test('package specifier is preserved as-is', () => {
     'ItemEntity',
     '@pkg/entity/item',
     '@pkg/entity/item',
+    {},
   );
   assert.isNotNull(result);
   assert.include(must(result), "from '@pkg/entity/item'");
@@ -228,6 +235,7 @@ test('export line with source type name and from in body is not treated as re-ex
     'NewItem',
     './source',
     './target',
+    {},
   );
   assert.isNotNull(result);
   // The export type declaration should be untouched
@@ -250,6 +258,7 @@ test('re-export detected when it appears after the import line', () => {
     'NewItem',
     './source',
     './target',
+    {},
   );
   assert.isNotNull(result);
   // Re-export must be updated
@@ -273,6 +282,7 @@ test('re-export with other import names preserves the import for remaining names
     'NewItem',
     './source',
     './target',
+    {},
   );
   assert.isNotNull(result);
   // Re-export must be updated

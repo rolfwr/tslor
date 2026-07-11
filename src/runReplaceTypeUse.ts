@@ -24,7 +24,7 @@ import {
   RepositoryRootProvider,
   InMemoryRepositoryRootProvider,
 } from './repositoryRootProvider';
-import { FileSystem, extractScript, reinsertScript } from './filesystem';
+import { FileSystem, extractScript, reconstructFileContent } from './filesystem';
 import { Node, Project, SyntaxKind } from 'ts-morph';
 import { dirname, resolve } from 'path';
 
@@ -115,35 +115,40 @@ export async function runReplaceTypeUse(
   const checksums: { [filePath: string]: string } = {};
 
   for (const [filePath, exporterPath] of importingFiles) {
-    let originalContent: string;
+    let rawContent;
     try {
-      originalContent = await fileSystem.readFile(filePath);
+      rawContent = await fileSystem.readFileRaw(filePath);
     } catch {
       writer(`  Skipped (not found): ${filePath}\n`);
       continue;
     }
+    const isVue = filePath.endsWith('.vue');
+    const scriptContent = isVue
+      ? extractScript(rawContent)
+      : rawContent;
     const modified = replaceTypeInFile(
       filePath,
-      originalContent,
+      scriptContent,
       options.sourceType,
       options.targetType,
       options.sourceModule,
       options.targetModule,
-      exporterPath,
+      { resolvedExporterPath: exporterPath },
     );
-    if (modified !== null && modified !== originalContent) {
-      const fileChecksum = computeStringChecksum(originalContent);
+    const fileChecksum = computeStringChecksum(rawContent);
+    if (modified !== null && modified !== scriptContent) {
+      const finalContent = reconstructFileContent(filePath, rawContent, modified);
       changes.push({
         type: 'modify-file',
         path: filePath,
-        content: modified,
+        content: finalContent,
         originalChecksum: fileChecksum,
       });
       undo.push({
         type: 'modify-file',
         path: filePath,
-        content: originalContent,
-        originalChecksum: computeStringChecksum(modified),
+        content: rawContent,
+        originalChecksum: computeStringChecksum(finalContent),
       });
       sourceFiles.add(filePath);
       checksums[filePath] = fileChecksum;
@@ -392,31 +397,33 @@ function updateReExportLine(
   return prefixUpdated + fromUpdated;
 }
 
+/**
+ * Replace all usages of a source type with a target type in a single file.
+ *
+ * For `.vue` SFCs, `scriptContent` must be the pre-extracted `<script>` block
+ * (not the full SFC text). The caller is responsible for extraction and
+ * re-insertion around this call.
+ *
+ * @returns Transformed content, or `null` if no changes were needed
+ */
 export function replaceTypeInFile(
   filePath: string,
-  originalContent: string,
+  scriptContent: string,
   sourceType: string,
   targetType: string,
   sourceModule: string,
   targetModule: string,
-  // RATIONALE: options-object conversion deferred (split across multiple functions)
-  // ast-grep-ignore: no-optional-param
-  resolvedExporterPath?: string,
+  options: { resolvedExporterPath?: string },
 ): string | null {
-  const isVue = filePath.endsWith('.vue');
-  const scriptContent = isVue
-    ? extractScript(originalContent)
-    : originalContent;
-  if (isVue && !scriptContent.trim()) {
-    return null;
-  }
-
+  const analyzeOpts: { importerPath?: string; resolvedExporterPath?: string } =
+    options.resolvedExporterPath !== undefined
+      ? { importerPath: filePath, resolvedExporterPath: options.resolvedExporterPath }
+      : { importerPath: filePath };
   const importInfo = analyzeImports(
     scriptContent,
     sourceType,
     sourceModule,
-    filePath,
-    resolvedExporterPath,
+    analyzeOpts,
   );
   if (!importInfo.hasImport) {
     return null;
@@ -469,7 +476,7 @@ export function replaceTypeInFile(
   if (result === scriptContent) {
     return null;
   }
-  return isVue ? reinsertScript(originalContent, result) : result;
+  return result;
 }
 
 interface ImportAnalysis {
@@ -506,11 +513,7 @@ function analyzeImports(
   script: string,
   sourceType: string,
   sourceModule: string,
-  // RATIONALE: options-object conversion deferred (split across multiple functions)
-  // ast-grep-ignore: no-optional-param
-  importerPath?: string,
-  // ast-grep-ignore: no-optional-param
-  resolvedExporterPath?: string,
+  options: { importerPath?: string; resolvedExporterPath?: string },
 ): ImportAnalysis {
   const lines = script.split('\n');
   const result: ImportAnalysis = {
@@ -559,8 +562,8 @@ function analyzeImports(
       !checkModuleSpecMatch(
         moduleSpec,
         sourceModule,
-        importerPath,
-        resolvedExporterPath,
+        options.importerPath,
+        options.resolvedExporterPath,
       )
     ) {
       continue;
