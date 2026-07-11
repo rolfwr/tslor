@@ -54,11 +54,13 @@ export function useOperations(ops: MyOperations): void {
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
     importUsages,
+    {},
   );
 
   const newModuleSource = generateNewModuleSource(
     symbolDefinitions,
     requiredImports,
+    {},
   );
 
   // The generated interface should include ALL members (property AND method signatures)
@@ -129,11 +131,13 @@ export interface Operations {
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
     importUsages,
+    {},
   );
 
   const newModuleSource = generateNewModuleSource(
     symbolDefinitions,
     requiredImports,
+    {},
   );
 
   // Parse the generated source to check what was actually created

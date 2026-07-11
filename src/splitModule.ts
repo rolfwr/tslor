@@ -559,11 +559,7 @@ function addImportToMap(
 export function computeRequiredImports(
   symbolDefinitions: SymbolDefinition[],
   importUsages: ImportUsage[],
-  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
-  // ast-grep-ignore: no-optional-param
-  sourceFilePath?: string,
-  // ast-grep-ignore: no-optional-param
-  targetFilePath?: string,
+  options: { sourceFilePath?: string; targetFilePath?: string },
 ): RequiredImport[] {
   const requiredImportsMap = new Map<string, ImportMapEntry>();
   const movedSymbolNames = new Set(symbolDefinitions.map((def) => def.name));
@@ -582,6 +578,7 @@ export function computeRequiredImports(
     }
   }
 
+  const { sourceFilePath, targetFilePath } = options;
   return Array.from(requiredImportsMap.entries()).map(([moduleSpec, info]) => {
     const adjustedModuleSpec =
       sourceFilePath && targetFilePath
@@ -652,9 +649,7 @@ function addImportStructureToFile(
 export function generateNewModuleSource(
   symbolDefinitions: SymbolDefinition[],
   requiredImports: RequiredImport[],
-  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
-  // ast-grep-ignore: no-optional-param
-  additionalExports?: Set<string>,
+  options: { additionalExports?: Set<string> },
 ): string {
   const project = new Project({ useInMemoryFileSystem: true });
   const newFile = project.createSourceFile('new-module.ts', '');
@@ -667,7 +662,7 @@ export function generateNewModuleSource(
     Add symbol definitions by inserting their full AST text.
     This preserves everything: methods, properties, comments, JSDoc, formatting, etc.
   */
-  const sortedDefinitions = symbolDefinitions.sort(
+  const sortedDefinitions = [...symbolDefinitions].sort(
     (a, b) => a.startPos - b.startPos,
   );
 
@@ -678,6 +673,7 @@ export function generateNewModuleSource(
   }
 
   // Export symbols that need to be shared back to the source module
+  const { additionalExports } = options;
   if (additionalExports && additionalExports.size > 0) {
     for (const stmt of newFile.getStatements()) {
       exportStatementIfNeeded(stmt, additionalExports);
@@ -869,12 +865,11 @@ export function removeUnusedImports(
  */
 function classifySymbolsByKind(
   symbols: Set<string>,
-  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
-  // ast-grep-ignore: no-optional-param
-  symbolDefinitions?: SymbolDefinition[],
+  options: { symbolDefinitions?: SymbolDefinition[] },
 ): { typeSymbols: Set<string>; valueSymbols: Set<string> } {
   const typeSymbols = new Set<string>();
   const valueSymbols = new Set<string>();
+  const { symbolDefinitions } = options;
 
   if (symbolDefinitions) {
     const defMap = new Map(symbolDefinitions.map((d) => [d.name, d]));
@@ -993,9 +988,7 @@ export function addImportForMovedSymbols(
   movedSymbols: Set<string>,
   newModulePath: string,
   shouldReExport: boolean,
-  // RATIONALE: options-object conversion deferred (part of larger split refactoring)
-  // ast-grep-ignore: no-optional-param
-  symbolDefinitions?: SymbolDefinition[],
+  options: { symbolDefinitions?: SymbolDefinition[] },
 ): string {
   if (movedSymbols.size === 0) {
     return sourceCode;
@@ -1007,7 +1000,7 @@ export function addImportForMovedSymbols(
   // Classify symbols by kind (type vs value)
   const { typeSymbols, valueSymbols } = classifySymbolsByKind(
     movedSymbols,
-    symbolDefinitions,
+    options,
   );
 
   /*

@@ -63,9 +63,14 @@ function runSplit(
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
     importUsages,
+    {},
   );
 
-  const target = generateNewModuleSource(symbolDefinitions, requiredImports);
+  const target = generateNewModuleSource(
+    symbolDefinitions,
+    requiredImports,
+    {},
+  );
 
   let source = removeSymbolsFromSource(sourceInput, allSymbols);
   source = removeUnusedImports(source, onlyUsedByTarget);
@@ -74,7 +79,7 @@ function runSplit(
     allSymbols,
     `./${targetFileName.replace('.ts', '')}`,
     true,
-    symbolDefinitions,
+    { symbolDefinitions },
   );
 
   project.createSourceFile(targetFileName, target);

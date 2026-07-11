@@ -680,11 +680,13 @@ export function useOperations(ops: MyOperations): void {}
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
+      {},
     );
 
     const newModuleSource = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
+      {},
     );
 
     assert.include(newModuleSource, 'vfs: string');
@@ -724,10 +726,12 @@ export interface Operations {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
+      {},
     );
     const newModuleSource = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
+      {},
     );
 
     const newProject = new Project({ useInMemoryFileSystem: true });
@@ -775,10 +779,12 @@ const API_URL = 'https://api.example.com';
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
+      {},
     );
     const newModuleSource = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
+      {},
     );
 
     assert.include(newModuleSource, 'import { format } from "date-fns";');
@@ -812,7 +818,7 @@ const CONSTANT = 'value';
       sourceFile,
       symbolsToMove,
     );
-    const newModuleSource = generateNewModuleSource(symbolDefinitions, []);
+    const newModuleSource = generateNewModuleSource(symbolDefinitions, [], {});
 
     assert.include(newModuleSource, 'export function publicFunction()');
     assert.include(newModuleSource, 'function helper()');
@@ -990,7 +996,7 @@ const API_URL = 'https://api.example.com';
       movedSymbols,
       './date-utils',
       true,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
 
     assert.notMatch(
@@ -1033,8 +1039,10 @@ export function functionToExtract(): string {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
-      'clients/kelda/commands/run.ts',
-      'clients/kelda/dockerImage.ts',
+      {
+        sourceFilePath: 'clients/kelda/commands/run.ts',
+        targetFilePath: 'clients/kelda/dockerImage.ts',
+      },
     );
 
     assert.lengthOf(requiredImports, 1);
@@ -1163,8 +1171,10 @@ export function otherFunction(): string {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
-      'async.ts',
-      'guard.ts',
+      {
+        sourceFilePath: 'async.ts',
+        targetFilePath: 'guard.ts',
+      },
     );
 
     for (const imp of requiredImports) {
@@ -1183,7 +1193,7 @@ export function otherFunction(): string {
       new Set(['Guard']),
       './guard',
       true,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
 
     assert.notMatch(finalSource, /import.*Promise.*from.*guard/);
@@ -1232,8 +1242,10 @@ export const stayingSchema = z.object({
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
-      'source.ts',
-      'target.ts',
+      {
+        sourceFilePath: 'source.ts',
+        targetFilePath: 'target.ts',
+      },
     );
 
     const zodImport = requiredImports.find((imp) => imp.moduleSpec === 'zod');
@@ -1304,13 +1316,15 @@ export const movingSchema = z.object({
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
-      'source.ts',
-      'target.ts',
+      {
+        sourceFilePath: 'source.ts',
+        targetFilePath: 'target.ts',
+      },
     );
     const targetContent = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
-      sharedNonExportedDeps,
+      { additionalExports: sharedNonExportedDeps },
     );
 
     assert.match(targetContent, /export\s+const\s+sharedSchema/);
@@ -1325,7 +1339,7 @@ export const movingSchema = z.object({
       sharedNonExportedDeps,
       './target',
       false,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
 
     assert.match(
@@ -1368,10 +1382,12 @@ export interface CustomData {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
+      {},
     );
     const newModuleSource = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
+      {},
     );
 
     assert.include(newModuleSource, 'export interface CustomData');
@@ -1382,7 +1398,7 @@ export interface CustomData {
       symbolsToMove,
       './target',
       true,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
 
     assert.include(finalSource, 'export interface ItemDto');
@@ -1412,10 +1428,12 @@ export interface CustomData {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
+      {},
     );
     const newModuleSource = generateNewModuleSource(
       symbolDefinitions,
       requiredImports,
+      {},
     );
 
     assert.include(newModuleSource, 'export const myConstArray');
@@ -1432,7 +1450,7 @@ export interface CustomData {
       allRequired,
       './itemDeps',
       true,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
 
     assert.include(finalSource, 'export interface Item');
@@ -1501,8 +1519,10 @@ export function parseArgs(args: string[]): string {
     const requiredImports = computeRequiredImports(
       symbolDefinitions,
       importUsages,
-      'clients/kelda/tools/kelda/commands/run.ts',
-      'clients/kelda/tools/kelda/keldaDockerImage.ts',
+      {
+        sourceFilePath: 'clients/kelda/tools/kelda/commands/run.ts',
+        targetFilePath: 'clients/kelda/tools/kelda/keldaDockerImage.ts',
+      },
     );
 
     const packageImport = requiredImports.find((imp) =>

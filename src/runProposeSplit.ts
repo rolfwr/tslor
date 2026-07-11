@@ -287,8 +287,7 @@ function generateChanges(
   const requiredImports = computeRequiredImports(
     symbolDefinitions,
     importUsages,
-    sourceModule,
-    targetModule,
+    { sourceFilePath: sourceModule, targetFilePath: targetModule },
   );
 
   // Find non-exported moved symbols that remaining symbols also depend on
@@ -301,7 +300,7 @@ function generateChanges(
   const targetContent = generateNewModuleSource(
     symbolDefinitions,
     requiredImports,
-    sharedNonExportedDeps,
+    { additionalExports: sharedNonExportedDeps },
   );
 
   // Update source module: remove moved symbols
@@ -330,7 +329,7 @@ function generateChanges(
       remainingNeedMoved,
       relativePath,
       true,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
   }
 
@@ -341,7 +340,7 @@ function generateChanges(
       sharedNonExportedDeps,
       relativePath,
       false,
-      symbolDefinitions,
+      { symbolDefinitions },
     );
   }
 
