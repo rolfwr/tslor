@@ -296,3 +296,140 @@ test('re-export with other import names preserves the import for remaining names
   assert.include(must(result), 'const x: NewItem');
   assert.include(must(result), 'const y: Other');
 });
+
+test('aliased import: body references to alias are replaced with target type name', () => {
+  /*
+    When the source type is imported with an alias (`import { Item as MyItem }`),
+    the body uses the alias (`MyItem`), not the source type name (`Item`).
+    The replacement must update body references to the alias as well.
+  */
+  const content = `import { Item as MyItem } from './source';\nconst x: MyItem = {};`;
+  const result = replaceTypeInFile(
+    '/test.ts',
+    content,
+    'Item',
+    'NewItem',
+    './source',
+    './target',
+    {},
+  );
+  assert.isNotNull(result);
+  // Import should be replaced
+  assert.include(must(result), "import type { NewItem } from './target'");
+  // Old alias should not remain
+  assert.notInclude(must(result), 'MyItem');
+  // Body reference should be replaced with target type
+  assert.include(must(result), 'const x: NewItem');
+});
+
+test('aliased re-export: re-export using alias name is updated', () => {
+  /*
+    When the source type is imported with an alias and the re-export also
+    uses the alias (e.g. `export { MyItem }`), the re-export must be
+    detected and updated alongside the import.
+  */
+  const content = `import { Item as MyItem } from './source';
+export { MyItem } from './source';
+const x: MyItem = {};`;
+  const result = replaceTypeInFile(
+    '/test.ts',
+    content,
+    'Item',
+    'NewItem',
+    './source',
+    './target',
+    {},
+  );
+  assert.isNotNull(result);
+  // Re-export must be updated with new name and target module
+  assert.include(must(result), "export { NewItem } from './target'");
+  // Old import is removed (re-export handles bringing NewItem in)
+  assert.notInclude(must(result), 'import { Item');
+  // Old alias must not remain
+  assert.notInclude(must(result), 'MyItem');
+  // Body reference replaced
+  assert.include(must(result), 'const x: NewItem');
+});
+
+test('aliased re-export with other names: import preserved and re-export updated', () => {
+  /*
+    When the source type is aliased, other names are present, and the re-export
+    uses the alias, both the import split and re-export update must happen.
+  */
+  const content = `import { Item as MyItem, Other } from './source';
+export { MyItem } from './source';
+const x: MyItem = {};
+const y: Other = {};`;
+  const result = replaceTypeInFile(
+    '/test.ts',
+    content,
+    'Item',
+    'NewItem',
+    './source',
+    './target',
+    {},
+  );
+  assert.isNotNull(result);
+  // Re-export must be updated
+  assert.include(must(result), "export { NewItem } from './target'");
+  // Import must be preserved for 'Other'
+  assert.include(must(result), "import { Other } from './source'");
+  // Old alias must not remain
+  assert.notInclude(must(result), 'MyItem');
+  // Body references replaced
+  assert.include(must(result), 'const x: NewItem');
+  assert.include(must(result), 'const y: Other');
+});
+
+test('aliased import with other names: body alias references are replaced', () => {
+  /*
+    When the source type is aliased and other names are present,
+    both the import split and body alias replacement must happen.
+  */
+  const content = `import { Item as MyItem, Other } from './source';\nconst x: MyItem = {};\nconst y: Other = {};`;
+  const result = replaceTypeInFile(
+    '/test.ts',
+    content,
+    'Item',
+    'NewItem',
+    './source',
+    './target',
+    {},
+  );
+  assert.isNotNull(result);
+  // Import should be split: Other kept, Item replaced
+  assert.include(must(result), "import { Other } from './source'");
+  assert.include(must(result), "import type { NewItem } from './target'");
+  // Old alias should not remain
+  assert.notInclude(must(result), 'MyItem');
+  // Body reference should be replaced with target type
+  assert.include(must(result), 'const x: NewItem');
+  assert.include(must(result), 'const y: Other');
+});
+
+test('aliased re-export: word boundary prevents partial symbol match', () => {
+  /*
+    The alias replacement regex must group the alternation so that word
+    boundaries wrap both alternatives. Without grouping, /\bItem|MyItem\b/
+    is parsed as /\bItem/ | /MyItem\b/ — the 'Item' alternative lacks a
+    trailing \b, so it matches the 'Item' prefix of 'ItemRef' (which
+    appears before 'MyItem' in the string), corrupting it to 'NewItemRef'.
+  */
+  const content = `import { Item as MyItem, Other } from './source';
+export { ItemRef, MyItem } from './source';
+const x: MyItem = {}`;
+  const result = replaceTypeInFile(
+    '/test.ts',
+    content,
+    'Item',
+    'NewItem',
+    './source',
+    './target',
+    {},
+  );
+  assert.isNotNull(result);
+  // Re-export updated: MyItem -> NewItem, but ItemRef must NOT be touched
+  assert.include(must(result), "export { ItemRef, NewItem } from './target'");
+  // Body alias replaced
+  assert.include(must(result), 'const x: NewItem');
+});

@@ -209,13 +209,15 @@ function findFilesImportingType(
 function shouldReplaceTypeNode(
   node: Node,
   sourceType: string,
+  sourceTypeAlias: string | null,
   lineIndex: number,
   spliced: boolean,
 ): boolean {
-  if (
-    node.getKind() !== SyntaxKind.Identifier ||
-    node.getText() !== sourceType
-  ) {
+  if (node.getKind() !== SyntaxKind.Identifier) {
+    return false;
+  }
+  const text = node.getText();
+  if (text !== sourceType && !(sourceTypeAlias && text === sourceTypeAlias)) {
     return false;
   }
   const parent = node.getParent();
@@ -242,6 +244,7 @@ function shouldReplaceTypeNode(
 function replaceTypeReferences(
   scriptText: string,
   sourceType: string,
+  sourceTypeAlias: string | null,
   targetType: string,
   lineIndex: number,
   spliced: boolean,
@@ -253,7 +256,15 @@ function replaceTypeReferences(
   const sourceFile = project.createSourceFile('temp.ts', scriptText);
   let changed = false;
   sourceFile.forEachDescendant((node) => {
-    if (shouldReplaceTypeNode(node, sourceType, lineIndex, spliced)) {
+    if (
+      shouldReplaceTypeNode(
+        node,
+        sourceType,
+        sourceTypeAlias,
+        lineIndex,
+        spliced,
+      )
+    ) {
       node.replaceWithText(targetType);
       changed = true;
     }
@@ -309,6 +320,7 @@ function applyReExportChange(
       reExportLine,
       importInfo.actualModuleSpec,
       sourceType,
+      importInfo.sourceTypeAlias,
       targetType,
       targetSpec,
     );
@@ -325,6 +337,7 @@ function applyReExportChange(
       reExportLine,
       importInfo.actualModuleSpec,
       sourceType,
+      importInfo.sourceTypeAlias,
       targetType,
       targetSpec,
     );
@@ -338,6 +351,7 @@ function applyReExportChange(
       reExportLine,
       importInfo.actualModuleSpec,
       sourceType,
+      importInfo.sourceTypeAlias,
       targetType,
       targetSpec,
     );
@@ -349,6 +363,7 @@ function updateReExportLine(
   line: string,
   actualModuleSpec: string,
   sourceType: string,
+  sourceTypeAlias: string | null,
   targetType: string,
   targetSpec: string,
 ): string {
@@ -365,10 +380,15 @@ function updateReExportLine(
   const prefix = line.slice(0, fromIdx);
   const fromClause = line.slice(fromIdx);
 
-  const prefixUpdated = prefix.replace(
-    new RegExp(`\\b${escapeRegex(sourceType)}\\b`),
-    () => targetType,
-  );
+  /*
+    Replace the symbol name (sourceType or its alias) in the prefix.
+    Use a replacement function to avoid $-injection in targetType.
+    The alternation is grouped so that word boundaries wrap both alternatives.
+  */
+  const symbolToMatch = sourceTypeAlias
+    ? `(${escapeRegex(sourceType)}|${escapeRegex(sourceTypeAlias)})`
+    : escapeRegex(sourceType);
+  const prefixUpdated = prefix.replace(new RegExp(`\\b${symbolToMatch}\\b`), () => targetType);
 
   /*
     Replace the module spec string literal. Use indexOf + concatenation
@@ -463,6 +483,7 @@ export function replaceTypeInFile(
   const { changed: refChanged, fullText } = replaceTypeReferences(
     lines.join('\n'),
     sourceType,
+    importInfo.sourceTypeAlias,
     targetType,
     lineIndex,
     spliced,
@@ -487,6 +508,8 @@ interface ImportAnalysis {
   hasReExport: boolean;
   reExportLineIndex: number;
   actualModuleSpec: string;
+  // Alias used for the source type in the import (e.g., "MyItem" in "Item as MyItem")
+  sourceTypeAlias: string | null;
 }
 
 function checkModuleSpecMatch(
@@ -524,16 +547,8 @@ function analyzeImports(
     hasReExport: false,
     reExportLineIndex: -1,
     actualModuleSpec: '',
+    sourceTypeAlias: null,
   };
-  /*
-    Match re-exports: export { X } from '...' or export type { X } from '...'.
-    Require { or * after export (with optional type keyword) and a quote after
-    from. This avoids false positives on lines like:
-      export type ItemFromSource = { from: string };
-  */
-  const reExportPattern = new RegExp(
-    `export\\s+(type\\s+)?(\\{[^}]*\\b${escapeRegex(sourceType)}\\b[^}]*\\}|\\*)\\s+from\\s+['"]`,
-  );
   const importPattern =
     /^import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/;
   const normalizeName = (n: string) =>
@@ -541,12 +556,7 @@ function analyzeImports(
     n.split(/\s+as\s+/)[0]!.replace(/^type\s+/, '');
 
   // First pass: scan all lines for re-exports (must complete before import break)
-  for (const [i, line] of lines.entries()) {
-    if (line.match(reExportPattern)) {
-      result.hasReExport = true;
-      result.reExportLineIndex = i;
-    }
-  }
+  scanReExports(lines, escapeRegex(sourceType), result);
 
   // Second pass: find the import line and break early
   for (const [i, line] of lines.entries()) {
@@ -572,14 +582,32 @@ function analyzeImports(
       .split(',')
       .map((n) => n.trim())
       .filter(Boolean);
-    if (names.some((n) => normalizeName(n) === sourceType)) {
+    const matchedName = names.find((n) => normalizeName(n) === sourceType);
+    if (matchedName) {
       result.hasImport = true;
       result.importIsTypeOnly = Boolean(typeOnlyMatch);
       result.lineIndex = i;
       result.actualModuleSpec = moduleSpec;
-      result.otherNames = names.filter((n) => normalizeName(n) !== sourceType);
+      result.otherNames = names.filter(
+        (n) => normalizeName(n) !== sourceType,
+      );
+      /*
+        Extract alias if present (e.g., "Item as MyItem" → "MyItem").
+        Used later to replace body references to the alias.
+      */
+      const aliasMatch = matchedName.match(/\s+as\s+(\w+)/);
+      // biome-ignore lint/style/noNonNullAssertion: the regex requires the capturing group, so group 1 is defined when aliasMatch is truthy.
+      result.sourceTypeAlias = aliasMatch ? aliasMatch[1]! : null;
       break;
     }
+  }
+
+  /*
+    If an alias exists and no re-export was found with sourceType,
+    scan for re-exports that use the alias name instead.
+  */
+  if (result.sourceTypeAlias && !result.hasReExport) {
+    scanReExports(lines, escapeRegex(result.sourceTypeAlias), result);
   }
 
   return result;
@@ -640,4 +668,28 @@ function exporterMatchesSourceModule(
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Scan for re-export lines that reference the given symbol.
+ *
+ * Matches `export { X } from '...'` and `export type { X } from '...'`.
+ * Requires `{` or `*` after `export` (with optional `type` keyword) and a
+ * quote after `from`, to avoid false positives on type aliases like
+ * `export type ItemFromSource = { from: string }`.
+ */
+function scanReExports(
+  lines: string[],
+  escapedSymbol: string,
+  result: ImportAnalysis,
+): void {
+  const pattern = new RegExp(
+    `export\\s+(type\\s+)?(\\{[^}]*\\b${escapedSymbol}\\b[^}]*\\}|\\*)\\s+from\\s+['"]`,
+  );
+  for (const [i, line] of lines.entries()) {
+    if (line.match(pattern)) {
+      result.hasReExport = true;
+      result.reExportLineIndex = i;
+    }
+  }
 }
