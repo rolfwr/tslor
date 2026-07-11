@@ -1,7 +1,7 @@
-import { assert, test } from 'vitest';
+import { assert, describe, test } from 'vitest';
 import { Project } from 'ts-morph';
 import { parseIsolatedSourceCode } from './testUtils';
-import { parseModule, analyzeImportUsageFromStaticInfo } from './staticAnalysis';
+import { analyzeImportUsageFromStaticInfo } from './staticAnalysis';
 import {
   buildIntraModuleDependencies,
   analyzeSplit,
@@ -12,6 +12,8 @@ import {
   removeSymbolsFromSource,
   removeUnusedImports,
   addImportForMovedSymbols,
+  findSharedNonExportedDeps,
+  validateSymbolsHaveDeclarations,
 } from './splitModule';
 
 function runSplit(
@@ -53,9 +55,12 @@ function runSplit(
     throw new Error('Cannot move all exported symbols');
   }
 
+  // Invariant: every symbol scheduled for extraction must have an actual
+  // declaration in the source file.
+  validateSymbolsHaveDeclarations(sourceFile, allSymbols, 'source.ts');
+
   const symbolDefinitions = extractSymbolDefinitions(sourceFile, allSymbols);
-  const staticModuleInfo = parseModule(sourceFile);
-  const importUsages = analyzeImportUsageFromStaticInfo(staticModuleInfo);
+  const importUsages = analyzeImportUsageFromStaticInfo(moduleInfo);
   const onlyUsedByTarget = findImportsOnlyUsedBySymbols(
     importUsages,
     allSymbols,
@@ -66,19 +71,32 @@ function runSplit(
     {},
   );
 
+  const sharedNonExportedDeps = findSharedNonExportedDeps(deps, allSymbols);
   const target = generateNewModuleSource(
     symbolDefinitions,
     requiredImports,
-    {},
+    { additionalExports: sharedNonExportedDeps },
   );
 
   let source = removeSymbolsFromSource(sourceInput, allSymbols);
   source = removeUnusedImports(source, onlyUsedByTarget);
+
+  // Re-export the originally-exported symbols in the source module.
+  const modulePath = `./${targetFileName.replace('.ts', '')}`;
   source = addImportForMovedSymbols(
     source,
-    allSymbols,
-    `./${targetFileName.replace('.ts', '')}`,
+    exportedSymbolsToMove,
+    modulePath,
     true,
+    { symbolDefinitions },
+  );
+
+  // Import shared non-exported deps (used by staying symbols) from target.
+  source = addImportForMovedSymbols(
+    source,
+    sharedNonExportedDeps,
+    modulePath,
+    false,
     { symbolDefinitions },
   );
 
@@ -260,4 +278,310 @@ export function goodbye(): string {
       ),
     /Cannot move all exported symbols/,
   );
+});
+
+describe('enum declarations', () => {
+  test('extracted enum appears in target module and is removed from source', () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+
+    const result = runSplit(
+      project,
+      `
+export enum Status {
+  Active = 'active',
+  Inactive = 'inactive',
+}
+
+export function getStatusLabel(s: Status): string {
+  return Status[s];
+}
+
+export function otherUtil(): string {
+  return 'other';
+}
+`,
+      ['Status'],
+      [],
+    );
+
+    assert.include(
+      result.target,
+      'export enum Status',
+      'Target module should contain the enum declaration',
+    );
+    assert.include(result.target, "Active = 'active'");
+    assert.include(result.target, "Inactive = 'inactive'");
+
+    assert.notInclude(
+      result.source,
+      'enum Status',
+      'Source module should not contain the enum declaration',
+    );
+
+    assert.match(
+      result.source,
+      /export\s*{\s*Status\s*}\s*from/,
+      'Source should re-export Status from the target module',
+    );
+
+    assert.include(result.source, 'export function otherUtil');
+  });
+
+  test('non-exported enum used by moved function travels with it', () => {
+    /*
+      A private enum that is only used by a moved function must travel
+      with it. The target module contains both the function and the enum.
+      The source removes the enum and re-exports the function.
+    */
+    const project = new Project({ useInMemoryFileSystem: true });
+
+    const result = runSplit(
+      project,
+      `
+enum Priority {
+  Low = 0,
+  Medium = 1,
+  High = 2,
+}
+
+export function formatPriority(p: Priority): string {
+  return 'Priority: ' + Priority[p];
+}
+
+export function standalone(): string {
+  return 'ok';
+}
+`,
+      ['formatPriority'],
+      [],
+    );
+
+    assert.include(
+      result.target,
+      'enum Priority',
+      'Target module should contain the enum declaration',
+    );
+    assert.include(result.target, 'export function formatPriority');
+
+    assert.notInclude(
+      result.source,
+      'enum Priority',
+      'Source should not contain the enum after removal',
+    );
+
+    assert.match(
+      result.source,
+      /export\s*{\s*formatPriority\s*}\s*from/,
+      'Source should re-export formatPriority',
+    );
+
+    assert.include(result.source, 'export function standalone');
+  });
+
+  test('non-exported enum shared between moved and staying symbols is exported from target', () => {
+    /*
+      When a staying function also references the enum, it becomes a
+      shared non-exported dependency. The target exports it and the
+      source imports it.
+    */
+    const project = new Project({ useInMemoryFileSystem: true });
+
+    const result = runSplit(
+      project,
+      `
+enum Priority {
+  Low = 0,
+  Medium = 1,
+  High = 2,
+}
+
+export function formatPriority(p: Priority): string {
+  return 'Priority: ' + Priority[p];
+}
+
+export function getPriorityLevel(p: Priority): string {
+  return p === Priority.High ? 'critical' : 'normal';
+}
+
+export function standalone(): string {
+  return 'ok';
+}
+`,
+      ['formatPriority'],
+      [],
+    );
+
+    assert.include(
+      result.target,
+      'export enum Priority',
+      'Target module should export the shared enum',
+    );
+    assert.include(result.target, 'export function formatPriority');
+
+    assert.match(
+      result.source,
+      /import.*Priority.*from.*target/,
+      'Source should import Priority from target',
+    );
+
+    // Source does NOT re-export Priority (it was not originally exported)
+    assert.notMatch(
+      result.source,
+      /^export\s*{[^}\n]*\bPriority\b[^}\n]*}\s*from/m,
+      'Source should not re-export Priority',
+    );
+
+    assert.include(result.source, 'export function getPriorityLevel');
+  });
+
+  test('enum referenced in type position is classified as a value import', () => {
+    /*
+      Enums are value-level declarations. Even when referenced only in
+      type annotations (e.g. `x: Status`), the import must be a value
+      import, not a type import.
+    */
+    const project = new Project({ useInMemoryFileSystem: true });
+
+    const result = runSplit(
+      project,
+      `
+export enum Status {
+  Active = 1,
+  Inactive = 0,
+}
+
+export function isActive(s: Status): boolean {
+  return s === Status.Active;
+}
+
+export function other(): void {}
+`,
+      ['Status'],
+      [],
+    );
+
+    assert.match(
+      result.source,
+      /export\s*{\s*Status\s*}\s*from/,
+      'Should re-export Status as a value',
+    );
+    assert.notMatch(
+      result.source,
+      /export\s+type\s+{[^}]*Status[^}]*}/,
+      'Status must NOT be a type-only re-export',
+    );
+  });
+});
+
+test('does not add spurious import for loop variable shadowing moved type', () => {
+  /*
+    Regression test: when a moved type (e.g., ReExport) has a similar name
+    to a loop variable (e.g., reExport) in remaining code, the tool should
+    not add a spurious value import for the loop variable.
+  */
+  const project = new Project({ useInMemoryFileSystem: true });
+
+  const result = runSplit(
+    project,
+    `
+export interface ReExport {
+  moduleSpec: string;
+  names: string[];
+}
+
+export function processReExports(reExports: ReExport[]): string {
+  let count = 0;
+  for (const reExport of reExports) {
+    count += reExport.names.length;
+  }
+  return String(count);
+}
+
+export function standalone(): string {
+  return 'ok';
+}
+`,
+    ['processReExports'],
+    [],
+  );
+
+  assert.include(
+    result.target,
+    'export interface ReExport',
+    'ReExport should move with processReExports',
+  );
+  assert.notMatch(
+    result.source,
+    /import\s*{\s*reExport\s*}/,
+    'Must not import loop variable as a value',
+  );
+  assert.match(
+    result.source,
+    /export.*ReExport.*from.*target/,
+    'ReExport type should be re-exported',
+  );
+});
+
+describe('ambient declarations do not enter dependency graph', () => {
+  test('ambient fetch does not enter the dependency graph, split succeeds', () => {
+    /*
+      `fetch` is not in the module-binding set, so it is ambient.
+      The split succeeds — `fetch` is left untouched in both
+      source and target modules, with no spurious import generated.
+    */
+    const project = new Project({ useInMemoryFileSystem: true });
+    const sourceCode = `
+function helper(): string {
+  return fetch('/api').toString();
+}
+
+export function moved(): string {
+  return fetch('/api').toString();
+}
+
+export function staying(): string {
+  return helper();
+}
+`;
+
+    const result = runSplit(project, sourceCode, ['moved'], []);
+
+    assert.include(result.target, 'export function moved');
+    assert.include(result.source, 'function helper');
+    assert.include(result.source, 'export function staying');
+    assert.notMatch(result.source, /import.*fetch.*from.*target/);
+    assert.match(result.source, /export.*moved.*from.*target/);
+  });
+
+  test('ambient process does not enter the dependency graph, split succeeds', () => {
+    /*
+      `process` is not in the module-binding set, so it is ambient.
+      Because `process` is undefined in the in-memory project (no
+      @types/node), we validate the dependency graph directly rather
+      than through runSplit.
+    */
+    const sourceCode = `
+function helper(): string {
+  return process.env.NODE_ENV || 'dev';
+}
+
+export function moved(): string {
+  return process.env.API_URL || 'http://localhost';
+}
+
+export function staying(): string {
+  return helper();
+}
+`;
+
+    const moduleInfo = parseIsolatedSourceCode(sourceCode);
+    const deps = buildIntraModuleDependencies(moduleInfo, sourceCode);
+
+    assert.isTrue(deps.definitions.has('helper'));
+    assert.isFalse(deps.definitions.has('process'));
+
+    const analysis = analyzeSplit(deps, 'moved');
+    assert.equal(analysis.requiredDependencies.size, 0);
+    assert.isTrue(analysis.canSplit);
+  });
 });
